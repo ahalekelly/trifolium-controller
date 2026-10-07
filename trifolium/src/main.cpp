@@ -149,11 +149,22 @@ volatile bool directMotorControlActive = false;
 
 bool escDashboardOpen = false;
 
-// SAFE beats everything here, the ESC dashboard included: a switch that stops the pusher but leaves
-// the wheels turning is worse than none. Menu motor tests bypass this via directMotorControlActive.
+// Set by checkLowVoltageCutoff() and held until reboot: a drained pack reads back over the cutoff
+// as soon as the load comes off, and that must not let it rev again.
+bool lowVoltageCutoffTripped = false;
+
+// SAFE and a tripped cutoff spin the wheels fully down, ruling out rev and idle alike.
+bool spinDownForced()
+{
+    return burstMode == SAFE || lowVoltageCutoffTripped;
+}
+
+// spinDownForced() beats everything here, the ESC dashboard included: a switch that stops the
+// pusher but leaves the wheels turning is worse than none. Menu motor tests bypass this via
+// directMotorControlActive.
 bool revControlAllowed()
 {
-    return (!menuIsOpen() || escDashboardOpen) && burstMode != SAFE;
+    return (!menuIsOpen() || escDashboardOpen) && !spinDownForced();
 }
 
 bool revSafetyLatched = false;
@@ -175,10 +186,10 @@ burstFireType_t effectiveBurstMode(burstFireType_t selected)
     return safetyEngaged ? SAFE : selected;
 }
 
-// SAFE always spins fully down regardless, and the menu needs motors stopped for bench testing.
+// The menu needs motors stopped for bench testing.
 bool idleHoldWanted()
 {
-    return idleHoldActive && burstMode != SAFE && !menuIsOpen();
+    return idleHoldActive && !spinDownForced() && !menuIsOpen();
 }
 
 Bounce2::Button revSwitch = Bounce2::Button();
@@ -240,6 +251,11 @@ static bool firingModePersists()
 bool pinDefined(uint8_t pin)
 {
     return pin != PIN_NOT_USED;
+}
+
+static bool idleSwitchWanted()
+{
+    return pinDefined(idleSwitchPin) && idleSwitch.isPressed() && !spinDownForced();
 }
 
 // Wire or Wire1 repointed at the stored I2C pins, or null when none can serve them. setSDA/setSCL
@@ -1067,7 +1083,7 @@ void mainFiringLogic()
 
     requestRev = false;
 
-    if (menuIsOpen())
+    if (menuIsOpen() || lowVoltageCutoffTripped)
     {
         shotsToFire = 0;
     }
@@ -1103,6 +1119,8 @@ void mainFiringLogic()
 static uint32_t ledTime_ms = 0;
 static bool ledOn = true;
 
+static bool driveTrainStopped();
+
 void checkLowVoltageCutoff()
 {
     if (batteryMonitor->isDefined() && time_ms > 2000)
@@ -1110,32 +1128,36 @@ void checkLowVoltageCutoff()
         uint8_t cells = cellCount(deviceSettings.batteryType);
         bool belowCutoff =
             batteryMonitor->getVoltage_mv() < deviceSettings.lowVoltageCutoffPerCell_mv * cells;
-        // On the way into cutoff only: this runs every control loop iteration, so reporting each
-        // pass would put hundreds of lines a second on the port.
-        static bool cutoffReported = false;
-        if (belowCutoff)
+
+        // Armed by the first reading at or over the cutoff: the divider on some boards reads far
+        // low for tens of seconds after power-on, and USB power alone reads 0. Trips only on a
+        // reading held under it for a second under open-loop control - idling, ramping down or
+        // stopped - since a rev, or the dwell holding one, sags a healthy pack far below.
+        static bool armed = false;
+        static uint32_t belowSince_ms = 0;
+        armed = armed || !belowCutoff;
+        if (!belowCutoff || flywheelState != STATE_IDLE || enableFwControl)
+            belowSince_ms = time_ms;
+        if (armed && !lowVoltageCutoffTripped && time_ms - belowSince_ms >= 1000)
         {
-            if (pinDefined(escEnablePin))
-                digitalWrite(escEnablePin, LOW); // cut power to ESCs and pusher
-            if (!cutoffReported)
-            {
-                cutoffReported = true;
-                logger.error("Battery low, shutting down! ", batteryMonitor->getVoltage_mv(), "mv");
-            }
+            lowVoltageCutoffTripped = true;
+            logger.error("Battery low, spinning down until reboot! ",
+                         batteryMonitor->getVoltage_mv(), "mv");
         }
-        else
-        {
-            cutoffReported = false;
-        }
+        // After the ramp, not at the trip: the ESCs bring the wheels down first.
+        if (lowVoltageCutoffTripped && pinDefined(escEnablePin) && driveTrainStopped())
+            digitalWrite(escEnablePin, LOW); // cut power to ESCs and pusher
         // Non-cutoff early warning - lowVoltageWarningPerCell_mv is above the cutoff, so this
-        // trips first as the battery depletes.
+        // trips first as the battery depletes. Held with the cutoff, whatever the pack recovers to.
         batteryWarningActive =
+            lowVoltageCutoffTripped ||
             batteryMonitor->getVoltage_mv() < deviceSettings.lowVoltageWarningPerCell_mv * cells;
 
         if (pinDefined(ledDataPin))
         {
             bool shouldBlink =
-                (deviceSettings.ledWarningMode == LED_WARNING_LOW_BATT && belowCutoff) ||
+                (deviceSettings.ledWarningMode == LED_WARNING_LOW_BATT &&
+                 (belowCutoff || lowVoltageCutoffTripped)) ||
                 (deviceSettings.ledWarningMode == LED_WARNING_WARN_BATT && batteryWarningActive);
             if (!shouldBlink)
             {
@@ -1285,9 +1307,11 @@ bool fwControlLoop()
         return true;
     }
 
-    // SAFE and the menu bring the wheels down from any state, along the ramp a released rev takes:
-    // no spin-up, dwell or idle window holds them up. FULLSPEED leaves through its own exit, which
-    // lets an extended pusher retract first.
+    checkLowVoltageCutoff();
+
+    // SAFE, the menu and the cutoff bring the wheels down from any state, along the ramp a released
+    // rev takes: no spin-up, dwell or idle window holds them up. FULLSPEED leaves through its own
+    // exit, which lets an extended pusher retract first.
     if (!revControlAllowed())
     {
         lastRevTime_ms = 0;
@@ -1302,8 +1326,6 @@ bool fwControlLoop()
     {
 
     case STATE_IDLE:
-        checkLowVoltageCutoff();
-
         {
             // Catch the instant the menu closes so motors resume at idle - the ratchet below only
             // pulls targetRPM down, so real RPM would stay wherever it decayed to.
@@ -1373,8 +1395,7 @@ bool fwControlLoop()
                 // logger.info("Holding for dwell");
             }
         }
-        else if (((pinDefined(idleSwitchPin) && idleSwitch.isPressed() && burstMode != SAFE) ||
-                  idleHoldWanted()) &&
+        else if ((idleSwitchWanted() || idleHoldWanted()) &&
                  motorArr[0].targetRPM == 0 && motorArr[1].targetRPM == 0 &&
                  motorArr[2].targetRPM == 0 && motorArr[3].targetRPM == 0)
         { // idle switch pressed from a full stop, or idle-hold engaging from a dead stop -
@@ -1383,8 +1404,7 @@ bool fwControlLoop()
             enableFwControl = false;
             kickMotorsToIdle();
         }
-        else if ((pinDefined(idleSwitchPin) && idleSwitch.isPressed() && burstMode != SAFE) ||
-                 idleHoldWanted() ||
+        else if (idleSwitchWanted() || idleHoldWanted() ||
                  (time_ms < lastRevTime_ms + dwellTime_ms + idleTime_ms && lastRevTime_ms > 0))
         { // idle flywheels - post-dwell idle window, the idle switch held, or idle-hold standing
           // at idle

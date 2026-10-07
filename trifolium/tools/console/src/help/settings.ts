@@ -101,7 +101,7 @@ export const SETTING_HELP: Record<string, string> = {
   "device:batteryType":
     "Your pack's cell count. It scales the per-cell voltages below and sets every motor's RPM ceiling.",
   "device:lowVoltageCutoffPerCell_mv":
-    "Below this voltage per cell the blaster refuses to spin up, to protect the pack.",
+    "If the pack rests below this voltage per cell for a second, the flywheels spin down and the blaster will not rev or fire again until it restarts. Protects the pack.",
   "device:lowVoltageWarningPerCell_mv":
     "An earlier warning: LOW BATT blinks on the home screen, but you can still fire. Set it above the cutoff.",
   "device:voltageCalibrationFactor":
@@ -120,7 +120,7 @@ export const SETTING_HELP: Record<string, string> = {
     "The clock pin of the screen's I2C bus. SDA and SCL must be a pair the RP2040 can use together.",
   "device:batteryAdcPin": "The analog pin, GPIO 26 to 29, that reads the battery voltage divider.",
   "device:escEnablePin":
-    "A pin that switches the ESCs' power on once the blaster boots, and off if the battery drops below the cutoff. Only for boards with that circuit.",
+    "A pin that switches the ESCs' power on once the blaster boots, and off once the flywheels stop after a low-voltage cutoff. Only for boards with that circuit.",
   "device:pusherFetPin": "The pin that switches the solenoid's FET.",
   "device:ledDataPin": "The status LED's data pin.",
   "device:triggerSwitchPin": "The pin the trigger switch is wired to.",
