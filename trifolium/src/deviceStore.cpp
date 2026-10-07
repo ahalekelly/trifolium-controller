@@ -26,6 +26,7 @@ void clearWiring(DeviceSettings& s)
     s.i2cSdaPin = PIN_NOT_USED;
     s.i2cSclPin = PIN_NOT_USED;
     s.batteryAdcPin = PIN_NOT_USED;
+    s.currentAdcPin = PIN_NOT_USED;
     s.escEnablePin = PIN_NOT_USED;
     s.menuButtonPin = PIN_NOT_USED;
     s.triggerSwitchPin = PIN_NOT_USED;
@@ -79,6 +80,7 @@ DeviceSettings factoryResetSettings()
     s.i2cSdaPin = deviceSettings.i2cSdaPin;
     s.i2cSclPin = deviceSettings.i2cSclPin;
     s.batteryAdcPin = deviceSettings.batteryAdcPin;
+    s.currentAdcPin = deviceSettings.currentAdcPin;
     s.escEnablePin = deviceSettings.escEnablePin;
 
     s.menuButtonPin = deviceSettings.menuButtonPin;
@@ -134,6 +136,7 @@ void toJson(const DeviceSettings& settings, JsonDocument& doc)
     doc["i2cSdaPin"] = settings.i2cSdaPin;
     doc["i2cSclPin"] = settings.i2cSclPin;
     doc["batteryAdcPin"] = settings.batteryAdcPin;
+    doc["currentAdcPin"] = settings.currentAdcPin;
     doc["escEnablePin"] = settings.escEnablePin;
 
     doc["hasDisplay"] = settings.hasDisplay;
@@ -272,6 +275,7 @@ void fromJson(JsonDocument& doc, DeviceSettings& out, Source source)
     out.i2cSdaPin = doc["i2cSdaPin"] | out.i2cSdaPin;
     out.i2cSclPin = doc["i2cSclPin"] | out.i2cSclPin;
     out.batteryAdcPin = doc["batteryAdcPin"] | out.batteryAdcPin;
+    out.currentAdcPin = doc["currentAdcPin"] | out.currentAdcPin;
     out.escEnablePin = doc["escEnablePin"] | out.escEnablePin;
 
     out.hasDisplay = doc["hasDisplay"] | out.hasDisplay;

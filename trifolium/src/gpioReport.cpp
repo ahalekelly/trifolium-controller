@@ -63,6 +63,7 @@ const char* roleOf(uint8_t pin)
         {deviceSettings.i2cSclPin, "i2cScl"},
         {deviceSettings.i2cSdaPin, "i2cSda"},
         {deviceSettings.batteryAdcPin, "batteryADC"},
+        {deviceSettings.currentAdcPin, "currentADC"},
         // The role keeps the name "drvEN" even though the field behind it is pusherFetPin: it
         // names the physical function, it is what every board file called that pin, and two bench
         // walks match on the string.

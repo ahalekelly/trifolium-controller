@@ -60,7 +60,7 @@ extern bool revSafetyLatched;
 extern bool firing;
 extern BatteryMonitor* batteryMonitor;
 extern uint8_t menuButtonPin, triggerSwitchPin, revSwitchPin, cycleSwitchPin, idleSwitchPin,
-    safetySwitchPin, ledDataPin, batteryAdcPin, escEnablePin;
+    safetySwitchPin, ledDataPin, batteryAdcPin, currentAdcPin, escEnablePin;
 extern uint8_t selectPins[3];
 extern uint8_t pusherPin();
 bool menuIsOpen();
@@ -790,6 +790,7 @@ class Host
             v["select2"] = selectPins[2];
             v["ledData"] = ledDataPin;
             v["batteryAdc"] = batteryAdcPin;
+            v["currentAdc"] = currentAdcPin;
             v["escEnable"] = escEnablePin;
         }
         else if (name == "pinConflicts")

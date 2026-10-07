@@ -507,9 +507,11 @@ static PinItem esc4PinItem("ESC 4 Pin", "device:escPins[3]", &deviceSettings.esc
 static PinItem i2cSdaPinItem("I2C SDA Pin", "device:i2cSdaPin", &deviceSettings.i2cSdaPin);
 static PinItem i2cSclPinItem("I2C SCL Pin", "device:i2cSclPin", &deviceSettings.i2cSclPin);
 
-// The one pin a capability really does narrow - see AdcPinItem.
+// The two pins a capability really does narrow - see AdcPinItem.
 static AdcPinItem batteryAdcPinItem("Battery ADC Pin", "device:batteryAdcPin",
                                     &deviceSettings.batteryAdcPin);
+static AdcPinItem currentAdcPinItem("Current ADC Pin", "device:currentAdcPin",
+                                    &deviceSettings.currentAdcPin);
 
 // Driven LOW at boot and again by the low-voltage cutoff, to cut power to the ESCs and the pusher.
 static PinItem escEnablePinItem("ESC Enable Pin", "device:escEnablePin",
@@ -570,17 +572,17 @@ static MenuItem* wiringItems[] = {&boardIdItem,            &wiringConfiguredItem
                                   &esc1PinItem,            &esc2PinItem,
                                   &esc3PinItem,            &esc4PinItem,
                                   &i2cSdaPinItem,          &i2cSclPinItem,
-                                  &batteryAdcPinItem,      &escEnablePinItem,
-                                  &pusherFetPinItem,       &ledDataPinItem,
-                                  &safetyPinItem,          &triggerPinItem,
-                                  &revPinItem,             &menuButtonPinItem,
-                                  &cyclePinItem,           &idlePinItem,
-                                  &select0PinItem,         &select1PinItem,
-                                  &select2PinItem,         &triggerPolarityItem,
-                                  &revPolarityItem,        &menuButtonPolarityItem,
-                                  &cyclePolarityItem,      &idlePolarityItem,
-                                  &safetyPolarityItem};
-static SubmenuItem wiringSubmenu("Wiring", wiringItems, 27);
+                                  &batteryAdcPinItem,      &currentAdcPinItem,
+                                  &escEnablePinItem,       &pusherFetPinItem,
+                                  &ledDataPinItem,         &safetyPinItem,
+                                  &triggerPinItem,         &revPinItem,
+                                  &menuButtonPinItem,      &cyclePinItem,
+                                  &idlePinItem,            &select0PinItem,
+                                  &select1PinItem,         &select2PinItem,
+                                  &triggerPolarityItem,    &revPolarityItem,
+                                  &menuButtonPolarityItem, &cyclePolarityItem,
+                                  &idlePolarityItem,       &safetyPolarityItem};
+static SubmenuItem wiringSubmenu("Wiring", wiringItems, 28);
 struct WiringSubmenuInit
 {
     WiringSubmenuInit()

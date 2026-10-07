@@ -166,6 +166,7 @@ export const DEVICE_LAYOUT: SectionSpec[] = [
       "device:i2cSdaPin",
       "device:i2cSclPin",
       "device:batteryAdcPin",
+      "device:currentAdcPin",
       "device:escEnablePin",
       "device:triggerSwitchNormallyClosed",
       "device:revSwitchNormallyClosed",

@@ -19,6 +19,7 @@
     "i2cSdaPin": 14,
     "i2cSclPin": 15,
     "batteryAdcPin": 28,
+    "currentAdcPin": 255,
     "escEnablePin": 255,
     "hasDisplay": false,
     "rotateDisplay": true,

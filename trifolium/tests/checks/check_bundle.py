@@ -79,7 +79,7 @@ PRESET_DESCRIPTIVE_KEYS = {"kind", "presetVersion", "id", "name", "notes", "unre
 # whole point of a board being separate from a blaster is that it cannot.
 PRESET_ALLOWED_KEYS = {
     "boardId", "wiringConfigured",
-    "escPins", "i2cSdaPin", "i2cSclPin", "batteryAdcPin", "escEnablePin",
+    "escPins", "i2cSdaPin", "i2cSclPin", "batteryAdcPin", "currentAdcPin", "escEnablePin",
     "menuButtonPin", "triggerSwitchPin", "revSwitchPin", "cycleSwitchPin", "idleSwitchPin",
     "safetySwitchPin", "select0Pin", "select1Pin", "select2Pin",
     "pusherDrive", "pusherFetPin", "ledDataPin",

@@ -9,8 +9,7 @@
     "Adds the I2C pads v1.0 did not bring out, on the same GP14/GP15 pair a Trifolium uses. Set Display Attached to use one."
   ],
   "unread": {
-    "telem": 255,
-    "escADC": 255
+    "telem": 255
   },
   "schemaVersion": 3,
   "boardId": "diana_v1_2",
@@ -24,6 +23,7 @@
   "i2cSdaPin": 14,
   "i2cSclPin": 15,
   "batteryAdcPin": 28,
+  "currentAdcPin": 255,
   "escEnablePin": 255,
   "menuButtonPin": 255,
   "triggerSwitchPin": 6,

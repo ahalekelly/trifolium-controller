@@ -1,8 +1,9 @@
 // Parsing the CSV that RpmLogger::dumpIfReady() writes (src/rpmLogger.h).
 //
 // Ported from tools/serial-config.html, which is proven against real captures. The shape is an
-// optional leading "Voltage_mv" column, then "Motor N,TargetRPM N,Throttle N,value N," repeated per
-// enabled motor, then one row per captured control-loop tick in the same column order.
+// optional leading "Voltage_mv" column, an optional "Current_mv" column after it, then
+// "Motor N,TargetRPM N,Throttle N,value N," repeated per enabled motor, then one row per captured
+// control-loop tick in the same column order.
 //
 // The log arrives interleaved with ordinary device chatter, so it has to be found inside a larger
 // blob of text rather than parsed from a clean file.
@@ -32,7 +33,7 @@ export interface RpmLog {
 export const LOG_LINE_CAP = 4000;
 
 // The Voltage_mv prefix is optional so older logs still parse.
-const HEADER_RE = /^(?:Voltage_mv,)?(?:Motor \d+,TargetRPM \d+,Throttle \d+,value \d+,?)+$/;
+const HEADER_RE = /^(?:Voltage_mv,(?:Current_mv,)?)?(?:Motor \d+,TargetRPM \d+,Throttle \d+,value \d+,?)+$/;
 const DATA_ROW_RE = /^[\d.\-,]+$/;
 
 /**
@@ -88,7 +89,7 @@ export function parseRpmCsv(text: string): RpmLog {
     .map((c) => c.trim())
     .filter(Boolean);
   const hasVoltage = /^Voltage/i.test(headerCells[0] ?? "");
-  const base = hasVoltage ? 1 : 0;
+  const base = hasVoltage ? (headerCells[1] === "Current_mv" ? 2 : 1) : 0;
 
   const motors: MotorSeries[] = [];
   for (let i = base; i < headerCells.length; i += 4) {

@@ -59,6 +59,7 @@ inline const DeviceSettings kDefaultDeviceSettings = {
     .i2cSdaPin = PIN_NOT_USED,
     .i2cSclPin = PIN_NOT_USED,
     .batteryAdcPin = PIN_NOT_USED,
+    .currentAdcPin = PIN_NOT_USED,
     .escEnablePin = PIN_NOT_USED,
 
     .hasDisplay = true,

@@ -64,6 +64,16 @@ describe("parseRpmCsv", () => {
     expect(log.motors[0].rpm).toEqual([100]);
   });
 
+  it("reads past the ESC current column to the motors", () => {
+    const csv = extractRpmCsv(
+      "Voltage_mv,Current_mv,Motor 1,TargetRPM 1,Throttle 1,value 1,\n16200,412,100,200,300,1,",
+    )!;
+    const log = parseRpmCsv(csv);
+    expect(log.voltage).toEqual([16200]);
+    expect(log.motors[0].rpm).toEqual([100]);
+    expect(log.motors[0].targetRpm).toEqual([200]);
+  });
+
   it("returns nothing for an unrecognisable header", () => {
     expect(parseRpmCsv("a,b,c\n1,2,3").motors).toEqual([]);
   });

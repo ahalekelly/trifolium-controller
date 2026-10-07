@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bench_harness as H  # noqa: E402
 
 LOG_LENGTH = 2000  # the firmware's MAX_RPM_LOG_LENGTH
-HEADER_RE = re.compile(r"^Voltage_mv,(Motor \d+,TargetRPM \d+,Throttle \d+,value \d+,)+$")
+HEADER_RE = re.compile(r"^Voltage_mv,(Current_mv,)?(Motor \d+,TargetRPM \d+,Throttle \d+,value \d+,)+$")
 WAIT_FOR_ACTION_S = 120
 PIN_NOT_USED = 255
 
