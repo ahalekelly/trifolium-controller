@@ -169,8 +169,9 @@ bool revControlAllowed()
 
 bool revSafetyLatched = false;
 
-// A rev whose wheels failed - set by the rampup timeout, cleared by the next rev to reach full
-// speed. Idle stays off meanwhile: a jammed wheel must not take idle throttle indefinitely.
+// A rev whose wheels failed - set by the rampup timeout or stale eRPM, cleared by the next rev to
+// reach full speed. Idle stays off meanwhile: a jammed wheel must not take idle throttle
+// indefinitely.
 bool driveFault = false;
 
 bool batteryWarningActive = false;
@@ -1297,6 +1298,26 @@ static void abortRev()
     shotsToFire = 0;
     lastRevTime_ms = 0;
     revSafetyLatched = true;
+    // Else the dwell holds the wheels up waiting on a fired shot's RPM drop.
+    pendingShotDetections = 0;
+    for (int i = 0; i < 4; i++)
+        motorArr[i].shotsUnderThreshold = 0;
+}
+
+// eRPM answers every poll, one a control tick, give or take a dropped frame or an EDT one. An ESC
+// that browns out restarts silent for 300 ms or more and leaves motorRPM frozen at its last
+// reading, so a reading counts only this many polls. Polls, not ms: a loop stalled by a flash
+// write has not heard silence.
+static const uint32_t kRpmStalePolls = 100;
+
+static bool rpmStale(uint8_t i)
+{
+    return motorsEnabled[i] && motorArr[i].pollsSinceErpm > kRpmStalePolls;
+}
+
+static bool atSpeed(uint8_t i)
+{
+    return !motorsEnabled[i] || ((int32_t)motorArr[i].motorRPM > atSpeedRpm(i) && !rpmStale(i));
 }
 
 bool fwControlLoop()
@@ -1492,11 +1513,7 @@ bool fwControlLoop()
             revStartTime_us = loopStartTimer_us;
 
         // If all motors are at target RPM, update the blaster's state to FULLSPEED.
-        if ((!motorsEnabled[0] || (int32_t)motorArr[0].motorRPM > atSpeedRpm(0)) &&
-            (!motorsEnabled[1] || (int32_t)motorArr[1].motorRPM > atSpeedRpm(1)) &&
-            (!motorsEnabled[2] || (int32_t)motorArr[2].motorRPM > atSpeedRpm(2)) &&
-            (!motorsEnabled[3] || (int32_t)motorArr[3].motorRPM > atSpeedRpm(3))
-        ) {
+        if (atSpeed(0) && atSpeed(1) && atSpeed(2) && atSpeed(3)) {
             flywheelState = STATE_FULLSPEED;
             driveFault = false;
             logger.info("STATE_FULLSPEED transition 1");
@@ -1518,7 +1535,20 @@ bool fwControlLoop()
             motorArr[i].targetRPM = (rpmScale_ >= 0.0f) ? (uint32_t)(motorArr[i].revRPM * rpmScale_)
                                                         : motorArr[i].revRPM;
 
-        if ((!revControlAllowed() || !revRequestedNow()) && shotsToFire == 0 && !firing)
+        if (rpmStale(0) || rpmStale(1) || rpmStale(2) || rpmStale(3))
+        {
+            if (firing)
+            {
+                pusher->coast();
+                firing = false;
+                pusherTimer_ms = time_ms;
+            }
+            abortRev();
+            driveFault = true; // a restarted ESC arms on zero throttle, not idle
+            logger.warn("No eRPM from an ESC for ", kRpmStalePolls,
+                        " polls - not firing, spinning down");
+        }
+        else if ((!revControlAllowed() || !revRequestedNow()) && shotsToFire == 0 && !firing)
         {
             flywheelState = STATE_IDLE;
             logger.info("State transition: FULLSPEED to IDLE 1");

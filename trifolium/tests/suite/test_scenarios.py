@@ -235,6 +235,43 @@ def test_a_rampup_timeout_keeps_idle_hold_off_until_a_rev_reaches_full_speed(bla
     assert b.peek("motors")[3]["targetRPM"] == 1000
 
 
+def test_an_esc_that_goes_silent_at_full_speed_stops_the_firing_until_rev_is_let_go(blaster):
+    """motorRPM holds its last reading without new eRPM, so a browned-out ESC would otherwise read
+    as at speed for good."""
+    b = armed_v12(blaster)
+    b.press("rev")
+    assert b.run_until_peek("flywheelState", FULLSPEED, limit_ms=600)
+    b.wheel(3, replies=False)
+    b.run_ms(150)
+    assert b.peek("flywheelState") == IDLE
+    b.tap("trigger")
+    b.run_ms(500)
+    assert b.extends() == []
+    assert b.peek("motors")[3]["targetRPM"] == 0
+
+    b.wheel(3, replies=True)
+    b.release("rev")
+    b.run_ms(100)
+    b.press("rev")
+    assert b.run_until_peek("flywheelState", FULLSPEED, limit_ms=600)
+    b.tap("trigger")
+    b.run_ms(200)
+    assert b.extends()
+
+
+def test_an_esc_going_silent_on_a_shot_awaiting_its_rpm_drop_still_spins_down_at_once(blaster):
+    b = blaster
+    b.darts(loaded=False)  # a dry fire: the drop the shot counter waits on never comes
+    armed_v12(b, {"useRpmBaseShotCounter": True})
+    b.press("rev")
+    assert b.run_until_peek("flywheelState", FULLSPEED, limit_ms=600)
+    b.press("trigger")
+    assert b.run_until(lambda: b.extends(), 100)
+    b.wheel(3, replies=False)
+    b.run_ms(600)  # without the abort clearing it, the wait holds full speed past the ramp
+    assert b.peek("motors")[1]["targetRPM"] == 0
+
+
 def test_rev_safety_timeout_spins_the_wheels_down_under_a_held_rev_until_it_is_released(blaster):
     b = blaster
     b.flash_profile(1, {"schemaVersion": 2, "revSafetyTimeout_ms": 2000})
