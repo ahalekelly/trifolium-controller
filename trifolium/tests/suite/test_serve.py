@@ -3,47 +3,31 @@ port, JSON lines on its bench port."""
 
 import json
 import socket
-import subprocess
-import sys
 import time
 
 import pytest
 
 serial = pytest.importorskip("serial")
 
-from helpers import SIM  # noqa: E402
+from helpers import start_server  # noqa: E402
 
 from trifolium_sim import preset  # noqa: E402
 
 
-def free_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def serve(*args):
-    ports = free_port(), free_port()
-    proc = subprocess.Popen([sys.executable, "-m", "trifolium_sim.serve", "--display", "--instant-escs",
-                             "--port", str(ports[0]), "--control-port", str(ports[1]),
-                             "--ws-port", str(free_port()), *args],
-                            cwd=str(SIM), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    assert b"serial on socket://" in proc.stdout.readline()
-    return proc, ports
-
-
 @pytest.fixture
 def served():
-    proc, ports = serve()
-    yield ports
+    proc, serial_port, control_port, _, _ = start_server("--display", "--instant-escs")
+    yield serial_port, control_port
     proc.terminate()
     proc.wait(timeout=10)
 
 
 @pytest.fixture
 def capturing():
-    proc, ports = serve("--preset", "trifolium_v1_2", "--device", json.dumps({"useRpmLogging": True}))
-    yield ports
+    proc, serial_port, control_port, _, _ = start_server(
+        "--display", "--instant-escs", "--preset", "trifolium_v1_2",
+        "--device", json.dumps({"useRpmLogging": True}))
+    yield serial_port, control_port
     proc.terminate()
     proc.wait(timeout=10)
 
