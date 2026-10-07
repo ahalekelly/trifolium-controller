@@ -203,7 +203,8 @@ void hal_free(void* p)
 }
 }
 
-// Each variant, not only the plain one: the C++ library's own may call malloc directly.
+// The plain, array, nothrow and sized variants, since the C++ library's own may call malloc
+// directly. Nothing here is over-aligned, so the align_val_t ones are left alone.
 void* operator new(size_t n)
 {
     void* p = hal_malloc(n ? n : 1);
