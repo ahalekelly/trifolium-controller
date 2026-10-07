@@ -169,6 +169,10 @@ bool revControlAllowed()
 
 bool revSafetyLatched = false;
 
+// A rev whose wheels failed - set by the rampup timeout, cleared by the next rev to reach full
+// speed. Idle stays off meanwhile: a jammed wheel must not take idle throttle indefinitely.
+bool driveFault = false;
+
 bool batteryWarningActive = false;
 
 // Idle-hold's standing request: set by the BOOT_ACTION_IDLE_HOLD dispatch at power-on or the root
@@ -189,7 +193,7 @@ burstFireType_t effectiveBurstMode(burstFireType_t selected)
 // The menu needs motors stopped for bench testing.
 bool idleHoldWanted()
 {
-    return idleHoldActive && !spinDownForced() && !menuIsOpen();
+    return idleHoldActive && !spinDownForced() && !driveFault && !menuIsOpen();
 }
 
 Bounce2::Button revSwitch = Bounce2::Button();
@@ -254,7 +258,8 @@ bool pinDefined(uint8_t pin)
 
 static bool idleSwitchWanted()
 {
-    return pinDefined(idleSwitchPin) && idleSwitch.isPressed() && !spinDownForced();
+    return pinDefined(idleSwitchPin) && idleSwitch.isPressed() && !spinDownForced() &&
+           !driveFault;
 }
 
 // Wire or Wire1 repointed at the stored I2C pins, or null when none can serve them. setSDA/setSCL
@@ -1033,7 +1038,6 @@ void mainFiringLogic()
         else if (revSwitch.released())
         {
             logger.info("Rev switch released");
-            revSafetyLatched = false;
         }
     }
     if (pinDefined(triggerSwitchPin))
@@ -1074,12 +1078,30 @@ void mainFiringLogic()
         safetyEngaged = safetySwitch.isPressed();
     }
     int8_t previousFiringMode = firingMode;
+    const burstFireType_t previousBurstMode = burstMode;
     updateFiringMode();
     burstMode = effectiveBurstMode(activeProfile.fireModes[firingMode].burstMode);
     if (firingMode != previousFiringMode)
         liveTargetDPS = activeProfile.fireModes[firingMode].targetDPS;
 
     requestRev = false;
+
+    FiringContext ctx{
+        shotsToFire,
+        liveTargetDPS,
+        time_ms,
+        triggerTime_ms,
+        activeProfile.fireModes[firingMode].binaryTriggerTimeout_ms,
+        activeProfile.fireModes[firingMode].burstLength,
+        activeProfile.fireModes[firingMode].reversible,
+        requestRev,
+        rpmScale_,
+        buzzPulsesRequested_,
+        flywheelState == STATE_FULLSPEED,
+        safetyEngaged,
+    };
+    if (burstMode != previousBurstMode)
+        behaviorFor(previousBurstMode).exit(ctx);
 
     if (menuIsOpen() || lowVoltageCutoffTripped)
     {
@@ -1095,21 +1117,17 @@ void mainFiringLogic()
         if (event == TriggerEvent::PRESSED)
             liveTargetDPS = activeProfile.fireModes[firingMode].targetDPS;
 
-        FiringContext ctx{
-            shotsToFire,
-            liveTargetDPS,
-            time_ms,
-            triggerTime_ms,
-            activeProfile.fireModes[firingMode].binaryTriggerTimeout_ms,
-            activeProfile.fireModes[firingMode].burstLength,
-            activeProfile.fireModes[firingMode].reversible,
-            requestRev,
-            rpmScale_,
-            buzzPulsesRequested_,
-            flywheelState == STATE_FULLSPEED,
-            safetyEngaged,
-        };
         behaviorFor(burstMode).update(ctx, event);
+    }
+
+    // An aborted rev stays down until rev and the trigger are both let go. Checked after the mode
+    // has seen this tick's release, so the shots a release queues - BINARY's, PLASMA's slots - go
+    // too, rather than starting a second rev on wheels that just failed.
+    if (revSafetyLatched)
+    {
+        shotsToFire = 0;
+        if (!revSwitch.isPressed() && !triggerSwitch.isPressed())
+            revSafetyLatched = false;
     }
     batteryMonitor->update();
 }
@@ -1267,6 +1285,16 @@ static void kickMotorsToIdle()
                                     motorArr[i].m_config->m_motorKv;
         }
     }
+}
+
+// Ends a rev that cannot go on. The wheels take the ramp a released rev takes, with no dwell or
+// idle window, and no rev starts again until rev and the trigger are both let go.
+static void abortRev()
+{
+    flywheelState = STATE_IDLE;
+    shotsToFire = 0;
+    lastRevTime_ms = 0;
+    revSafetyLatched = true;
 }
 
 bool fwControlLoop()
@@ -1457,6 +1485,11 @@ bool fwControlLoop()
             motorArr[i].targetRPM = (rpmScale_ >= 0.0f) ? (uint32_t)(motorArr[i].revRPM * rpmScale_)
                                                        : motorArr[i].revRPM;
 
+        // A mode still ramping its target (PLASMA's charge) holds the spin-up clock: the timeout
+        // measures how long the wheels take to reach a target that has stopped moving.
+        if (rpmScale_ >= 0.0f && rpmScale_ < 1.0f)
+            revStartTime_us = loopStartTimer_us;
+
         // If all motors are at target RPM, update the blaster's state to FULLSPEED.
         if ((!motorsEnabled[0] || (int32_t)motorArr[0].motorRPM > atSpeedRpm(0)) &&
             (!motorsEnabled[1] || (int32_t)motorArr[1].motorRPM > atSpeedRpm(1)) &&
@@ -1464,19 +1497,14 @@ bool fwControlLoop()
             (!motorsEnabled[3] || (int32_t)motorArr[3].motorRPM > atSpeedRpm(3))
         ) {
             flywheelState = STATE_FULLSPEED;
+            driveFault = false;
             logger.info("STATE_FULLSPEED transition 1");
-        } else if (!behaviorFor(burstMode).managesOwnRevLifecycle() &&
-                   loopStartTimer_us - revStartTime_us > deviceSettings.rampupTimeout_ms * 1000UL) {
-            flywheelState = STATE_IDLE;
-            resetFWControl();
-            shotsToFire = 0;
+        } else if (loopStartTimer_us - revStartTime_us > deviceSettings.rampupTimeout_ms * 1000UL) {
+            abortRev();
+            driveFault = true;
             for (int i = 0; i < 4; i++) {
-                if (motorsEnabled[i]) {
-                    if ((int32_t)motorArr[i].motorRPM <= atSpeedRpm(i)) {
-                        logger.warn("Motor ", i + 1, " failed to reach target speed! motorRPM=", motorArr[i].motorRPM, " firingRPM=", atSpeedRpm(i));
-                    }
-                    motorArr[i].targetRPM = 0;
-                    motorArr[i].PIDOutput = 0;
+                if (motorsEnabled[i] && (int32_t)motorArr[i].motorRPM <= atSpeedRpm(i)) {
+                    logger.warn("Motor ", i + 1, " failed to reach target speed! motorRPM=", motorArr[i].motorRPM, " firingRPM=", atSpeedRpm(i));
                 }
             }
         }
@@ -1498,8 +1526,7 @@ bool fwControlLoop()
                  activeProfile.revSafetyTimeout_ms > 0 && shotsToFire == 0 && !firing &&
                  time_ms - lastRevTime_ms > activeProfile.revSafetyTimeout_ms)
         {
-            flywheelState = STATE_IDLE;
-            revSafetyLatched = true;
+            abortRev();
             logger.warn(
                 "Rev safety timeout - motors held revved too long without firing, spinning down");
         }
