@@ -91,26 +91,30 @@ const Claim* heldBy(const Claim* claims, uint8_t n, uint8_t pin)
 }
 
 // What this configuration asks the chip to do that the chip cannot. Runs before anything is
-// claimed, because two of the three answers change what there is to claim. TwoWire::setSDA/setSCL
+// claimed, because its answers change what there is to claim. TwoWire::setSDA/setSCL
 // panic() on an illegal pin, so the I2C pair is settled here rather than at the point of use.
 void resolveCapabilities()
 {
-    if (pinDefined(batteryAdcPin) && !adcPinUsable(batteryAdcPin))
+    struct Reading
     {
-        const uint8_t pin = batteryAdcPin;
-        batteryAdcPin = PIN_NOT_USED;
-        PinConflicts::record("batteryAdcPin", pin, "notAnAdcPin", PinConflicts::Action::PinCleared);
-        logger.error("GPIO ", (int)pin, " has no ADC channel - only ", (int)ADC_FIRST_PIN, "-",
-                     (int)ADC_LAST_PIN, " do. Battery monitoring is off; a reading from any other "
-                     "pin would be noise the low-voltage cutoff acted on.");
-    }
-    if (pinDefined(currentAdcPin) && !adcPinUsable(currentAdcPin))
+        uint8_t* live;
+        const char* field;
+        const char* lost;
+    };
+    const Reading readings[] = {
+        {&batteryAdcPin, "batteryAdcPin",
+         "Battery monitoring is off; a reading from any other pin would be noise the low-voltage "
+         "cutoff acted on."},
+        {&currentAdcPin, "currentAdcPin", "RPM captures leave out the ESC current."}};
+    for (const Reading& r : readings)
     {
-        const uint8_t pin = currentAdcPin;
-        currentAdcPin = PIN_NOT_USED;
-        PinConflicts::record("currentAdcPin", pin, "notAnAdcPin", PinConflicts::Action::PinCleared);
+        if (!pinDefined(*r.live) || adcPinUsable(*r.live))
+            continue;
+        const uint8_t pin = *r.live;
+        *r.live = PIN_NOT_USED;
+        PinConflicts::record(r.field, pin, "notAnAdcPin", PinConflicts::Action::PinCleared);
         logger.error("GPIO ", (int)pin, " has no ADC channel - only ", (int)ADC_FIRST_PIN, "-",
-                     (int)ADC_LAST_PIN, " do. RPM captures leave out the ESC current.");
+                     (int)ADC_LAST_PIN, " do. ", r.lost);
     }
 
     const bool anyI2cPin =
@@ -303,7 +307,7 @@ void resolve()
     if (!wiringLive)
         return; // nothing is driven, so nothing can be contested
 
-    // Before the claims, because two of its three answers change what there is to claim.
+    // Before the claims, because its answers change what there is to claim.
     resolveCapabilities();
 
     Claim claims[kMaxClaims];

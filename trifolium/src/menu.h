@@ -397,9 +397,9 @@ class PinItem : public MenuItem
     uint8_t entryValue_ = PIN_NOT_USED;
 };
 
-// A pin that has to be an ADC input - the one place a capability narrows a stored pin, and it may
-// because ADC is GPIO 26-29 in silicon. The fold is to unused rather than the nearest ADC pin: a
-// voltage read off a pin with no ADC channel is noise, and the low-voltage cutoff acts on it.
+// A pin that has to be an ADC input - the one kind of pin a capability narrows, and it may because
+// ADC is GPIO 26-29 in silicon. The fold is to unused rather than the nearest ADC pin: a voltage
+// read off a pin with no ADC channel is noise, which the low-voltage cutoff or a capture acts on.
 class AdcPinItem : public PinItem
 {
   public:

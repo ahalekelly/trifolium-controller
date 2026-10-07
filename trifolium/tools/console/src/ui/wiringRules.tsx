@@ -41,7 +41,9 @@ export const WIRING_RULES: WiringRule[] = [
   },
   {
     field: "device:currentAdcPin",
-    text: "The ESC current pin must be GPIO 26-29 too, for the same reason.",
+    text:
+      "The ESC current pin must be GPIO 26-29 too. Anything else is folded to unused, since a " +
+      "pin with no ADC channel would fill the RPM capture's current column with noise.",
   },
   {
     field: "device:i2cSdaPin",

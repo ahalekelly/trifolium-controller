@@ -506,13 +506,15 @@ class Host
         }
     }
 
-    // BatteryMonitor: pack = adc_mv * 11, adc_mv = raw * 3300 / 1023. On every ADC pin, because
-    // before boot nothing has read which one the wiring uses, and no other input is analog.
+    // BatteryMonitor: pack = adc_mv * 11, adc_mv = raw * 3300 / 1023. Before boot nothing has read
+    // which pin the wiring uses, so every ADC pin; after, only the battery's, leaving the ESC
+    // current pin the value a test gave it.
     void setPack(int32_t mv)
     {
         const int raw = (int)((mv / 11.0) * 1023.0 / 3300.0 + 0.5);
         for (uint8_t pin = 26; pin <= 29; pin++)
-            hal::setAnalog(pin, raw);
+            if (batteryAdcPin == PIN_NOT_USED || pin == batteryAdcPin)
+                hal::setAnalog(pin, raw);
         for (SimFlywheel& w : wheels_)
         {
             w.packVoltage = mv / 1000.0f;
