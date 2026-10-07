@@ -4,6 +4,7 @@ and the solenoid's timing."""
 
 import pytest
 from helpers import armed_v12, close_menu, open_menu, schema
+from test_idle_hold import power_on_holding_rev
 
 from trifolium_sim import ACCELERATING, FULLSPEED, IDLE, MENU, POWER_ON_MAGIC
 
@@ -160,6 +161,78 @@ def test_a_wheel_that_cannot_reach_firing_speed_aborts_the_rev_inside_rampup_tim
     assert b.extends() == []  # no dart fired into wheels that are not at speed
     motors = b.peek("motors")
     assert motors[1]["targetRPM"] == 0 and motors[3]["targetRPM"] == 0
+
+
+def test_a_rev_held_through_a_rampup_timeout_stays_down_until_it_is_released(blaster):
+    b = blaster
+    b.wheel(3, loaded=0.5)
+    armed_v12(b)
+    b.press("rev")
+    assert b.run_until_peek("revSafetyLatched", True, limit_ms=700)
+    b.run_ms(1500)
+    assert b.peek("flywheelState") == IDLE
+    assert b.peek("motors")[3]["targetRPM"] == 0
+
+    b.release("rev")
+    b.run_ms(100)
+    assert b.peek("revSafetyLatched") is False
+    b.press("rev")
+    assert b.run_until_peek("flywheelState", ACCELERATING, limit_ms=100)
+
+
+def plasma_with_a_silent_esc(b):
+    b.wheel(3, replies=False)  # its RPM never arrives, so the wheels never read as at speed
+    b.flash_preset("trifolium_v1_2")
+    b.flash_profile(1, {"schemaVersion": 2, "activeModeCount": 1, "defaultFiringMode": 0,
+                        "switchPositionAssignment": [0, 0, 0],
+                        "fireModes": [{"burstMode": "plasma", "burstLength": 1, "targetDPS": 15}]})
+    assert b.boot(7000)  # past the arming timeout
+
+
+def test_plasma_released_mid_charge_on_wheels_that_never_reach_speed_times_out(blaster):
+    b = blaster
+    plasma_with_a_silent_esc(b)
+    b.press("trigger")
+    b.run_ms(300)
+    b.release("trigger")  # nothing armed: no shot, and the target goes to full revRPM
+    assert b.run_until_peek("flywheelState", IDLE, limit_ms=700)
+    b.run_ms(600)
+    assert b.peek("motors")[1]["targetRPM"] == 0
+    assert b.extends() == []
+
+
+def test_plasma_held_on_wheels_that_never_reach_speed_times_out_once_charged_and_stays_down(blaster):
+    b = blaster
+    plasma_with_a_silent_esc(b)
+    b.press("trigger")
+    b.run_ms(1500)
+    assert b.peek("flywheelState") == ACCELERATING  # the charge holds the clock
+    b.run_ms(1000)  # READY at 1646 ms, then rampupTimeout_ms
+    assert b.peek("flywheelState") == IDLE
+    b.run_ms(500)
+    assert b.peek("flywheelState") == IDLE
+    assert b.peek("motors")[1]["targetRPM"] == 0
+
+    b.release("trigger")  # with two slots armed: their shots go with the aborted rev
+    assert not b.run_until_peek("flywheelState", ACCELERATING, limit_ms=1000)
+
+
+def test_a_rampup_timeout_keeps_idle_hold_off_until_a_rev_reaches_full_speed(blaster):
+    b = blaster
+    b.wheel(3, loaded=0.5)
+    power_on_holding_rev(b)
+    b.press("rev")
+    assert b.run_until_peek("revSafetyLatched", True, limit_ms=700)
+    b.release("rev")
+    b.run_ms(1500)
+    assert b.peek("motors")[3]["targetRPM"] == 0  # not back at idle on a wheel that just failed
+
+    b.wheel(3, loaded=0.975)
+    b.press("rev")
+    assert b.run_until_peek("flywheelState", FULLSPEED, limit_ms=600)
+    b.release("rev")
+    b.run_ms(2000)
+    assert b.peek("motors")[3]["targetRPM"] == 1000
 
 
 def test_rev_safety_timeout_spins_the_wheels_down_under_a_held_rev_until_it_is_released(blaster):

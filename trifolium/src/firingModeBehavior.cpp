@@ -324,6 +324,14 @@ class PlasmaMode : public FiringModeBehavior
     bool supportsTargetDps() const override { return false; }
     bool managesOwnRevLifecycle() const override { return true; }
 
+    // The overheat lockout stands: switching modes is not a way round it.
+    void exit(FiringContext& ctx) const override
+    {
+        holdActive_ = false;
+        lockedOut_ = false;
+        ctx.rpmScale = -1.0f;
+    }
+
     void update(FiringContext& ctx, TriggerEvent event) const override
     {
         switch (event)

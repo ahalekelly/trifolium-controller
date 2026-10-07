@@ -44,7 +44,7 @@ export const SETTING_HELP: Record<string, string> = {
   "device:minFiringRPM":
     "A floor under the at-speed point, so a low target cannot let a shot go at a uselessly low RPM. 0 removes it.",
   "device:rampupTimeout_ms":
-    "If the flywheels are not at speed this long after a rev starts, the rev gives up and drops back to idle. Plasma is exempt.",
+    "If the flywheels are not at speed this long after a rev starts, they spin down and stay down until you let go of rev and the trigger. Plasma's charge-up does not count.",
   "device:variableFPS":
     "With a switch-type select fire, the switch position at power-on picks the profile, so one switch sets the FPS.",
   "device:defaultProfileIndex":

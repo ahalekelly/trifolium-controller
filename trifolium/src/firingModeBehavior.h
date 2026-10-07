@@ -42,6 +42,10 @@ class FiringModeBehavior
     virtual const char* defaultName() const = 0;
     virtual void update(FiringContext& ctx, TriggerEvent event) const = 0;
 
+    // The live mode is switching away from this one - a select switch, the menu or SAFE. A mode
+    // that keeps state across ticks drops it here, so nothing resumes on the way back.
+    virtual void exit(FiringContext&) const {}
+
     // Confined to the given rect - x/y/w/h are DisplayManager's to decide, not the mode's.
     virtual void render(DisplayManager& display, int16_t x, int16_t y, int16_t w, int16_t h,
                         const FiringContext& ctx) const = 0;
