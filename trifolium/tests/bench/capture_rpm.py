@@ -129,6 +129,9 @@ def summarise(header, rows):
     table = [r.rstrip(",").split(",") for r in rows]
     volts = [int(r[0]) / 1000 for r in table]
     lines = [f"pack {volts[0]:.2f} V at the start, {min(volts):.2f} V lowest"]
+    if cols[1] == "Current_mv":
+        current = [int(r[1]) for r in table]
+        lines.append(f"ESC current pin {current[0]} mV at the start, {max(current)} mV highest")
     for c, name in enumerate(cols):
         if not name.startswith("Motor "):
             continue
