@@ -268,7 +268,7 @@ static bool revPinWired()
 static SecondsDisplayItem menuHoldTimeItem("Menu Hold Time", "device:menuButtonHoldTime_ms",
                                            &deviceSettings.menuButtonHoldTime_ms, 1000, 5000, 500);
 static NumericItem<int> voltageAvgWindowItem("Volt Avg Window", "device:voltageAveragingWindow",
-                                             &deviceSettings.voltageAveragingWindow, 1, 20, 1);
+                                             &deviceSettings.voltageAveragingWindow, 1, 16, 1);
 static ToggleItem rpmShotCounterItem("RPM Shot Counter", "device:useRpmBaseShotCounter",
                                      &deviceSettings.useRpmBaseShotCounter);
 static NumericItem<uint16_t> goodRpmReadsItem("Good RPM Reads", "device:goodRpmShotReads",

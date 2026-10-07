@@ -199,7 +199,8 @@ bool revRequestedNow()
     return !behaviorFor(burstMode).managesOwnRevLifecycle() && revSwitch.isPressed();
 }
 
-Motor motorsObj[4] = {Motor(0, 0, 0, 0), Motor(0, 0, 0, 0), Motor(0, 0, 0, 0), Motor(0, 0, 0, 0)};
+Motor motorsObj[4] = {Motor(0, 0, 0, 0, 0), Motor(0, 0, 0, 0, 0), Motor(0, 0, 0, 0, 0),
+                      Motor(0, 0, 0, 0, 0)};
 
 // Runtime resolution of motorConfig[].enabled: validatePusherAndMotors() clears entries whose ESC
 // channel this wiring cannot drive. The stored config is left alone.
@@ -299,14 +300,15 @@ void registerShot()
     updateRuntimeNow = true;
 }
 
-// Rebuilds motorsObj[i] from the active profile's PID gains/Kv/poles. Safe to call live.
+// Rebuilds motorsObj[i] from the device's PID gains/Kv/poles/voltage limit. Safe to call live.
 void applyMotorConfig()
 {
     for (int i = 0; i < 4; i++)
     {
         motorsObj[i] = Motor(deviceSettings.motorConfig[i].kp, deviceSettings.motorConfig[i].ki,
                              deviceSettings.motorConfig[i].motorKv,
-                             deviceSettings.motorConfig[i].motorPolesDiv2);
+                             deviceSettings.motorConfig[i].motorPolesDiv2,
+                             deviceSettings.motorConfig[i].maxSpinupVoltage_mv);
     }
 }
 
@@ -1318,12 +1320,11 @@ bool fwControlLoop()
                     if (motorsEnabled[i])
                     {
                         // for optimal rev let's set throttle to max until first crossing
-                        motorArr[i].PIDOutput =
-                            max(min(maxThrottle, (maxThrottle * motorArr[i].targetRPM /
-                                                  throttleReferenceVoltage_mv() * 1000 /
-                                                  motorArr[i].m_config->m_motorKv) +
-                                                     deviceSettings.throttleCap),
-                                0);
+                        motorArr[i].PIDOutput = motorArr[i].limitThrottle(
+                            (maxThrottle * motorArr[i].targetRPM / throttleReferenceVoltage_mv() *
+                             1000 / motorArr[i].m_config->m_motorKv) +
+                                deviceSettings.throttleCap,
+                            maxThrottle, throttleReferenceVoltage_mv(), deviceSettings.batteryType);
                         // premptly setup TBH variable to reduce overshoot
                         motorArr[i].PIDIntegral =
                             (2 *
@@ -1549,7 +1550,7 @@ bool fwControlLoop()
                 if (motorsEnabled[i])
                 {
                     motorArr[i].updateTBH(throttleReferenceVoltage_mv(), flywheelState,
-                                          maxThrottle);
+                                          maxThrottle, deviceSettings.batteryType);
                 }
             }
             break;
@@ -1562,7 +1563,8 @@ bool fwControlLoop()
         {
             if (motorsEnabled[i])
             {
-                motorArr[i].updateOpenLoop(throttleReferenceVoltage_mv(), maxThrottle);
+                motorArr[i].updateOpenLoop(throttleReferenceVoltage_mv(), maxThrottle,
+                                           deviceSettings.batteryType);
             }
         }
     }

@@ -65,7 +65,8 @@
         "kp": 0.1,
         "ki": 2.0,
         "motorKv": 1980,
-        "motorPolesDiv2": 7
+        "motorPolesDiv2": 7,
+        "maxSpinupVoltage_mv": 30000
       },
       {
         "enabled": true,
@@ -73,7 +74,8 @@
         "kp": 0.1,
         "ki": 2.0,
         "motorKv": 1980,
-        "motorPolesDiv2": 7
+        "motorPolesDiv2": 7,
+        "maxSpinupVoltage_mv": 30000
       },
       {
         "enabled": false,
@@ -81,7 +83,8 @@
         "kp": 0.1,
         "ki": 2.0,
         "motorKv": 1980,
-        "motorPolesDiv2": 7
+        "motorPolesDiv2": 7,
+        "maxSpinupVoltage_mv": 30000
       },
       {
         "enabled": false,
@@ -89,7 +92,8 @@
         "kp": 0.1,
         "ki": 2.0,
         "motorKv": 1980,
-        "motorPolesDiv2": 7
+        "motorPolesDiv2": 7,
+        "maxSpinupVoltage_mv": 30000
       }
     ],
     "flywheelControl": "pid",
