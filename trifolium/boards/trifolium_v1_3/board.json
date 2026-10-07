@@ -12,8 +12,7 @@
     "An ESC-driven pusher on this PCB is this wiring with Pusher Driver set to ESC and the channel left at ESC 3, which is GPIO 2."
   ],
   "unread": {
-    "telem": 4,
-    "escADC": 26
+    "telem": 4
   },
   "schemaVersion": 3,
   "boardId": "trifolium_v1_3",
@@ -27,6 +26,7 @@
   "i2cSdaPin": 14,
   "i2cSclPin": 15,
   "batteryAdcPin": 28,
+  "currentAdcPin": 26,
   "escEnablePin": 255,
   "menuButtonPin": 19,
   "triggerSwitchPin": 21,

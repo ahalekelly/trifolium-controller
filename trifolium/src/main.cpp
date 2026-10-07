@@ -76,6 +76,7 @@ bool wiringLive = false;
 // Same for the outputs: resolve() takes a pin away in RAM, leaving the stored config as written.
 uint8_t ledDataPin = PIN_NOT_USED;
 uint8_t batteryAdcPin = PIN_NOT_USED;
+uint8_t currentAdcPin = PIN_NOT_USED;
 uint8_t escEnablePin = PIN_NOT_USED;
 
 // deviceSettings.hasDisplay after the I2C pair has been judged. selectDisplayBus() re-checks, since
@@ -1420,7 +1421,7 @@ bool fwControlLoop()
             }
             if (deviceSettings.useRpmLogging)
             {
-                if (!rpmLogger.startCapture(deviceSettings.rpmLogLength))
+                if (!rpmLogger.startCapture(deviceSettings.rpmLogLength, currentAdcPin))
                     logger.error(
                         "RPM logging: capture buffer allocation failed, skipping this rev");
             }

@@ -3,6 +3,7 @@
 #include <new> // std::nothrow - startCapture() must not treat allocation failure as fatal
 #include "flywheelMotor.h"
 #include "logging.h"
+#include "types.h" // PIN_NOT_USED
 
 class RpmLogger
 {
@@ -10,7 +11,8 @@ class RpmLogger
     ~RpmLogger() { freeBuffers(); }
 
     // Returns false if the allocation failed - caller should just skip logging that rev cycle.
-    bool startCapture(uint32_t length)
+    // currentAdcPin is the ESC's current-sense output, or PIN_NOT_USED to leave its column out.
+    bool startCapture(uint32_t length, uint8_t currentAdcPin)
     {
         freeBuffers();
         targetRpmCache_ = new (std::nothrow) uint32_t[length][4];
@@ -18,11 +20,15 @@ class RpmLogger
         throttleCache_ = new (std::nothrow) int16_t[length][4];
         valueCache_ = new (std::nothrow) float[length][4];
         voltageCache_ = new (std::nothrow) int32_t[length]; // per sample, not per motor
-        if (!targetRpmCache_ || !rpmCache_ || !throttleCache_ || !valueCache_ || !voltageCache_)
+        if (currentAdcPin != PIN_NOT_USED)
+            currentCache_ = new (std::nothrow) int16_t[length]; // the 4-in-1's total, not per motor
+        if (!targetRpmCache_ || !rpmCache_ || !throttleCache_ || !valueCache_ || !voltageCache_ ||
+            (currentAdcPin != PIN_NOT_USED && !currentCache_))
         {
             freeBuffers();
             return false;
         }
+        currentAdcPin_ = currentAdcPin;
         length_ = length;
         cacheIndex_ = 0;
         return true;
@@ -34,6 +40,9 @@ class RpmLogger
         if (!armed() || cacheIndex_ >= length_)
             return;
         voltageCache_[cacheIndex_] = batteryVoltage_mv;
+        // The pin's own voltage, unscaled: amps per volt and the zero offset vary by ESC.
+        if (currentCache_)
+            currentCache_[cacheIndex_] = (analogRead(currentAdcPin_) * 3300L) / 1023;
         for (int i = 0; i < 4; i++)
         {
             if (motors[i])
@@ -59,7 +68,8 @@ class RpmLogger
             return false; // already dumped this capture
 
         char rowBuf[240];
-        int len = snprintf(rowBuf, sizeof(rowBuf), "Voltage_mv,");
+        int len = snprintf(rowBuf, sizeof(rowBuf), "%s",
+                           currentCache_ ? "Voltage_mv,Current_mv," : "Voltage_mv,");
         for (int j = 0; j < 4; j++)
         {
             if (motors[j])
@@ -71,6 +81,8 @@ class RpmLogger
         for (uint32_t i = 0; i < length_; i++)
         {
             len = snprintf(rowBuf, sizeof(rowBuf), "%ld,", (long)voltageCache_[i]);
+            if (currentCache_)
+                len += snprintf(rowBuf + len, sizeof(rowBuf) - len, "%d,", currentCache_[i]);
             for (int j = 0; j < 4; j++)
             {
                 if (motors[j])
@@ -100,11 +112,14 @@ class RpmLogger
         delete[] throttleCache_;
         delete[] valueCache_;
         delete[] voltageCache_;
+        delete[] currentCache_;
         targetRpmCache_ = nullptr;
         rpmCache_ = nullptr;
         throttleCache_ = nullptr;
         valueCache_ = nullptr;
         voltageCache_ = nullptr;
+        currentCache_ = nullptr;
+        currentAdcPin_ = PIN_NOT_USED;
         length_ = 0;
         cacheIndex_ = 0;
     }
@@ -114,6 +129,8 @@ class RpmLogger
     int16_t (*throttleCache_)[4] = nullptr;
     float (*valueCache_)[4] = nullptr;
     int32_t* voltageCache_ = nullptr;
+    int16_t* currentCache_ = nullptr; // null when no currentAdcPin is set
+    uint8_t currentAdcPin_ = PIN_NOT_USED;
     uint32_t length_ = 0;
     uint32_t cacheIndex_ = 0;
 };

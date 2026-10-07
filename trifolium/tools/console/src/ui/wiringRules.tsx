@@ -40,6 +40,12 @@ export const WIRING_RULES: WiringRule[] = [
       "channel is noise, and the low-voltage cutoff would act on it.",
   },
   {
+    field: "device:currentAdcPin",
+    text:
+      "The ESC current pin must be GPIO 26-29 too. Anything else is folded to unused, since a " +
+      "pin with no ADC channel would fill the RPM capture's current column with noise.",
+  },
+  {
     field: "device:i2cSdaPin",
     text:
       "SDA and SCL have to be a servable pair. A GPIO's I2C role is fixed in silicon by pin % 4: " +

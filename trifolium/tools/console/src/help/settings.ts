@@ -119,6 +119,8 @@ export const SETTING_HELP: Record<string, string> = {
   "device:i2cSclPin":
     "The clock pin of the screen's I2C bus. SDA and SCL must be a pair the RP2040 can use together.",
   "device:batteryAdcPin": "The analog pin, GPIO 26 to 29, that reads the battery voltage divider.",
+  "device:currentAdcPin":
+    "The analog pin, GPIO 26 to 29, wired to the ESC's current-sense output. RPM captures log its voltage as Current_mv.",
   "device:escEnablePin":
     "A pin that switches the ESCs' power on once the blaster boots, and off once the flywheels stop after a low-voltage cutoff. Only for boards with that circuit.",
   "device:pusherFetPin": "The pin that switches the solenoid's FET.",

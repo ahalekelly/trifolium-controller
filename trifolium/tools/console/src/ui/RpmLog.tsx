@@ -127,6 +127,15 @@ export function RpmLog({ schema, device, onEdit, logText, capturing }: RpmLogPro
         axis: "right",
       });
     }
+    if (parsed.current.length) {
+      out.push({
+        name: "ESC current mV",
+        colour: "#e8710a",
+        values: parsed.current.slice(0, cut),
+        dash: "2 2",
+        axis: "right",
+      });
+    }
     return out;
   }, [parsed, trim, showThrottle]);
 

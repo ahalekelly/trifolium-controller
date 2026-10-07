@@ -7,8 +7,7 @@
     "Two motors, no menu button. The idle switch and a third select line sit where a Trifolium puts rev and menu."
   ],
   "unread": {
-    "telem": 255,
-    "escADC": 255
+    "telem": 255
   },
   "schemaVersion": 3,
   "boardId": "diana_v1_0",
@@ -22,6 +21,7 @@
   "i2cSdaPin": 255,
   "i2cSclPin": 255,
   "batteryAdcPin": 28,
+  "currentAdcPin": 255,
   "escEnablePin": 255,
   "menuButtonPin": 255,
   "triggerSwitchPin": 6,

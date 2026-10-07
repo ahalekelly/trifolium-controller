@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bench_harness as H  # noqa: E402
 
 LOG_LENGTH = 2000  # the firmware's MAX_RPM_LOG_LENGTH
-HEADER_RE = re.compile(r"^Voltage_mv,(Motor \d+,TargetRPM \d+,Throttle \d+,value \d+,)+$")
+HEADER_RE = re.compile(r"^Voltage_mv,(Current_mv,)?(Motor \d+,TargetRPM \d+,Throttle \d+,value \d+,)+$")
 WAIT_FOR_ACTION_S = 120
 PIN_NOT_USED = 255
 
@@ -129,6 +129,9 @@ def summarise(header, rows):
     table = [r.rstrip(",").split(",") for r in rows]
     volts = [int(r[0]) / 1000 for r in table]
     lines = [f"pack {volts[0]:.2f} V at the start, {min(volts):.2f} V lowest"]
+    if cols[1] == "Current_mv":
+        current = [int(r[1]) for r in table]
+        lines.append(f"ESC current pin {current[0]} mV at the start, {max(current)} mV highest")
     for c, name in enumerate(cols):
         if not name.startswith("Motor "):
             continue
