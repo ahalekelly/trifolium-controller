@@ -61,7 +61,7 @@ def test_a_boot_action_never_fires_on_a_reboot_only_from_power_on(blaster):
     assert b.state == "running"
 
 
-def test_below_the_cutoff_the_status_led_blinks_and_above_it_holds_steady(blaster):
+def test_below_the_cutoff_the_status_led_blinks_and_keeps_blinking_once_the_cutoff_trips(blaster):
     b = blaster
     b.flash_preset("trifolium_v1_2", {"ledDataPin": 22})
     assert b.boot(3000)
@@ -73,9 +73,9 @@ def test_below_the_cutoff_the_status_led_blinks_and_above_it_holds_steady(blaste
     toggles = len(b.edges(22)) - 1
     assert 5 <= toggles <= 7
 
-    b.set_pack(16400)
-    b.run_ms(100)
-    assert b.pin(22)["outputLevel"] is True
+    b.set_pack(16400)  # a pack the cutoff has tripped on stays tripped until reboot
+    b.run_ms(1000)
+    assert len(b.edges(22)) - 1 > toggles
 
 
 def test_a_trigger_wired_to_an_esc_pin_is_detached_and_reported_and_the_esc_keeps_it(blaster):
