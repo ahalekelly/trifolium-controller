@@ -1285,6 +1285,19 @@ bool fwControlLoop()
         return true;
     }
 
+    // SAFE and the menu bring the wheels down from any state, along the ramp a released rev takes:
+    // no spin-up, dwell or idle window holds them up. FULLSPEED leaves through its own exit, which
+    // lets an extended pusher retract first.
+    if (!revControlAllowed())
+    {
+        lastRevTime_ms = 0;
+        if (flywheelState == STATE_ACCELERATING)
+        {
+            flywheelState = STATE_IDLE;
+            logger.info("State transition: ACCELERATING to IDLE, rev not allowed");
+        }
+    }
+
     switch (flywheelState)
     {
 

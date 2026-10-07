@@ -131,7 +131,7 @@ export const SETTING_HELP: Record<string, string> = {
   "device:idleSwitchPin":
     "The pin of the idle switch. While it is on, the flywheels wait at idle RPM instead of stopping.",
   "device:safetySwitchPin":
-    "The pin of the safety switch. While it is engaged the blaster is in SAFE: no rev, no fire.",
+    "The pin of the safety switch. While it is engaged the blaster is in SAFE: the flywheels spin down, and it will not rev or fire.",
   "device:select0Pin":
     "A select-switch pin. With a switch-type select fire each wired select pin is one switch position; with a button type, this one is the button.",
   "device:select1Pin":
