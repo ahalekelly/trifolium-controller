@@ -53,7 +53,9 @@ export function runSettings(
 }
 
 export class TuneRunner {
-  private run: Saved = loadRun();
+  /** Read from the browser by load(), once the Tune tab first opens. */
+  private run: Saved = null;
+  private loaded = false;
   private listeners = new Set<() => void>();
   private pauseWanted = false;
   private looping = false;
@@ -68,9 +70,23 @@ export class TuneRunner {
 
   getRun = () => this.run;
 
+  /** Whether a run is driving the blaster. */
+  running = () => this.looping;
+
+  /** The run saved in this browser, read the first time it is asked for. */
+  load() {
+    if (this.loaded) return;
+    this.loaded = true;
+    this.run = loadRun();
+  }
+
   private set(run: Run | null) {
     this.run = run;
     saveRun(run);
+    this.notify();
+  }
+
+  private notify() {
     for (const listener of this.listeners) listener();
   }
 
@@ -168,6 +184,7 @@ export class TuneRunner {
       update({ ...run, status: "paused", note: (e as Error).message });
     } finally {
       this.looping = false;
+      this.notify();
       await this.untune();
     }
   }

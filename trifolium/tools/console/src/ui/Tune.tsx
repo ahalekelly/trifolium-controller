@@ -215,6 +215,7 @@ export function Tune({
   /** Writes the winner's gains to the device's stored settings. */
   onApply: (gains: Gains) => void;
 }) {
+  runner.load();
   const run = React.useSyncExternalStore(runner.subscribe, runner.getRun);
   const { mode, form } = draft;
   const config = configOf(draft, gainMax);

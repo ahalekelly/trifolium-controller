@@ -222,8 +222,7 @@ export function App() {
     [],
   );
   const tuneRunner = React.useMemo(() => new TuneRunner(transport), [transport]);
-  const tuneRun = React.useSyncExternalStore(tuneRunner.subscribe, tuneRunner.getRun);
-  const tuning = tuneRun !== null && tuneRun !== "unreadable" && tuneRun.status === "running";
+  const tuning = React.useSyncExternalStore(tuneRunner.subscribe, tuneRunner.running);
   const [tuneDraft, setTuneDraft] = React.useState(DEFAULT_DRAFT);
   React.useEffect(() => {
     if (live) tuneRunner.connected();
