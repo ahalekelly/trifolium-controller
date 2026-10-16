@@ -15,8 +15,8 @@ export interface FakeEsc {
   block: Uint8Array;
   /** DeviceInitFlash attempts this ESC ignores first, as one still on its way into its bootloader. */
   initFailures?: number;
-  /** Flips this byte of every block written, as flash that did not take the write. */
-  corruptByte?: number;
+  /** Flips `byte` of the next `writes` blocks written, as flash that did not take them. */
+  corrupt?: { byte: number; writes: number };
 }
 
 export function fourwayReply(command: number, address: number, params: Uint8Array, ack: number) {
@@ -46,7 +46,8 @@ export class FakeBlaster implements ByteLink {
     const [, command, hi, lo, count] = frame;
     const address = (hi << 8) | lo;
     const params = frame.subarray(5, 5 + (count || 256));
-    this.log.push([command, command === CMD.DeviceInitFlash ? params[0] : this.current]);
+    const addressed = command === CMD.DeviceInitFlash || command === CMD.DeviceReset;
+    this.log.push([command, addressed ? params[0] : this.current]);
     this.queue.push(this.answer(command, address, params));
   }
 
@@ -71,7 +72,10 @@ export class FakeBlaster implements ByteLink {
         const esc = this.escs[this.current];
         if (address !== SETTINGS) throw new Error(`fake ESC only takes writes at its settings, not ${address}`);
         const block = params.slice();
-        if (esc.corruptByte !== undefined) block[esc.corruptByte] ^= 0xff;
+        if (esc.corrupt && esc.corrupt.writes > 0) {
+          esc.corrupt.writes--;
+          block[esc.corrupt.byte] ^= 0xff;
+        }
         esc.block = block;
         this.writes.push(this.current);
         return ok();
