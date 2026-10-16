@@ -42,7 +42,9 @@ bool menuIsOpen();
 bool revControlAllowed();
 bool driveTrainStopped();
 extern volatile bool directMotorControlActive;
-void spinOneMotor(int motorIndex); // menuMotors.cpp, shared with the menu's motor actions
+// menuMotors.cpp, shared with the menu's motor actions.
+void spinOneMotor(int motorIndex);
+void writeEscDirection(int motorIndex, bool reversed);
 
 volatile bool serialCommandSeen = false;
 
@@ -463,6 +465,22 @@ void handleSerialCommands()
         spinOneMotor(explicitIndex);
         directMotorControlActive = false;
         ackOk("TEST_MOTOR", explicitIndex, false, false);
+    }
+    else if (command == "ESC_DIRECTION")
+    {
+        // "ESC_DIRECTION <motor> normal|reversed": the menu's Change Direction, named, not toggled.
+        const int motorIndex = argument.indexOf(' ') == 1 ? argument[0] - '0' : -1;
+        const String direction = argument.substring(2);
+        if (direction != "normal" && direction != "reversed")
+        {
+            ackError("ESC_DIRECTION", -1, "needs normal or reversed");
+            return;
+        }
+        if (!takeMotor("ESC_DIRECTION", motorIndex))
+            return;
+        writeEscDirection(motorIndex, direction == "reversed");
+        directMotorControlActive = false;
+        ackOk("ESC_DIRECTION", motorIndex, false, false);
     }
     else if (command == "DUMP_DEVICE")
     {

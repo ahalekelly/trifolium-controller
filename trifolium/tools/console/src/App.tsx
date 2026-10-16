@@ -578,12 +578,19 @@ export function App() {
     }
   };
 
-  /** A motor action from the Motors & PID section. The device says why when it refuses one. */
-  const motorAction = async (command: string) => {
+  /**
+   * Motor actions from the Motors & PID section, run in order until the device refuses one, which
+   * it says why.
+   */
+  const motorActions = async (...commands: string[]) => {
     setBusy(true);
     try {
-      const ack = await transport.request<CommandAck>(command, TIMEOUT_MOTOR_MS);
-      if (ack) note(ack.ok ? "ok" : "err", ack.ok ? `${command}: done` : `${command}: ${ack.err}`);
+      for (const command of commands) {
+        const ack = await transport.request<CommandAck>(command, TIMEOUT_MOTOR_MS);
+        if (!ack) return;
+        note(ack.ok ? "ok" : "err", ack.ok ? `${command}: done` : `${command}: ${ack.err}`);
+        if (!ack.ok) return;
+      }
     } finally {
       setBusy(false);
     }
@@ -1263,7 +1270,14 @@ export function App() {
                               <MotorActions
                                 device={device}
                                 disabled={busy}
-                                onTest={(motor) => void motorAction(`TEST_MOTOR ${motor}`)}
+                                onTest={(motor) => void motorActions(`TEST_MOTOR ${motor}`)}
+                                // The spin is the readback: an ESC cannot report its direction.
+                                onDirection={(motor, direction) =>
+                                  void motorActions(
+                                    `ESC_DIRECTION ${motor} ${direction}`,
+                                    `TEST_MOTOR ${motor}`,
+                                  )
+                                }
                               />
                             )}
                             <EscSetup device={device} />

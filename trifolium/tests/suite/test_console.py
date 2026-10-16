@@ -360,6 +360,24 @@ def test_an_rpm_capture_from_a_rev_charts_every_motor_at_the_length_the_device_p
     expect(page.get_by_text(re.compile(rf"^2 motors, {length} samples"))).to_be_visible()
 
 
+def test_a_direction_set_from_motors_and_pid_is_written_then_spun_and_a_refusal_says_why(page, serve):
+    served = serve()
+    connect(open_console(page, served))
+    served.wait_armed()
+    page.get_by_role("tab", name="Device").click()
+    motor2 = page.get_by_text("Motor 2", exact=True).locator("..")
+    motor2.get_by_role("button", name="Reversed").click()
+    expect(page.get_by_text("ESC_DIRECTION 1 reversed: done")).to_be_visible()
+    expect(page.get_by_text("TEST_MOTOR 1: done")).to_be_visible(timeout=10000)
+    assert served.bench("wheels")["wheels"][1]["peak"] > 1000
+
+    served.bench("press", role="rev")
+    served.run_for(300)
+    motor2.get_by_role("button", name="Test").click()
+    expect(page.get_by_text("TEST_MOTOR 1: flywheels are running")).to_be_visible()
+    served.bench("release", role="rev")
+
+
 def test_a_setting_that_governs_others_shows_and_hides_them_as_it_is_edited(page, serve):
     """The console evaluates the schema's visibleWhen itself, so the rows move before any write."""
     served = serve()

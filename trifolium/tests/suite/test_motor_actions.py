@@ -49,3 +49,29 @@ def test_a_motor_action_is_refused_while_the_menu_runs_one(blaster):
     b.tap("menu")
     assert b.run_until(lambda: b.panel().shows("any press = stop"), 500, step_ms=5)
     assert refusal(b, "TEST_MOTOR 3")["err"] == "a motor action is already running"
+
+
+SPIN_DIRECTION_1, SPIN_DIRECTION_2, SAVE_SETTINGS = 7, 8, 12
+
+
+def test_esc_direction_writes_the_named_direction_and_a_save_to_that_esc_alone(blaster):
+    """Absolute, so no toggle state: the same command twice writes the same thing twice."""
+    b = armed_v12(blaster, display=False)
+    for line, direction in (("ESC_DIRECTION 1 reversed", SPIN_DIRECTION_2),
+                            ("ESC_DIRECTION 1 reversed", SPIN_DIRECTION_2),
+                            ("ESC_DIRECTION 1 normal", SPIN_DIRECTION_1)):
+        before, other = len(b.escs()[1]["commands"]), len(b.escs()[3]["commands"])
+        assert b.command(line) == {"cmd": "ESC_DIRECTION", "ok": True, "index": 1,
+                                   "clamped": False, "rebooting": False}
+        sent = b.escs()[1]["commands"][before:]
+        assert sent == [direction] * sent.count(direction) + [SAVE_SETTINGS] * sent.count(SAVE_SETTINGS)
+        assert sent.count(direction) >= 6 and sent.count(SAVE_SETTINGS) >= 6
+        assert b.escs()[3]["commands"][other:] == []
+
+
+def test_esc_direction_is_refused_without_a_direction(blaster):
+    b = armed_v12(blaster, display=False)
+    assert refusal(b, "ESC_DIRECTION 1 backwards")["err"] == "needs normal or reversed"
+    assert refusal(b, "ESC_DIRECTION 1")["err"] == "needs normal or reversed"
+    assert all(c not in (SPIN_DIRECTION_1, SPIN_DIRECTION_2) for e in b.escs().values()
+               for c in e["commands"])

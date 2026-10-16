@@ -72,6 +72,26 @@ void spinOneMotor(int motorIndex)
     holdAllMotorsStopped(1);
 }
 
+// The ESC side of the menu's Change Direction and the console's ESC_DIRECTION. The caller holds
+// directMotorControlActive.
+void writeEscDirection(int motorIndex, bool reversed)
+{
+    holdAllMotorsStopped(ESC_SETTLE_FRAMES);
+    for (int rep = 0; rep < ESC_CMD_REPEATS; rep++)
+    {
+        motorArr[motorIndex].esc->sendRaw11Bit(reversed ? DSHOT_CMD_SPIN_DIRECTION_2
+                                                        : DSHOT_CMD_SPIN_DIRECTION_1);
+        delayMicroseconds(1000);
+    }
+    for (int rep = 0; rep < ESC_CMD_REPEATS; rep++)
+    {
+        motorArr[motorIndex].esc->sendRaw11Bit(DSHOT_CMD_SAVE_SETTINGS);
+        delayMicroseconds(1000);
+    }
+    // Command 12 writes the ESC's own flash, so keep the stream up until it is done.
+    holdAllMotorsStopped(ESC_SETTLE_FRAMES);
+}
+
 // Which value the next press writes. Never shown as the ESC's state: dir_reversed is not ground
 // truth about which way a wheel turns - swapping two phase wires reverses a motor without touching
 // it. This only decides which absolute command comes next; the spin at the end is the arbiter.
@@ -96,22 +116,7 @@ static void changeEscDirection(int motorIndex)
     display.display();
 
     directMotorControlActive = true;
-    holdAllMotorsStopped(ESC_SETTLE_FRAMES);
-
-    for (int rep = 0; rep < ESC_CMD_REPEATS; rep++)
-    {
-        motorArr[motorIndex].esc->sendRaw11Bit(reversed ? DSHOT_CMD_SPIN_DIRECTION_2
-                                                        : DSHOT_CMD_SPIN_DIRECTION_1);
-        delayMicroseconds(1000);
-    }
-    for (int rep = 0; rep < ESC_CMD_REPEATS; rep++)
-    {
-        motorArr[motorIndex].esc->sendRaw11Bit(DSHOT_CMD_SAVE_SETTINGS);
-        delayMicroseconds(1000);
-    }
-
-    // Command 12 writes the ESC's own flash, so keep the stream up until it is done.
-    holdAllMotorsStopped(ESC_SETTLE_FRAMES);
+    writeEscDirection(motorIndex, reversed);
 
     // The spin is the readback. It is the only thing that says which way this wiring actually
     // turns, which is the question the user has - not what dir_reversed now holds.
