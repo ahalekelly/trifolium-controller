@@ -17,15 +17,20 @@ type Direction = "normal" | "reversed";
 /** One motor of a DUMP_MOTORS reply. EDT values are null until that ESC sends one. */
 interface MotorStatus {
   enabled: boolean;
+  targetRPM: number;
   motorRPM: number;
   edt: { v: number | null; i: number | null; t: number | null };
 }
 
 export interface MotorsDump {
   motors: MotorStatus[];
+  /** flywheelState_t's ordinal. */
+  flywheelState: number;
   menuOpen: boolean;
   /** The effective fire mode's id - "safe" while the safety switch is held, too. */
   burstMode: string;
+  /** False while SAFE, the menu or the battery rule out a rev. */
+  revAllowed: boolean;
 }
 
 /** DUMP_MOTORS' motorRPM and EDT values, in column order. */

@@ -2,15 +2,11 @@ import React from "react";
 import Button from "@mui/material/Button";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
+import type { SwitchRole } from "../serial/transport";
 
 // Rev and Fire, held from the browser. Each acts only while the pointer is down on it: leaving the
 // button, the window losing focus or the tab going hidden all let go. The device lets go too if the
 // console stops renewing the hold, so a dropped link cannot leave the blaster revving.
-
-export type SwitchRole = "rev" | "trigger";
-
-/** How often a held Rev or Fire renews its hold - well inside the device's 300 ms lapse. */
-const RENEW_MS = 100;
 
 const BUTTONS: { role: SwitchRole; label: string }[] = [
   { role: "rev", label: "Rev" },
@@ -23,12 +19,15 @@ export function ConsoleSwitches({
 }: {
   /** Why the buttons cannot be used right now ("" when disconnected), or null when they can. */
   blocked: string | null;
-  /** Called with true on press and every RENEW_MS while held, then once with false. */
-  onHold: (role: SwitchRole, held: boolean) => void;
+  /**
+   * Holds the switch until the returned function lets go. onLost: the hold ended without being let
+   * go here - the blaster refused it.
+   */
+  onHold: (role: SwitchRole, onLost: () => void) => () => void;
 }) {
-  // Each held button's renewal timer. A ref rather than state, so a press starts exactly one;
+  // How to let go of each held button. A ref rather than state, so a press holds exactly once;
   // render() repaints.
-  const pressed = React.useRef(new Map<SwitchRole, ReturnType<typeof setInterval>>()).current;
+  const pressed = React.useRef(new Map<SwitchRole, () => void>()).current;
   const [, render] = React.useReducer((n: number) => n + 1, 0);
   const onHoldRef = React.useRef(onHold);
   onHoldRef.current = onHold;
@@ -36,13 +35,16 @@ export function ConsoleSwitches({
   const press = (role: SwitchRole, held: boolean) => {
     if (pressed.has(role) === held) return;
     if (held) {
-      const hold = () => onHoldRef.current(role, true);
-      hold();
-      pressed.set(role, setInterval(hold, RENEW_MS));
+      pressed.set(
+        role,
+        onHoldRef.current(role, () => {
+          pressed.delete(role);
+          render();
+        }),
+      );
     } else {
-      clearInterval(pressed.get(role));
+      pressed.get(role)!();
       pressed.delete(role);
-      onHoldRef.current(role, false);
     }
     render();
   };

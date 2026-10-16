@@ -358,9 +358,7 @@ def test_an_rpm_capture_from_a_rev_downloads_and_charts_itself_with_every_motor(
     # Named to the second, so captures a minute apart never collide.
     stamped = re.compile(r"rpm-capture-\d{4}(-\d\d){2}_\d\d(-\d\d){2}\.csv")
     assert stamped.fullmatch(download.value.suggested_filename)
-    expect(page.get_by_text("RPM capture finished - device is back.")).to_be_visible(
-        timeout=REBOOT_MS)
-    expect(page.get_by_text(re.compile(r"Connected · fw \d"))).to_be_visible()
+    expect(page.get_by_text("RPM capture finished.")).to_be_visible()
 
     summary = re.compile(rf"^2 motors, {served.settings()['rpmLogLength']} samples")
     expect(page.get_by_text(summary)).to_be_visible()
@@ -374,6 +372,79 @@ def test_an_rpm_capture_from_a_rev_downloads_and_charts_itself_with_every_motor(
     with page.expect_download() as download:
         save.check()
     assert stamped.fullmatch(download.value.suggested_filename)
+
+
+def test_a_tune_run_on_noisy_wheels_drops_the_slow_and_the_overshooting_then_applies_the_best(
+        page, serve):
+    """Each wheel's start from rest varies by 25 ms either way, as a real ESC's does. Under that
+    noise kp 0.02 spins up slowest and 0.2 fastest, and kp 1 overshoots past a 1% limit."""
+    served = serve(device={"useRpmLogging": True, "rpmLogLength": 1200},
+                   profiles={1: {"schemaVersion": 2, "dwellTime_ms": 0}})
+    for wheel in (1, 3):
+        served.bench("wheel", index=wheel, startDelaySpread=0.025)
+    connect(open_console(page, served))
+    served.wait_armed()
+    page.get_by_role("tab", name="Tune").click()
+    page.get_by_label("PID kp values").fill("0.02, 0.05, 0.2, 1")
+    page.get_by_label("PID ki values").fill("1")
+    page.get_by_label("Spin-ups per finalist").fill("3")
+    page.get_by_label("Overshoot limit %").fill("1")
+    page.get_by_label("Pause below V a cell").fill("3")
+    downloads = []
+    page.on("download", lambda d: downloads.append(d))  # Save CSV files is on; a run skips it
+    page.get_by_role("button", name="Start").click()
+    expect(page.get_by_text("Done.")).to_be_visible(timeout=180_000)
+    assert downloads == []
+    status = lambda name: page.get_by_role("row", name=re.compile(f"^{re.escape(name)} "))
+    expect(status("PID kp 0.2 ki 1")).to_contain_text("best")
+    expect(status("PID kp 0.05 ki 1")).to_contain_text("finalist")
+    expect(status("PID kp 0.02 ki 1")).to_contain_text("dropped in round 1")
+    expect(status("PID kp 1 ki 1")).to_contain_text("dropped in round 1")
+    # Nothing stored until the winner is applied, which writes it to every motor.
+    assert served.settings()["motorConfig"][1]["ki"] == 0.5
+    page.get_by_role("button", name="Apply PID kp 0.2 ki 1").click()
+    expect(page.get_by_text("Applied PID kp 0.2 ki 1.")).to_be_visible(timeout=REBOOT_MS)
+    assert [m["ki"] for m in served.settings()["motorConfig"]][1::2] == [1, 1]
+
+
+def test_a_tune_run_outlives_a_reload_paused_then_resumes_to_the_end_and_exports(page, serve):
+    served = serve(device={"useRpmLogging": True, "rpmLogLength": 1200},
+                   profiles={1: {"schemaVersion": 2, "dwellTime_ms": 0}})
+    connect(open_console(page, served))
+    served.wait_armed()
+    page.get_by_role("tab", name="Tune").click()
+    page.get_by_label("PID kp values").fill("0.2")
+    page.get_by_label("PID ki values").fill("1")
+    page.get_by_label("Spin-ups per finalist").fill("2")
+    page.get_by_label("Pause below V a cell").fill("3")
+    page.get_by_role("button", name="Start").click()
+    expect(page.get_by_text(re.compile("^Running round 1 of 1. 1 of about 2"))).to_be_visible(
+        timeout=30000)
+
+    page.reload()
+    page.get_by_role("tab", name="Tune").click()
+    expect(page.get_by_text("The console was closed mid-run. Resume to carry on.")).to_be_visible()
+    expect(page.get_by_role("button", name="Resume")).to_be_disabled()
+    connect(page)
+    page.get_by_role("button", name="Resume").click()
+    expect(page.get_by_text("Done.")).to_be_visible(timeout=60000)
+    with page.expect_download() as download:
+        page.get_by_role("button", name="Export JSON").click()
+    run = json.loads(open(download.value.path(), encoding="utf-8").read())
+    assert [s["id"] for s in run["sets"]] == ["baseline", "PID kp 0.2 ki 1", "PID kp 0.2 ki 1",
+                                              "baseline"]
+
+
+def test_a_tune_run_pauses_for_a_pack_swap_once_a_cell_reads_below_the_level_set(page, serve):
+    served = serve(device={"useRpmLogging": True, "rpmLogLength": 1200})
+    connect(open_console(page, served))
+    served.wait_armed()
+    page.get_by_role("tab", name="Tune").click()
+    page.get_by_label("Pause below V a cell").fill("4.3")  # a charged cell is 4.2
+    page.get_by_role("button", name="Start").click()
+    paused = re.compile(r"^The pack read 4\.\d\d V a cell, below 4\.30 V\. Swap it")
+    expect(page.get_by_text(paused)).to_be_visible(timeout=30000)
+    expect(page.get_by_role("button", name="Resume")).to_be_enabled()
 
 
 def test_a_direction_set_from_motors_and_pid_is_written_then_spun_and_a_refusal_says_why(page, serve):

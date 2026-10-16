@@ -18,6 +18,7 @@ import {
   type Preset,
 } from "./schema/presets";
 import { needsPresetPicker } from "./schema/wiring";
+import { asBound, boundsToReal } from "./schema/grid";
 import { diagramForBoardId } from "./schema/wiringDiagrams";
 import { buildPatch, getByKey, setByKey } from "./schema/keyPath";
 import { walk, type BootStatus, type Schema, type SchemaNode } from "./schema/types";
@@ -27,12 +28,14 @@ import {
   SerialTransport,
   TIMEOUT_MOTOR_MS,
   TIMEOUT_SCHEMA_MS,
+  type Capture,
   type CommandAck,
   type LogLine,
+  type SwitchRole,
 } from "./serial/transport";
 import { bundleFilename, buildBundle, checkBundle, diffKeys, downloadJson } from "./config/bundle";
 import { blasterLoads, schemaMismatch, type Blaster } from "./config/blasters";
-import { extractRpmCsv, LOG_LINE_CAP, wholeRows } from "./rpm/parse";
+import { LOG_LINE_CAP, wholeRows } from "./rpm/parse";
 import { applyLayout } from "./ui/applyLayout";
 import { PresetApplyDialog } from "./ui/PresetApplyDialog";
 import { DirtyKeys } from "./ui/dirty";
@@ -40,7 +43,7 @@ import { PresetPicker } from "./ui/PresetPicker";
 import { BootFaults } from "./ui/BootFaults";
 import { EscSetup } from "./ui/EscSetup";
 import { MotorActions, type MotorsDump } from "./ui/MotorActions";
-import { ConsoleSwitches, type SwitchRole } from "./ui/ConsoleSwitches";
+import { ConsoleSwitches } from "./ui/ConsoleSwitches";
 import { FireModes } from "./ui/FireModes";
 import { FlashDialog } from "./ui/FlashDialog";
 import { DEVICE_LAYOUT, PROFILE_LAYOUT } from "./ui/layout";
@@ -62,6 +65,9 @@ import { ConsoleFooter } from "./ui/ConsoleFooter";
 import { Fieldset, Section, type Payloads } from "./ui/Section";
 import { countFields, deriveSections, pruneToStore, type Store } from "./ui/sections";
 import { Splash } from "./ui/Splash";
+import { DEFAULT_DRAFT, Tune } from "./ui/Tune";
+import { TuneRunner } from "./tune/runner";
+import { gainsLabel, type Gains } from "./tune/run";
 import { CONFIG_ACCEPT, TopBar, type LoadIntent } from "./ui/TopBar";
 
 // Real replies captured from a device, checked in so the whole form can be built and reviewed with
@@ -126,7 +132,7 @@ const OFFLINE_DEVICE = {
   ...(OFFLINE_PRESET?.wiring ?? {}),
 };
 
-type TabId = "profile" | "device" | "rpm" | "splash" | "wiring" | "raw";
+type TabId = "profile" | "device" | "rpm" | "tune" | "splash" | "wiring" | "raw";
 
 /** How often the motors panel asks for DUMP_MOTORS - the menu's ESC Dashboard redraws at 10 Hz. */
 const MOTOR_POLL_MS = 500;
@@ -194,9 +200,9 @@ export function App() {
   // null closed; {to: null} open with nothing picked yet.
   const [copyTo, setCopyTo] = React.useState<{ to: number | null } | null>(null);
 
-  // The transport is built once, so it reaches afterReboot() - rebuilt every render - through this.
-  const onRebooting = React.useRef<(reason: string) => void>(() => {});
-  // RPM captures finished this session; each one's dump is in the log before its reboot is seen.
+  // The transport is built once, so it reaches state - rebuilt every render - through this.
+  const onCapture = React.useRef<(capture: Capture) => void>(() => {});
+  // RPM captures finished this session; each one's dump is in the log by the time it counts.
   const [captures, setCaptures] = React.useState(0);
   const [autoSaveCaptures, setAutoSaveCaptures] = React.useState(true);
   const transport = React.useMemo(
@@ -209,10 +215,22 @@ export function App() {
           // Faults describe the boot of a device that is no longer attached.
           setBoot(null);
         },
-        onRebooting: (reason) => onRebooting.current(reason),
+        onCapture: (capture) => onCapture.current(capture),
       }),
     [],
   );
+  const tuneRunner = React.useMemo(() => new TuneRunner(transport), [transport]);
+  const [tuneDraft, setTuneDraft] = React.useState(DEFAULT_DRAFT);
+  // With Save CSV files on, every finished capture downloads as it arrives, whichever tab is open -
+  // a tuning run's aside, which are hundreds.
+  onCapture.current = (capture) => {
+    const tuning = tuneRunner.getRun()?.status === "running";
+    tuneRunner.capture(capture);
+    setCaptures((n) => n + 1);
+    if (tuning) return;
+    note("ok", "RPM capture finished.");
+    if (autoSaveCaptures) downloadCsv(wholeRows(capture.csv).csv);
+  };
 
   const note = (kind: LogLine["kind"], text: string) =>
     setLog((prev) => [...prev, { kind, text, at: Date.now() }]);
@@ -227,14 +245,6 @@ export function App() {
         .join("\n"),
     [log],
   );
-
-  // With Save CSV files on, every finished capture downloads as it arrives, whichever tab is open.
-  React.useEffect(() => {
-    if (captures === 0 || !autoSaveCaptures) return;
-    const csv = extractRpmCsv(deviceLogText);
-    if (csv) downloadCsv(wholeRows(csv).csv);
-    // Keyed on the count alone: the log growing afterwards must not download the capture again.
-  }, [captures]);
 
   const store: Store = tab === "device" || tab === "wiring" ? "device" : "profile";
 
@@ -504,10 +514,6 @@ export function App() {
     }
     note("err", `${label}, but the device did not come back. Reconnect when it has restarted.`);
   };
-  onRebooting.current = (reason) => {
-    if (reason === "rpmLog") setCaptures((n) => n + 1);
-    void afterReboot(reason === "rpmLog" ? "RPM capture finished" : "The device restarted");
-  };
 
   /**
    * Only a plain reboot comes back to us. The other two hand the device to something else, and the
@@ -632,10 +638,11 @@ export function App() {
     };
   }, [live, tab, busy, transport]);
 
-  // Not awaited: the device lets go if a renewal is late, so the next one goes out on time
-  // whatever became of the last one's reply.
-  const holdSwitch = (role: SwitchRole, held: boolean) =>
-    void transport.poll(`${held ? "HOLD" : "RELEASE"} ${role}`);
+  const holdSwitch = (role: SwitchRole, onLost: () => void) =>
+    transport.hold(role, (err) => {
+      note("err", `HOLD ${role}: ${err}`);
+      onLost();
+    });
   const switchesBlocked = !live
     ? ""
     : busy || motorsDump === null
@@ -645,6 +652,32 @@ export function App() {
         : motorsDump.burstMode === "safe"
           ? "The blaster is in SAFE."
           : null;
+
+  /** The largest kp and ki the device takes, off its own schema rows. */
+  const gainMax = React.useMemo(() => {
+    const max = (key: string) => {
+      const node = nodeFor(schema, key);
+      return node?.hi === undefined ? NaN : boundsToReal(asBound(node.hi), node.decimals);
+    };
+    return { kp: max("device:motorConfig[0].kp"), ki: max("device:motorConfig[0].ki") };
+  }, [schema]);
+
+  /**
+   * Stores a tuning run's winner: its control mode, and its gains on every enabled motor - TBH
+   * reads ki alone. A LOAD_DEVICE like any other, so it reboots and is read back.
+   */
+  const applyGains = async (gains: Gains) => {
+    const motors = getByKey(device, "device:motorConfig") as { enabled: boolean }[];
+    const entries: { key: string; value: unknown }[] = [
+      { key: "device:flywheelControl", value: gains.control },
+    ];
+    motors.forEach((m, i) => {
+      if (!m.enabled) return;
+      if (gains.control === "pid") entries.push({ key: `device:motorConfig[${i}].kp`, value: gains.kp });
+      entries.push({ key: `device:motorConfig[${i}].ki`, value: gains.ki });
+    });
+    if (await applyDeviceValues(entries)) note("ok", `Applied ${gainsLabel(gains)}.`);
+  };
 
   const askReset = (kind: ResetKind) =>
     setPendingReset(
@@ -1240,6 +1273,7 @@ export function App() {
               <Tab value="profile" label="Profile" />
               <Tab value="device" label="Device" />
               <Tab value="rpm" label="RPM Log" />
+              <Tab value="tune" label="Tune" />
               <Tab value="splash" label="Splash" />
               <Tab value="wiring" label="Wiring" />
               <Tab value="raw" label="Raw JSON" />
@@ -1406,6 +1440,18 @@ export function App() {
                 onAutoSave={setAutoSaveCaptures}
                 capturing={getByKey(device, "device:useRpmLogging") === true}
                 switches={<ConsoleSwitches blocked={switchesBlocked} onHold={holdSwitch} />}
+              />
+            )}
+
+            {tab === "tune" && (
+              <Tune
+                runner={tuneRunner}
+                live={live}
+                device={device}
+                gainMax={gainMax}
+                draft={tuneDraft}
+                onDraft={setTuneDraft}
+                onApply={(gains) => void applyGains(gains)}
               />
             )}
 

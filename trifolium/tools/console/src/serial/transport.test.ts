@@ -4,9 +4,10 @@ import {
   SerialTransport,
   askUntilWhole,
   blasterPorts,
+  CaptureAssembler,
+  captureReport,
   configFrom,
   isReply,
-  rebootAnnouncement,
   repliesTo,
   serialApi,
 } from "./transport";
@@ -68,17 +69,41 @@ describe("repliesTo", () => {
   });
 });
 
-describe("rebootAnnouncement", () => {
-  it("names the reason a device gives for rebooting by itself", () => {
-    expect(rebootAnnouncement('{"evt":"rebooting","reason":"rpmLog"}')).toBe("rpmLog");
-    expect(rebootAnnouncement('{"evt":"rebooting"}')).toBe("");
+describe("captureReport", () => {
+  it("reads the report that closes a capture", () => {
+    expect(captureReport('{"evt":"rpmCapture","readyMs":178,"slowestMotor":3,"timedOut":false}')).toEqual(
+      { readyMs: 178, slowestMotor: 3, timedOut: false },
+    );
+    expect(captureReport('{"evt":"rpmCapture","readyMs":null,"slowestMotor":1,"timedOut":true}')).toEqual(
+      { readyMs: null, slowestMotor: 1, timedOut: true },
+    );
   });
 
-  it("ignores every other line, a rebooting ack included", () => {
-    expect(rebootAnnouncement('{"cmd":"REBOOT","ok":true,"rebooting":true}')).toBe(null);
-    expect(rebootAnnouncement('{"evt":"unconfigured"}')).toBe(null);
-    expect(rebootAnnouncement("16390,0,30000,7143,0.00,")).toBe(null);
-    expect(rebootAnnouncement('{"evt":"rebooting"')).toBe(null);
+  it("ignores every other line", () => {
+    expect(captureReport('{"evt":"unconfigured"}')).toBe(null);
+    expect(captureReport("16390,0,30000,7143,0.00,")).toBe(null);
+    expect(captureReport('{"evt":"rpmCapture","readyMs":17')).toBe(null);
+  });
+});
+
+describe("CaptureAssembler", () => {
+  it("hands over a capture's rows once its report arrives, past the chatter around them", () => {
+    const captures = new CaptureAssembler();
+    const lines = [
+      "[info] revving",
+      "Voltage_mv,Motor 1,TargetRPM 1,Throttle 1,value 1,",
+      "16390,0,30000,1115,0.00,",
+      "[warn] from the other core",
+      "16380,812,30000,1999,0.00,",
+    ];
+    expect(lines.map((line) => captures.push(line))).toEqual([null, null, null, null, null]);
+    expect(captures.push('{"evt":"rpmCapture","readyMs":178,"slowestMotor":1,"timedOut":false}'))
+      .toEqual({
+        csv: [lines[1], lines[2], lines[4]].join("\n"),
+        report: { readyMs: 178, slowestMotor: 1, timedOut: false },
+      });
+    expect(captures.push('{"evt":"rpmCapture","readyMs":178,"slowestMotor":1,"timedOut":false}'))
+      .toBe(null);
   });
 });
 
