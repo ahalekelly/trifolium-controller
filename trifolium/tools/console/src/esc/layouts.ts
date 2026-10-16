@@ -16,9 +16,12 @@
 //   servo block: a blaster drives its ESCs with one-way DShot, and these either mean nothing there
 //   or stop the motors answering it.
 //
-// `searchable` marks the fields a spin-up optimiser may vary: the ones AM32 reads while taking a
-// motor from stopped to speed (Src/main.c), and nothing that is a fact about the hardware (poles,
-// Kv) or a protection that exists to stop it (limits, cutoffs).
+// `searchable` marks the fields a spin-up optimiser may vary over their whole range, Off included
+// where they have one: the ones AM32 reads while taking a motor from stopped to speed (Src/main.c),
+// and nothing that is a fact about the hardware (poles) or a protection that exists to stop it
+// (limits, cutoffs). motor_kv is searchable because on the ESC it is no fact: Trifolium keeps the
+// motor's real Kv in its own device settings, and AM32 uses its copy only for the RPM range of its
+// low-RPM power protection, which Off disables.
 //
 // Adding a layout - a new upstream EEPROM_VERSION, or a custom build's 200+ - is one entry in
 // LAYOUTS and nothing else.
@@ -141,15 +144,16 @@ const V4: EscField[] = [
   choice(29, "stall_protection", "Stall protection", OFF_ON, true),
   num(6, "minimum_duty_cycle", "Minimum duty cycle", 0, 50, { scale: 0.5, unit: "%" }),
 
-  // The motor fitted. Kv and poles set the RPM range of AM32's low-RPM power protection, which
-  // limits duty while the motor turns slowly; Kv 20 (raw 0) turns that protection off instead.
-  // Trifolium's own Kv and poles are its device settings, not these.
+  // Kv and poles set the RPM range of AM32's low-RPM power protection, which limits duty while the
+  // motor turns slowly; Kv 20 (raw 0) turns that protection off instead. Trifolium's own Kv and
+  // poles are its device settings, not these.
   num(27, "motor_poles", "Motor poles", 2, 36),
   num(26, "motor_kv", "Motor Kv", 1, 255, {
     scale: 40,
     shift: 20,
     unit: "Kv",
     off: { raw: 0, label: "Off (low-RPM power protection disabled)" },
+    searchable: true,
   }),
 
   // Braking.
