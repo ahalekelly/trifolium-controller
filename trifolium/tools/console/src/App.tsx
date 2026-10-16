@@ -15,6 +15,7 @@ import {
 } from "./schema/presets";
 import { needsPresetPicker } from "./schema/wiring";
 import { diagramForBoardId } from "./schema/wiringDiagrams";
+import { asBound, boundsToReal } from "./schema/grid";
 import { buildPatch, getByKey, setByKey } from "./schema/keyPath";
 import {
   walk,
@@ -24,10 +25,16 @@ import {
   type UsageStats,
 } from "./schema/types";
 import { resolveVisibility } from "./schema/visibility";
-import { configFrom, SerialTransport, TIMEOUT_SCHEMA_MS, type LogLine } from "./serial/transport";
+import {
+  configFrom,
+  SerialTransport,
+  TIMEOUT_SCHEMA_MS,
+  type Capture,
+  type LogLine,
+} from "./serial/transport";
 import { bundleFilename, buildBundle, checkBundle, diffKeys, downloadJson } from "./config/bundle";
 import { blasterLoads, schemaMismatch, type Blaster } from "./config/blasters";
-import { LOG_LINE_CAP, extractRpmCsv, wholeRows } from "./rpm/parse";
+import { LOG_LINE_CAP, wholeRows } from "./rpm/parse";
 import { compareVersions } from "./firmware/releases";
 import { applyLayout } from "./ui/applyLayout";
 import { listChanges, marksToRevert, sectionSummary, splitMark, type Change } from "./ui/changes";
@@ -59,6 +66,9 @@ import { ConsoleFooter } from "./ui/ConsoleFooter";
 import { Section, type Payloads } from "./ui/Section";
 import { countFields, deriveSections, pruneToStore, type Store } from "./ui/sections";
 import { Splash, type DeviceSplash } from "./ui/Splash";
+import { DEFAULT_DRAFT, Tune } from "./ui/Tune";
+import { TuneRunner } from "./tune/runner";
+import { gainsLabel, type Gains } from "./tune/run";
 import {
   CONFIG_ACCEPT,
   Chip,
@@ -229,9 +239,6 @@ export function App() {
   });
   const [dirty, setDirty] = React.useState<Set<string>>(new Set());
   const [log, setLog] = React.useState<LogLine[]>([]);
-  // Read when a capture's restart is over, which is several renders after its lines arrived.
-  const logRef = React.useRef(log);
-  logRef.current = log;
   /** The RPM capture page's box: held here so a finished capture lands in it from any page. */
   const [rpmText, setRpmText] = React.useState("");
   /** Save CSV files: every finished capture downloads as it arrives, whichever page is open. */
@@ -281,8 +288,8 @@ export function App() {
   /** The last read found boot faults or a resolved pin conflict, which Overview explains. */
   const bootProblem = React.useRef(false);
 
-  // The transport is built once, so it reaches afterReboot() - rebuilt every render - through this.
-  const onRebooting = React.useRef<(reason: string) => void>(() => {});
+  // The transport is built once, so it reaches state - rebuilt every render - through this.
+  const onCapture = React.useRef<(capture: Capture) => void>(() => {});
   const transport = React.useMemo(
     () =>
       new SerialTransport({
@@ -294,10 +301,22 @@ export function App() {
           setBoot(null);
           setStats(null);
         },
-        onRebooting: (reason) => onRebooting.current(reason),
+        onCapture: (capture) => onCapture.current(capture),
       }),
     [],
   );
+  const tuneRunner = React.useMemo(() => new TuneRunner(transport), [transport]);
+  const [tuneDraft, setTuneDraft] = React.useState(DEFAULT_DRAFT);
+  // A finished capture lands on the RPM capture page, and with Save CSV files on downloads, whichever
+  // page is open - a tuning run's aside, which are hundreds.
+  onCapture.current = (capture) => {
+    const tuning = tuneRunner.getRun()?.status === "running";
+    tuneRunner.capture(capture);
+    if (tuning) return;
+    setRpmText(capture.csv);
+    if (autoSaveCaptures) downloadCsv(wholeRows(capture.csv).csv);
+    note("ok", "RPM capture finished.");
+  };
 
   const note = (kind: LogLine["kind"], text: string) =>
     setLog((prev) => [...prev, { kind, text, at: Date.now() }]);
@@ -588,33 +607,13 @@ export function App() {
    * back as a USB mass-storage drive with no serial port at all, so there is nothing to reconnect
    * to and pretending otherwise would just time out.
    */
-  const afterReboot = async (label: string, capture = false) => {
+  const afterReboot = async (label: string) => {
     if ((await transport.reopenAfterReboot()) && (await transport.waitReady())) {
       setLive(true);
       if (await readSchemaAndValues()) note("ok", `${label} - device is back.`);
-      if (capture) loadCapture();
       return;
     }
     note("err", `${label}, but the device did not come back. Reconnect when it has restarted.`);
-  };
-  onRebooting.current = (reason) =>
-    void afterReboot(
-      reason === "rpmLog" ? "RPM capture finished" : "The device restarted",
-      reason === "rpmLog",
-    );
-
-  /** The newest capture in the device log, into the RPM capture page. */
-  const loadCapture = () => {
-    const csv = extractRpmCsv(
-      logRef.current
-        .filter((l) => l.kind === "in")
-        .map((l) => l.text)
-        .join("\n"),
-    );
-    if (!csv) return;
-    setRpmText(csv);
-    if (autoSaveCaptures) downloadCsv(wholeRows(csv).csv);
-    note("ok", "The capture is on the RPM capture page.");
   };
 
   // Connected to firmware that has the motor and rev commands.
@@ -630,13 +629,42 @@ export function App() {
   }, [consoleControls, transport]);
   const revHoldApi: RevHoldApi = React.useMemo(
     () => ({
-      hold: (mask) => void transport.sendQuiet(`REV_HOLD ${mask}`),
-      release: () => void transport.sendQuiet("REV_RELEASE"),
+      hold: (mask, onLost) =>
+        transport.holdRev(mask, (err) => {
+          note("err", `REV_HOLD: ${err}`);
+          onLost();
+        }),
       status: () =>
         transport.request<MotorsStatus>("DUMP_MOTORS", undefined, { quiet: true }),
     }),
     [transport],
   );
+
+  /** The largest kp and ki the device takes, off its own schema rows. */
+  const gainMax = React.useMemo(() => {
+    const max = (key: string) => {
+      const node = nodeFor(schema, key);
+      return node?.hi === undefined ? NaN : boundsToReal(asBound(node.hi), node.decimals);
+    };
+    return { kp: max("device:motorConfig[0].kp"), ki: max("device:motorConfig[0].ki") };
+  }, [schema]);
+
+  /**
+   * Stores a tuning run's winner: its control mode, and its gains on every enabled motor - TBH
+   * reads ki alone. A LOAD_DEVICE like any other, so it reboots and is read back.
+   */
+  const applyGains = async (gains: Gains) => {
+    const motors = getByKey(device, "device:motorConfig") as { enabled: boolean }[];
+    const entries: { key: string; value: unknown }[] = [
+      { key: "device:flywheelControl", value: gains.control },
+    ];
+    motors.forEach((m, i) => {
+      if (!m.enabled) return;
+      if (gains.control === "pid") entries.push({ key: `device:motorConfig[${i}].kp`, value: gains.kp });
+      entries.push({ key: `device:motorConfig[${i}].ki`, value: gains.ki });
+    });
+    if (await applyDeviceValues(entries)) note("ok", `Applied ${gainsLabel(gains)}.`);
+  };
 
   /**
    * Only a plain reboot comes back to us. The other two hand the device to something else, and the
@@ -1900,6 +1928,29 @@ export function App() {
                   autoSave={autoSaveCaptures}
                   onAutoSave={setAutoSaveCaptures}
                   revHold={consoleControls ? <RevHold api={revHoldApi} live={live} /> : null}
+                />
+              </Box>
+            </Panel>
+          </Page>
+        );
+
+      case "tune":
+        return (
+          <Page>
+            <PageHead
+              title="Tune"
+              lede="Search flywheel gains for the fastest dependable spin-up, on the blaster itself."
+            />
+            <Panel>
+              <Box sx={{ p: 1.5 }}>
+                <Tune
+                  runner={tuneRunner}
+                  live={live}
+                  device={device}
+                  gainMax={gainMax}
+                  draft={tuneDraft}
+                  onDraft={setTuneDraft}
+                  onApply={(gains) => void applyGains(gains)}
                 />
               </Box>
             </Panel>

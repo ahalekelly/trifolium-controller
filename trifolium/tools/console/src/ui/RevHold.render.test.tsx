@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { POLL_MS, RENEW_MS, RevHold, type MotorsStatus, type RevHoldApi } from "./RevHold";
+import { POLL_MS, RevHold, type MotorsStatus, type RevHoldApi } from "./RevHold";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -31,11 +31,12 @@ afterEach(() => {
 });
 
 function api(status: MotorsStatus | null = READY) {
+  const release = vi.fn<() => void>();
   return {
-    hold: vi.fn<(mask: number) => void>(),
-    release: vi.fn<() => void>(),
+    hold: vi.fn<(mask: number, onLost: () => void) => () => void>(() => release),
+    release,
     status: vi.fn(async () => status),
-  } satisfies RevHoldApi;
+  } satisfies RevHoldApi & { release: unknown };
 }
 
 async function mount(a: RevHoldApi, live = true) {
@@ -52,22 +53,24 @@ const fire = (el: Element, type: string, init: MouseEventInit = {}) =>
   });
 
 describe("RevHold", () => {
-  it("renews the hold while the button is down, and releases when it comes up", async () => {
+  it("holds while the button is down, and releases when it comes up", async () => {
     const a = api();
     await mount(a);
     fire(button(), "pointerdown");
-    expect(a.hold).toHaveBeenLastCalledWith(0b1010);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(RENEW_MS * 5);
-    });
-    expect(a.hold.mock.calls.length).toBeGreaterThanOrEqual(6);
+    expect(a.hold).toHaveBeenCalledTimes(1);
+    expect(a.hold).toHaveBeenLastCalledWith(0b1010, expect.any(Function));
     fire(button(), "pointerup");
     expect(a.release).toHaveBeenCalledTimes(1);
-    const calls = a.hold.mock.calls.length;
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(RENEW_MS * 5);
-    });
-    expect(a.hold.mock.calls.length).toBe(calls);
+  });
+
+  it("lets the button up when the blaster refuses the rev", async () => {
+    const a = api();
+    await mount(a);
+    fire(button(), "pointerdown");
+    act(() => a.hold.mock.calls[0][1]());
+    expect(button().textContent).toBe("Hold to rev");
+    fire(button(), "pointerup");
+    expect(a.release).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -96,7 +99,7 @@ describe("RevHold", () => {
     const [motor2] = host.querySelectorAll("input[type=checkbox]");
     fire(motor2, "click");
     fire(button(), "pointerdown");
-    expect(a.hold).toHaveBeenLastCalledWith(0b1000);
+    expect(a.hold).toHaveBeenLastCalledWith(0b1000, expect.any(Function));
   });
 
   it.each([
@@ -121,16 +124,11 @@ describe("RevHold", () => {
     expect(button().disabled).toBe(false);
   });
 
-  it("stops renewing without a release when the blaster restarts at the end of a capture", async () => {
+  it("lets go when the blaster disconnects", async () => {
     const a = api();
     await mount(a);
     fire(button(), "pointerdown");
     await mount(a, false);
-    const calls = a.hold.mock.calls.length;
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(RENEW_MS * 5);
-    });
-    expect(a.hold.mock.calls.length).toBe(calls);
-    expect(a.release).not.toHaveBeenCalled();
+    expect(a.release).toHaveBeenCalledTimes(1);
   });
 });

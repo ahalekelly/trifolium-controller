@@ -29,8 +29,8 @@ import { RpmChart, type Series } from "./RpmChart";
 // Charting an RPM capture.
 //
 // Not a live feature: the firmware records a fixed-length capture into RAM during a rev and dumps the
-// whole thing as CSV afterwards, then reboots. So this reads the CSV out of whatever text is to hand -
-// the device log, a pasted block, or a dropped file - rather than streaming.
+// whole thing as CSV afterwards. So this reads the CSV out of whatever text is to hand - the newest
+// capture in the device log, a pasted block, or a dropped file - rather than streaming.
 //
 // `useRpmLogging` is the only switch a capture needs. RpmLogger::dumpIfReady writes the CSV to
 // Serial directly rather than through the logger, precisely so that the capture a user asked for
@@ -234,7 +234,7 @@ export function RpmLog({
     if (!csv) {
       setError(
         capturing
-          ? "No CSV capture in the device log yet. RPM Logging is on, so rev the blaster and wait - the device dumps the whole capture at once and reboots straight after."
+          ? "No CSV capture in the device log yet. RPM Logging is on, so rev the blaster and wait - the device dumps the whole capture at once."
           : "No CSV capture found in the device log. RPM Logging is off: turn it on in step 1 and write it, then rev the blaster.",
       );
       return;

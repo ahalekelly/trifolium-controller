@@ -10,6 +10,7 @@
 // replies are matched on that rather than on shape - see repliesTo().
 
 import { serial as usbSerial } from "../vendor/web-serial-polyfill/dist/serial.js";
+import { isCaptureHeader, isCaptureRow } from "../rpm/parse";
 
 export type LogKind = "out" | "in" | "ok" | "err";
 
@@ -137,20 +138,66 @@ export const repliesTo = (command: string): ((line: string) => boolean) => {
 };
 
 /**
- * Why the device says it is about to reboot by itself, or null for any other line.
- *
- * A reboot a command asked for is acked with `rebooting`; one nobody asked for over serial - the RPM
- * log's, after its dump - is announced as `{"evt":"rebooting","reason":...}` instead.
+ * What the firmware's fire-ready test made of a capture's rev, printed after its rows: when it first
+ * passed in ms from the rev's start, the motor that got there last, and whether the rampup timeout
+ * ended the rev first. `readyMs` is null when the rev or the capture ended before the wheels were at
+ * speed.
  */
-export const rebootAnnouncement = (line: string): string | null => {
-  if (!line.startsWith("{") || !line.includes('"rebooting"')) return null;
+export interface CaptureReport {
+  readyMs: number | null;
+  slowestMotor: number | null;
+  timedOut: boolean;
+}
+
+/** An RPM capture as the device dumped it: the CSV, then the report. */
+export interface Capture {
+  csv: string;
+  report: CaptureReport;
+}
+
+/** The report closing a capture, or null for any other line. */
+export const captureReport = (line: string): CaptureReport | null => {
+  if (!line.startsWith('{"evt":"rpmCapture"')) return null;
   try {
-    const parsed = JSON.parse(line) as { evt?: unknown; reason?: unknown };
-    return parsed.evt === "rebooting" ? String(parsed.reason ?? "") : null;
+    const { readyMs, slowestMotor, timedOut } = JSON.parse(line) as CaptureReport;
+    return { readyMs, slowestMotor, timedOut };
   } catch {
     return null;
   }
 };
+
+/**
+ * Gathers each capture from its header to the report after its rows. Any other line in between - the
+ * other core's chatter - is left to the log.
+ */
+export class CaptureAssembler {
+  private lines: string[] | null = null;
+
+  /** The capture this line completes, or null. */
+  push(line: string): Capture | null {
+    if (isCaptureHeader(line)) {
+      this.lines = [line];
+      return null;
+    }
+    if (!this.lines) return null;
+    if (isCaptureRow(line)) {
+      this.lines.push(line);
+      return null;
+    }
+    const report = captureReport(line);
+    if (!report) return null;
+    const csv = this.lines.join("\n");
+    this.lines = null;
+    return { csv, report };
+  }
+
+  reset() {
+    this.lines = null;
+  }
+}
+
+/** How often a held rev renews REV_HOLD - well inside the device's 300 ms lease. */
+export const REV_RENEW_MS = 100;
 
 const WHOLE_ATTEMPTS = 3;
 
@@ -214,8 +261,8 @@ class LineBreakTransformer implements Transformer<string, string> {
 export interface TransportEvents {
   onLog?: (line: LogLine) => void;
   onDisconnect?: (reason: string) => void;
-  /** After an announced reboot has torn the connection down, keeping the port to reopen. */
-  onRebooting?: (reason: string) => void;
+  /** Each RPM capture, once its report has arrived. */
+  onCapture?: (capture: Capture) => void;
 }
 
 export class SerialTransport {
@@ -230,6 +277,7 @@ export class SerialTransport {
   private rebootedPort: Port | null = null;
   /** A reopen that only the user's Connect can finish: Android's permission ends with the reboot. */
   private reconnectWaiter: ((ok: boolean) => void) | null = null;
+  private captures = new CaptureAssembler();
 
   constructor(private events: TransportEvents = {}) {}
 
@@ -468,6 +516,7 @@ export class SerialTransport {
       this.reader = null;
       this.writer = null;
       this.port = null;
+      this.captures.reset();
       this.readableClosed = null;
       this.log("err", reason);
       this.events.onDisconnect?.(reason);
@@ -495,14 +544,8 @@ export class SerialTransport {
           return false;
         });
 
-        const reason = rebootAnnouncement(line);
-        if (reason !== null) {
-          // The same teardown a rebooting ack gets, so reopenAfterReboot() has the port to retry.
-          void this.disconnect("Device is rebooting.", true).then(() =>
-            this.events.onRebooting?.(reason),
-          );
-          return;
-        }
+        const capture = this.captures.push(line);
+        if (capture) this.events.onCapture?.(capture);
       }
     } catch {
       // Expected on disconnect() cancelling the reader, or the device rebooting mid-session.
@@ -614,6 +657,37 @@ export class SerialTransport {
       this.log("err", `Reply to ${command} is not valid JSON: ${(e as Error).message}`);
       return null;
     }
+  }
+
+  /**
+   * Revs the motors in `mask` until the returned function lets go: REV_HOLD now and every
+   * REV_RENEW_MS, then REV_RELEASE. The device lets go by itself when the renewals stop, so a closed
+   * tab or a dropped link lets go too. A refusal ends the hold and is passed to `onRefused`.
+   */
+  holdRev(mask: number, onRefused: (err: string) => void): () => void {
+    let held = true;
+    // Not awaited: the device lets go if a renewal is late, so the next one goes out on time
+    // whatever became of the last one's reply.
+    const renew = () => {
+      if (!this.writer) return;
+      const reply = this.waitForLine(repliesTo("REV_HOLD"), TIMEOUT_SHORT_MS);
+      void this.sendQuiet(`REV_HOLD ${mask}`);
+      void reply.then((line) => {
+        const ack = line === null ? null : (JSON.parse(line) as CommandAck);
+        if (!ack || ack.ok || !held) return;
+        release();
+        onRefused(ack.err ?? "refused");
+      });
+    };
+    const timer = setInterval(renew, REV_RENEW_MS);
+    const release = () => {
+      if (!held) return;
+      held = false;
+      clearInterval(timer);
+      if (this.writer) void this.sendQuiet("REV_RELEASE");
+    };
+    renew();
+    return release;
   }
 
   /** request(), asked again while the reply comes back garbled - see askUntilWhole(). */

@@ -38,6 +38,11 @@ export const LOG_LINE_CAP = 4000;
 const HEADER_RE = /^(?:Voltage_mv,(?:Current_mv,)?)?(?:Motor \d+,TargetRPM \d+,Throttle \d+,value \d+,?)+$/;
 const DATA_ROW_RE = /^[\d.\-,]+$/;
 
+/** A capture's first line, as the device prints it. */
+export const isCaptureHeader = (line: string): boolean => HEADER_RE.test(line);
+/** One of its rows. */
+export const isCaptureRow = (line: string): boolean => DATA_ROW_RE.test(line);
+
 /**
  * Pulls the CSV block out of arbitrary log text, stripping the console's "(device) " prefix. A log
  * that holds several captures gives the newest: each rev dumps one and restarts the blaster.
@@ -48,10 +53,10 @@ export function extractRpmCsv(rawText: string): string | null {
   const lines = rawText.split(/\r?\n/).map((l) => l.replace(/^\s*\(device\)\s*/, "").trim());
 
   for (let headerIdx = lines.length - 1; headerIdx >= 0; headerIdx--) {
-    if (!HEADER_RE.test(lines[headerIdx])) continue;
+    if (!isCaptureHeader(lines[headerIdx])) continue;
     const csv = [lines[headerIdx]];
     for (let i = headerIdx + 1; i < lines.length; i++) {
-      if (!DATA_ROW_RE.test(lines[i])) break;
+      if (!isCaptureRow(lines[i])) break;
       csv.push(lines[i]);
     }
     if (csv.length > 1) return csv.join("\n");

@@ -6,7 +6,16 @@ import Drawer from "@mui/material/Drawer";
 // many unsaved edits it holds.
 
 export type ViewId =
-  "overview" | "profiles" | "blaster" | "wiring" | "rpm" | "splash" | "firmware" | "maint" | "raw";
+  | "overview"
+  | "profiles"
+  | "blaster"
+  | "wiring"
+  | "rpm"
+  | "tune"
+  | "splash"
+  | "firmware"
+  | "maint"
+  | "raw";
 
 const ICON: Record<ViewId | "more", string> = {
   overview: "M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z",
@@ -15,6 +24,7 @@ const ICON: Record<ViewId | "more", string> = {
     "M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6zM12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1",
   wiring: "M6 4h12v16H6zM2 8h4M2 12h4M2 16h4M18 8h4M18 12h4M18 16h4",
   rpm: "M3 20h18M4 17c3-9 6-11 9-11s4 3 7 3",
+  tune: "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6",
   splash: "M3 6h18v12H3zM7 14l3-3 3 3 2-2 2 2",
   firmware: "M12 3v12M7 10l5 5 5-5M4 21h16",
   maint: "M21 12a9 9 0 1 1-3-6.7M21 4v5h-5",
@@ -54,6 +64,7 @@ export const NAV_GROUPS: { title: string; items: { id: ViewId; label: string }[]
     title: "Tools",
     items: [
       { id: "rpm", label: "RPM capture" },
+      { id: "tune", label: "Tune" },
       { id: "splash", label: "Splash screen" },
       { id: "firmware", label: "Firmware" },
     ],
