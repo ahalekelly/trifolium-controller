@@ -142,9 +142,9 @@ static const char* const kPusherChannelLocked =
         "Stage", "device:motorConfig[" #N "].stage", &deviceSettings.motorConfig[N].stage,         \
         motorStageLabels, kMotorStageIds, kMotorStageIdCount, true);                               \
     static FloatItem motor##N##KPItem("KP", "device:motorConfig[" #N "].kp",                       \
-                                      &deviceSettings.motorConfig[N].kp, 0.0f, 2.0f, 0.1f, 2);     \
+                                      &deviceSettings.motorConfig[N].kp, 0.0f, KP_MAX, 0.1f, 2);    \
     static FloatItem motor##N##KIItem("KI", "device:motorConfig[" #N "].ki",                       \
-                                      &deviceSettings.motorConfig[N].ki, 0.0f, 4.0f, 0.1f, 2);     \
+                                      &deviceSettings.motorConfig[N].ki, 0.0f, KI_MAX, 0.1f, 2);    \
     static NumericItem<int16_t> motor##N##PolesItem(                                               \
         "Poles/2", "device:motorConfig[" #N "].motorPolesDiv2",                                    \
         &deviceSettings.motorConfig[N].motorPolesDiv2, 1, 10, 1);                                  \

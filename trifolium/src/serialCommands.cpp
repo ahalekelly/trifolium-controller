@@ -48,6 +48,8 @@ extern ConsoleSwitch triggerSwitch;
 // menuMotors.cpp, shared with the menu's motor actions.
 void spinOneMotor(int motorIndex);
 void writeEscDirection(int motorIndex, bool reversed);
+// main.cpp - TUNE's override, or why it was refused.
+const char* applyTune(uint32_t revRPM, flywheelControlType_t control, float kp, float ki);
 
 volatile bool serialCommandSeen = false;
 
@@ -497,6 +499,34 @@ void handleSerialCommands()
         else
             sw->holdFromConsole();
         ackOk(command.c_str(), -1, false, false);
+    }
+    else if (command == "TUNE")
+    {
+        // 'TUNE {"revRPM":30000,"control":"pid","kp":0.2,"ki":0.5}' - a rev RPM, control mode and
+        // gains for every enabled motor at once, for the console's spin-up search. RAM only, so a
+        // trial needs no flash write or reboot, and the stored settings stay what they were.
+        // TBH takes ki as its gain.
+        JsonDocument doc;
+        if (deserializeJson(doc, argument))
+        {
+            ackError("TUNE", -1, "invalid JSON");
+            return;
+        }
+        const String control = doc["control"] | "";
+        const bool tbh = control == kFlywheelControlIds[TBH_CONTROL];
+        if (!doc["revRPM"].is<uint32_t>() || (!tbh && control != kFlywheelControlIds[PID_CONTROL]) ||
+            !doc["kp"].is<float>() || !doc["ki"].is<float>())
+        {
+            ackError("TUNE", -1, "needs revRPM, control (pid or tbh), kp and ki");
+            return;
+        }
+        if (const char* refused = applyTune(doc["revRPM"], tbh ? TBH_CONTROL : PID_CONTROL,
+                                            doc["kp"], doc["ki"]))
+        {
+            ackError("TUNE", -1, refused);
+            return;
+        }
+        ackOk("TUNE", -1, false, false);
     }
     else if (command == "ESC_DIRECTION")
     {

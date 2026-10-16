@@ -253,6 +253,22 @@ FlywheelMotor motorArr[4] = {FlywheelMotor(&motorsObj[0]), FlywheelMotor(&motors
 
 RpmLogger rpmLogger;
 
+// The console's TUNE (serialCommands.cpp): one control mode and pair of gains for every motor, and
+// with them a rev RPM, written straight into motorArr[].revRPM. RAM alone - the stored settings never
+// see it, so no save carries it to flash, and a reboot drops it.
+static struct
+{
+    bool active = false;
+    flywheelControlType_t control = PID_CONTROL;
+    float kp = 0;
+    float ki = 0;
+} tune;
+
+static flywheelControlType_t flywheelControl()
+{
+    return tune.active ? tune.control : deviceSettings.flywheelControl;
+}
+
 void updateFiringMode();
 void cycleFiringMode();
 uint8_t selectShotProfileAtBoot();
@@ -270,6 +286,7 @@ void applyMaxAchievableDps();
 void applyDebounceInterval();
 void applyPrintTelemetry();
 uint32_t computePusherDwellPadding_ms();
+bool driveTrainStopped();
 
 static bool firingModePersists()
 {
@@ -331,6 +348,23 @@ static bool wheelsAtSpeed()
     return true;
 }
 
+// The enabled motor furthest short of its at-speed RPM, or -1 when none is.
+static int8_t laggingMotor()
+{
+    int8_t lagging = -1;
+    int32_t worstShortfall = 0;
+    for (int i = 0; i < 4; i++)
+    {
+        const int32_t shortfall = atSpeedRpm(i) - (int32_t)motorArr[i].motorRPM;
+        if (motorsEnabled[i] && shortfall >= worstShortfall)
+        {
+            lagging = i;
+            worstShortfall = shortfall;
+        }
+    }
+    return lagging;
+}
+
 void logData()
 {
     // record() is a no-op unless a capture is currently armed (startCapture() succeeded and
@@ -350,16 +384,49 @@ void registerShot()
     updateRuntimeNow = true;
 }
 
-// Rebuilds motorsObj[i] from the device's PID gains/Kv/poles/voltage limit. Safe to call live.
+// Rebuilds motorsObj[i] from the device's PID gains/Kv/poles/voltage limit, TUNE's gains standing in
+// while it is active. Safe to call live.
 void applyMotorConfig()
 {
     for (int i = 0; i < 4; i++)
     {
-        motorsObj[i] = Motor(deviceSettings.motorConfig[i].kp, deviceSettings.motorConfig[i].ki,
-                             deviceSettings.motorConfig[i].motorKv,
-                             deviceSettings.motorConfig[i].motorPolesDiv2,
-                             deviceSettings.motorConfig[i].maxSpinupVoltage_mv);
+        const MotorConfig& mc = deviceSettings.motorConfig[i];
+        motorsObj[i] = Motor(tune.active ? tune.kp : mc.kp, tune.active ? tune.ki : mc.ki,
+                             mc.motorKv, mc.motorPolesDiv2, mc.maxSpinupVoltage_mv);
     }
+}
+
+// TUNE's override, applied only while the wheels are stopped. directMotorControlActive keeps a rev
+// from starting meanwhile, as it does for the motor actions. Returns why it was refused, or nullptr.
+const char* applyTune(uint32_t revRPM, flywheelControlType_t control, float kp, float ki)
+{
+    if (!wiringLive)
+        return "no wiring configured";
+    if (!(kp >= 0 && kp <= KP_MAX && ki >= 0 && ki <= KI_MAX))
+        return "gain out of range";
+    for (int i = 0; i < 4; i++)
+    {
+        if (motorsEnabled[i] &&
+            ((int32_t)revRPM < motorRpmFloor(i) || (int32_t)revRPM > motorRpmCeiling(i)))
+            return "revRPM out of range";
+    }
+    if (directMotorControlActive)
+        return "a motor action is running";
+    directMotorControlActive = true;
+    if (!driveTrainStopped())
+    {
+        directMotorControlActive = false;
+        return "flywheels are running";
+    }
+    tune = {true, control, kp, ki};
+    applyMotorConfig();
+    for (int i = 0; i < 4; i++)
+    {
+        if (motorsEnabled[i])
+            motorArr[i].revRPM = revRPM;
+    }
+    directMotorControlActive = false;
+    return nullptr;
 }
 
 // Recomputes `half`, the EMA filter shift constant. EMAFilter must be >= 1.
@@ -1316,7 +1383,8 @@ void updateSpeedPot()
             activeProfile.revRPM[i] = rpm;
             changed = true;
         }
-        motorArr[i].revRPM = rpm;
+        if (!tune.active)
+            motorArr[i].revRPM = rpm;
     }
     if (changed)
     {
@@ -1327,8 +1395,6 @@ void updateSpeedPot()
 
 static uint32_t ledTime_ms = 0;
 static bool ledOn = true;
-
-bool driveTrainStopped();
 
 void checkLowVoltageCutoff()
 {
@@ -1642,6 +1708,11 @@ bool fwControlLoop()
             motorArr[i].targetRPM = (rpmScale_ >= 0.0f) ? (uint32_t)(motorArr[i].revRPM * rpmScale_)
                                                        : motorArr[i].revRPM;
 
+        // A capture records when the wheels got to speed, and which got there last.
+        if (rpmLogger.armed())
+            rpmLogger.noteSpinup(wheelsAtSpeed(), laggingMotor(),
+                                 (loopStartTimer_us - revStartTime_us) / 1000);
+
         // If all motors are at target RPM, update the blaster's state to FULLSPEED.
         if (wheelsAtSpeed()) {
             flywheelState = STATE_FULLSPEED;
@@ -1658,6 +1729,7 @@ bool fwControlLoop()
                     logger.warn("Motor ", i + 1, " failed to reach target speed! motorRPM=", motorArr[i].motorRPM, " firingRPM=", atSpeedRpm(i));
                 }
             }
+            rpmLogger.noteTimeout();
         }
 
         break;
@@ -1762,7 +1834,7 @@ bool fwControlLoop()
 
     if (enableFwControl)
     {
-        switch (deviceSettings.flywheelControl)
+        switch (flywheelControl())
         {
         case PID_CONTROL:
             for (int i = 0; i < 4; i++)
@@ -1809,12 +1881,11 @@ bool fwControlLoop()
         SerialLock::release();
         if (dumped)
         {
-            logger.info("RPM log dump complete, rebooting now as part of normal RPM logging - this "
-                        "is expected");
-            SerialLock::hold();
-            Serial.println("{\"evt\":\"rebooting\",\"reason\":\"rpmLog\"}");
-            Serial.flush();
-            rp2040.reboot();
+            // The dump held this tick for as long as sending it took. Timing the tick from here
+            // keeps that out of loopTime_us, which the next tick's PID and spin-down take as
+            // their step.
+            loopStartTimer_us = micros();
+            logger.info("RPM log dump complete");
         }
     }
     // update pusher driver
@@ -1977,7 +2048,7 @@ void resetFWControl()
     {
         if (motorsEnabled[i])
         {
-            motorArr[i].resetControl(deviceSettings.flywheelControl);
+            motorArr[i].resetControl(flywheelControl());
         }
     }
 }

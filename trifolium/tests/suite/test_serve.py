@@ -197,8 +197,7 @@ def test_an_announced_reboot_has_happened_by_the_time_the_host_reads_the_announc
 
 def test_a_host_slow_to_read_still_gets_a_whole_capture_dump(capturing):
     """What the host is sent is queued for it, as its USB driver would, so a slow reader loses
-    nothing and holds nothing up. A plain socket, read to EOF: pyserial drops the bytes of a read the
-    disconnect interrupts."""
+    nothing and holds nothing up. A plain socket, so its receive window can be shrunk."""
     serial_port, control_port = capturing
     wait_armed(control_port)
     host = socket.socket()
@@ -219,7 +218,10 @@ def test_a_host_slow_to_read_still_gets_a_whole_capture_dump(capturing):
 
     received = b""
     try:
-        while chunk := host.recv(65536):  # until the reboot after the dump drops the host
+        while b'"evt":"rpmCapture"' not in received:  # the line after the dump's rows
+            chunk = host.recv(65536)
+            if not chunk:
+                pytest.fail(f"the host was dropped after {len(received)} bytes")
             received += chunk
     except TimeoutError:
         pytest.fail(f"{len(received)} bytes, then 20 s of nothing: {bench(control_port, op='state')}")

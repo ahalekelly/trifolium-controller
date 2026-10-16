@@ -99,7 +99,7 @@ def test_rpm_mode_decides_whether_speeds_are_set_per_stage_or_per_motor(blaster,
     assert not any(shown(listing, name) for name in other), listing
 
 
-def test_rpm_logging_can_be_turned_off_on_the_device_and_the_next_rev_does_not_reboot(blaster):
+def test_rpm_logging_can_be_turned_off_on_the_device_and_the_next_rev_captures_nothing(blaster):
     b = armed_v12(blaster, {"useRpmLogging": True}, settle_ms=3000)
     motors = menu(b, "Advanced", "Motors & PID")
     assert motors[-2] == "RPM Logging"
@@ -111,12 +111,12 @@ def test_rpm_logging_can_be_turned_off_on_the_device_and_the_next_rev_does_not_r
     close_menu(b)
     assert b.flash_json("/device.cfg")["useRpmLogging"] is False
 
-    boots = len(b.history)
+    mark = len(b.transcript)
     b.press("rev")
     b.run_ms(1000)
     b.release("rev")
     b.run_ms(3000)
-    assert len(b.history) == boots
+    assert "rpmCapture" not in b.transcript[mark:]
 
 
 SPIN_DIRECTION_1, SPIN_DIRECTION_2, SAVE_SETTINGS = 7, 8, 12

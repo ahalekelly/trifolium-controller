@@ -2,6 +2,8 @@
 boot actions, the battery cutoff, pin conflicts at boot, the RPM log, a charged mode, the timeouts
 and the solenoid's timing."""
 
+import json
+
 import pytest
 from helpers import armed_v12, close_menu, open_menu, schema
 
@@ -98,22 +100,38 @@ def test_a_menu_button_that_collides_with_a_higher_priority_input_is_lost_and_sa
     assert "the on-device menu cannot be opened" in b.transcript
 
 
-def test_an_rpm_log_captures_the_rev_then_prints_it_and_reboots(blaster):
-    b = armed_v12(blaster, {"useRpmLogging": True, "rpmLogLength": 150}, display=False)
+def test_an_rpm_log_captures_the_rev_then_prints_it_and_when_the_wheels_were_ready(blaster):
+    b = armed_v12(blaster, {"useRpmLogging": True, "rpmLogLength": 300}, display=False)
     b.analog(26, 310)  # the ESC's current-sense output at 1000 mV
     mark = len(b.transcript)
+    boots = len(b.history)
     b.press("rev")
-    assert b.run_until_stopped(3000)
-    assert b.last_stop == "reboot"
+    assert b.run_until(lambda: '"evt":"rpmCapture"' in b.transcript[mark:], 1000)
 
     log = b.transcript[mark:]
     header = log.find("Voltage_mv,Current_mv,Motor 1,TargetRPM 1,Throttle 1,value 1,Motor 3,")
     assert header >= 0
-    rows = [row.split(",") for row in log[log.find("\n", header) + 1:].splitlines()[:150]]
-    rpms = [int(row[2]) for row in rows]
-    assert len(rpms) == 150
-    assert rpms[-1] > rpms[0] + 10000  # 150 ms of a spin-up
-    assert {row[1] for row in rows} == {"1000"}
+    columns = log[header:log.find("\n", header)].split(",")
+    lines = log[log.find("\n", header) + 1:].splitlines()
+    rows = [[int(float(cell)) for cell in line.rstrip(",").split(",")] for line in lines[:300]]
+    motor1, motor3 = columns.index("Motor 1"), columns.index("Motor 3")
+    assert rows[-1][motor1] > rows[0][motor1] + 10000  # 300 ms of a spin-up
+    assert {row[1] for row in rows} == {1000}
+    report = json.loads(lines[300])
+    assert report == {"evt": "rpmCapture", "readyMs": report["readyMs"], "slowestMotor": 3,
+                      "timedOut": False}
+    # The firmware's own test, both wheels past target less firingRPMTolerance, reads each sample
+    # on the tick after it, and the clock runs a little past one tick a sample.
+    ready = next(i for i, row in enumerate(rows) if min(row[motor1], row[motor3]) > 29500)
+    assert ready < report["readyMs"] <= ready + 5
+
+    # No reboot after it, and the next rev captures again.
+    b.release("rev")
+    b.run_ms(3000)
+    mark = len(b.transcript)
+    b.press("rev")
+    assert b.run_until(lambda: '"evt":"rpmCapture"' in b.transcript[mark:], 1000)
+    assert len(b.history) == boots
 
 
 def test_an_rpm_log_leaves_out_the_current_column_when_no_pin_reads_it(blaster):
@@ -121,7 +139,7 @@ def test_an_rpm_log_leaves_out_the_current_column_when_no_pin_reads_it(blaster):
                   display=False)
     mark = len(b.transcript)
     b.press("rev")
-    assert b.run_until_stopped(3000)
+    assert b.run_until(lambda: '"evt":"rpmCapture"' in b.transcript[mark:], 1000)
     assert "Voltage_mv,Motor 1,TargetRPM 1," in b.transcript[mark:]
 
 
