@@ -27,7 +27,7 @@ pytest.importorskip("playwright")
 from helpers import SIM, differences  # noqa: E402
 from playwright.sync_api import expect  # noqa: E402
 
-from trifolium_sim import PROJECT  # noqa: E402
+from trifolium_sim import FULLSPEED, IDLE, PROJECT  # noqa: E402
 
 sys.path.insert(0, str(PROJECT / "tools"))
 import build_site  # noqa: E402 - the site's own list entries, so the console is held to their format
@@ -390,6 +390,26 @@ def test_the_motors_panel_lists_the_attached_motors_with_live_telemetry(page, se
         rpm = row.get_by_role("cell").nth(1)
         expect(rpm).to_have_text(re.compile(r"^[1-9]\d{3,}$"), timeout=5000)
     served.bench("release", role="rev")
+
+
+def test_rev_held_on_the_rpm_log_tab_revs_until_let_go_and_safe_disables_it(page, serve):
+    served = serve(device={"safetySwitchPin": 11})
+    connect(open_console(page, served))
+    served.wait_armed()
+    page.get_by_role("tab", name="RPM Log").click()
+    rev = page.get_by_role("button", name="Rev", exact=True)
+    expect(rev).to_be_enabled()
+    state = lambda: served.bench("peek", names=["flywheelState"])["values"]["flywheelState"]
+
+    rev.hover()
+    page.mouse.down()
+    served.until(lambda: state() == FULLSPEED)
+    page.mouse.up()
+    served.until(lambda: state() == IDLE)
+
+    served.bench("press", role="safety")
+    expect(page.get_by_text("The blaster is in SAFE.")).to_be_visible()
+    expect(rev).to_be_disabled()
 
 
 def test_a_setting_that_governs_others_shows_and_hides_them_as_it_is_edited(page, serve):

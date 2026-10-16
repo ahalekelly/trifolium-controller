@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <PIO_DShot.h>
 #include "../lib/Bounce2/src/Bounce2.h"
+#include "consoleSwitch.h"
 #include "fetDriver.h"
 #include "escDriver.h"
 #include "elapsedMillis.h"
@@ -216,8 +217,8 @@ bool idleHoldWanted()
     return idleHoldActive && !spinDownForced() && !menuIsOpen();
 }
 
-Bounce2::Button revSwitch = Bounce2::Button();
-Bounce2::Button triggerSwitch = Bounce2::Button();
+ConsoleSwitch revSwitch;
+ConsoleSwitch triggerSwitch;
 Bounce2::Button cycleSwitch = Bounce2::Button();
 Bounce2::Button idleSwitch = Bounce2::Button();
 Bounce2::Button safetySwitch = Bounce2::Button();
@@ -1189,29 +1190,24 @@ static void updateDartSwitch()
 
 void mainFiringLogic()
 {
-    if (pinDefined(revSwitchPin))
+    // Unwired ones too: the console can hold either (ConsoleSwitch).
+    revSwitch.update();
+    if (revSwitch.pressed())
     {
-        revSwitch.update();
-        if (revSwitch.pressed())
-        {
-            logger.info("Rev switch pressed");
-        }
-        else if (revSwitch.released())
-        {
-            logger.info("Rev switch released");
-        }
+        logger.info("Rev switch pressed");
     }
-    if (pinDefined(triggerSwitchPin))
+    else if (revSwitch.released())
     {
-        triggerSwitch.update();
-        if (triggerSwitch.pressed())
-        {
-            logger.info("Trigger switch pressed");
-        }
-        else if (triggerSwitch.released())
-        {
-            logger.info("Trigger switch released");
-        }
+        logger.info("Rev switch released");
+    }
+    triggerSwitch.update();
+    if (triggerSwitch.pressed())
+    {
+        logger.info("Trigger switch pressed");
+    }
+    else if (triggerSwitch.released())
+    {
+        logger.info("Trigger switch released");
     }
     if (pinDefined(idleSwitchPin))
     {

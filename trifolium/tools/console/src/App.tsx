@@ -40,6 +40,7 @@ import { PresetPicker } from "./ui/PresetPicker";
 import { BootFaults } from "./ui/BootFaults";
 import { EscSetup } from "./ui/EscSetup";
 import { MotorActions, type MotorsDump } from "./ui/MotorActions";
+import { ConsoleSwitches, type SwitchRole } from "./ui/ConsoleSwitches";
 import { FireModes } from "./ui/FireModes";
 import { FlashDialog } from "./ui/FlashDialog";
 import { DEVICE_LAYOUT, PROFILE_LAYOUT } from "./ui/layout";
@@ -596,13 +597,14 @@ export function App() {
   };
 
   /**
-   * The motors panel's live telemetry, polled while the Device tab is on screen. Paused while busy:
-   * a motor action holds the device for seconds, and a write may be about to reboot it.
+   * DUMP_MOTORS, polled while the Device tab's motors panel or the RPM Log tab's Rev and Fire are
+   * on screen. Paused while busy: a motor action holds the device for seconds, and a write may be
+   * about to reboot it.
    */
   const [motorsDump, setMotorsDump] = React.useState<MotorsDump | null>(null);
   React.useEffect(() => {
     if (!live) setMotorsDump(null);
-    if (!live || tab !== "device" || busy) return;
+    if (!live || (tab !== "device" && tab !== "rpm") || busy) return;
     let stopped = false;
     void (async () => {
       while (!stopped) {
@@ -616,6 +618,20 @@ export function App() {
       stopped = true;
     };
   }, [live, tab, busy, transport]);
+
+  // Not awaited: the device lets go if a renewal is late, so the next one goes out on time
+  // whatever became of the last one's reply.
+  const holdSwitch = (role: SwitchRole, held: boolean) =>
+    void transport.poll(`${held ? "HOLD" : "RELEASE"} ${role}`);
+  const switchesBlocked = !live
+    ? ""
+    : busy || motorsDump === null
+      ? "Waiting for the blaster."
+      : motorsDump.menuOpen
+        ? "The blaster's menu is open."
+        : motorsDump.burstMode === "safe"
+          ? "The blaster is in SAFE."
+          : null;
 
   const askReset = (kind: ResetKind) =>
     setPendingReset(
@@ -1373,6 +1389,7 @@ export function App() {
                 onEdit={onEdit}
                 logText={deviceLogText}
                 capturing={getByKey(device, "device:useRpmLogging") === true}
+                switches={<ConsoleSwitches blocked={switchesBlocked} onHold={holdSwitch} />}
               />
             )}
 

@@ -62,9 +62,11 @@ export interface RpmLogProps {
   logText: string;
   /** device:useRpmLogging - whether the next rev records a capture at all. */
   capturing: boolean;
+  /** Rev and Fire, held from the browser to run a capture. */
+  switches: React.ReactNode;
 }
 
-export function RpmLog({ schema, device, onEdit, logText, capturing }: RpmLogProps) {
+export function RpmLog({ schema, device, onEdit, logText, capturing, switches }: RpmLogProps) {
   const [text, setText] = React.useState("");
   const [trim, setTrim] = React.useState(true);
   const [showThrottle, setShowThrottle] = React.useState(true);
@@ -73,7 +75,7 @@ export function RpmLog({ schema, device, onEdit, logText, capturing }: RpmLogPro
 
   // Read out of the schema rather than rebuilt here, so `rpmLogLength` keeps the ceiling the
   // firmware publishes (MAX_RPM_LOG_LENGTH) and both rows keep their reboot marks and dirty
-  // outlines. Absent on firmware predating them, in which case nothing renders.
+  // outlines. Absent on firmware predating them, which leaves Rev and Fire alone in the box.
   const captureNodes = React.useMemo(() => {
     const found = new Map<string, SchemaNode>();
     walk(schema.tree, (node) => {
@@ -212,8 +214,9 @@ export function RpmLog({ schema, device, onEdit, logText, capturing }: RpmLogPro
         which meant arming a capture and looking at one were different places. DEVICE_LAYOUT claims
         both keys as RENDERED_ELSEWHERE so they do not also fall through into "Other settings".
       */}
-      {captureNodes.length > 0 && (
-        <Fieldset label="Capture">
+      {/* Rev and Fire beside them, so arming a capture and running one is a single flow. */}
+      <Fieldset label="Capture">
+        <Stack spacing={1}>
           <Stack direction="row" spacing={2} sx={{ alignItems: "flex-start", flexWrap: "wrap" }}>
             {captureNodes.map((node) => (
               <Box key={node.key} sx={{ minWidth: 150 }}>
@@ -225,8 +228,9 @@ export function RpmLog({ schema, device, onEdit, logText, capturing }: RpmLogPro
               </Box>
             ))}
           </Stack>
-        </Fieldset>
-      )}
+          {switches}
+        </Stack>
+      </Fieldset>
 
       <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }}>
         <Button size="small" variant="outlined" onClick={takeFromLog}>

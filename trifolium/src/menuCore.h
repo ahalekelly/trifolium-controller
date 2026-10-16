@@ -1,7 +1,7 @@
 #pragma once
 #include "menu.h"
 #include "types.h"
-#include "../lib/Bounce2/src/Bounce2.h"
+#include "consoleSwitch.h"
 #include <Adafruit_SSD1306.h>
 #include <cmath>
 #include <cstring> // strchr() - TextEditItem::clampToBounds()'s charset check
@@ -33,8 +33,8 @@ extern bool menuButtonNormallyClosed;
 extern uint16_t debounceTime_ms;
 
 extern BoardDisplay display;
-extern Bounce2::Button triggerSwitch;
-extern Bounce2::Button revSwitch;
+extern ConsoleSwitch triggerSwitch;
+extern ConsoleSwitch revSwitch;
 
 extern ShotProfile activeProfile;
 extern DeviceSettings deviceSettings;
