@@ -42,6 +42,14 @@ import { DirtyKeys } from "./ui/dirty";
 import { PresetPicker } from "./ui/PresetPicker";
 import { BootFaults } from "./ui/BootFaults";
 import { EscSetup } from "./ui/EscSetup";
+import { EscSettingsPanel } from "./ui/EscSettings";
+import {
+  escTargets,
+  readEscSettings,
+  writeEscSettings,
+  type EscSettings,
+  type EscTargets,
+} from "./esc/session";
 import { MotorActions, type MotorsDump } from "./ui/MotorActions";
 import { ConsoleSwitches } from "./ui/ConsoleSwitches";
 import { FireModes } from "./ui/FireModes";
@@ -132,7 +140,7 @@ const OFFLINE_DEVICE = {
   ...(OFFLINE_PRESET?.wiring ?? {}),
 };
 
-type TabId = "profile" | "device" | "rpm" | "tune" | "splash" | "wiring" | "raw";
+type TabId = "profile" | "device" | "escs" | "rpm" | "tune" | "splash" | "wiring" | "raw";
 
 /** How often the motors panel asks for DUMP_MOTORS - the menu's ESC Dashboard redraws at 10 Hz. */
 const MOTOR_POLL_MS = 500;
@@ -201,6 +209,8 @@ export function App() {
   const [flashOpen, setFlashOpen] = React.useState(false);
   // null closed; {to: null} open with nothing picked yet.
   const [copyTo, setCopyTo] = React.useState<{ to: number | null } | null>(null);
+  /** The flywheel ESCs' AM32 settings as last read or written. Null until read. */
+  const [escs, setEscs] = React.useState<EscSettings[] | null>(null);
 
   // The transport is built once, so it reaches state - rebuilt every render - through this.
   const onCapture = React.useRef<(capture: Capture) => void>(() => {});
@@ -374,6 +384,7 @@ export function App() {
    * the bench. Ten cheap DUMP_BOOT retries cost nothing against a device that is already up.
    */
   const connect = async (choose: boolean) => {
+    setEscs(null); // another blaster's, or this one's from before whatever happened since
     if (!(await transport.connect(choose))) return;
     if (!(await transport.waitReady())) return;
     await readSchemaAndValues();
@@ -559,6 +570,40 @@ export function App() {
       if (!ack?.ok) return;
       await afterReboot("Rebooted");
     } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * Reads or writes the flywheel ESCs' AM32 settings - see esc/session.ts.
+   *
+   * Either way the blaster reboots into ESC passthrough and comes back on its own, which the
+   * transport reports as a disconnect, so the schema and values are re-read after, with any staged
+   * edits laid back over them as after any other reboot.
+   *
+   * Which motors are ESCs is read from the device settings, so not while they hold unwritten edits:
+   * the blaster hands over what it has stored. A failure clears the table, since a write that
+   * stopped partway leaves some ESCs changed and the table no longer says which.
+   */
+  const escSession = async (
+    what: string,
+    run: (targets: EscTargets) => Promise<EscSettings[]>,
+  ) => {
+    if (deviceDirty > 0) {
+      note("err", `${what}: write or discard the device setting changes first.`);
+      return;
+    }
+    setBusy(true);
+    const keep = stagedExcept(new Set());
+    try {
+      setEscs(await run(escTargets(device)));
+      note("ok", `${what}: done.`);
+    } catch (e) {
+      setEscs(null);
+      const why = (e as Error).message.replace(/\.$/, "");
+      note("err", `${what} failed: ${why}. Read the ESCs again to see what they hold.`);
+    } finally {
+      if (transport.connected) await readSchemaAndValues(keep);
       setBusy(false);
     }
   };
@@ -1275,6 +1320,7 @@ export function App() {
             <Tabs value={tab} onChange={(_, v: TabId) => setTab(v)} variant="scrollable">
               <Tab value="profile" label="Profile" />
               <Tab value="device" label="Device" />
+              <Tab value="escs" label="ESCs" />
               <Tab value="rpm" label="RPM Log" />
               <Tab value="tune" label="Tune" />
               <Tab value="splash" label="Splash" />
@@ -1422,6 +1468,24 @@ export function App() {
                     </Fieldset>
                 )}
               </Stack>
+            )}
+
+            {tab === "escs" && (
+              <EscSettingsPanel
+                escs={escs}
+                motors={escTargets(device).motors}
+                disabled={!live || busy}
+                onRead={() =>
+                  void escSession("Reading the ESCs", (targets) =>
+                    readEscSettings(transport, targets),
+                  )
+                }
+                onWrite={(values) =>
+                  escSession("Writing the ESCs", (targets) =>
+                    writeEscSettings(transport, targets, values),
+                  )
+                }
+              />
             )}
 
             {tab === "splash" && (

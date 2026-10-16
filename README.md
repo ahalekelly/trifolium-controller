@@ -13,7 +13,7 @@ trifolium-controller
 
  https://davidpyo.github.io/trifolium-controller/
 
- It flashes released firmware too - pick a version from the list in **Flash Firmware**.
+ It flashes released firmware too - pick a version from the list in **Flash Firmware** - and sets the flywheel ESCs' AM32 settings on the **ESCs** tab.
 
  To use it offline, download [trifolium-console.html](https://davidpyo.github.io/trifolium-controller/trifolium-console.html) (right-click, Save link as) and open it by double-clicking. It is the same page as the site's, in one file, with nothing to install.
 

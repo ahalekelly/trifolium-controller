@@ -23,14 +23,12 @@ interface Mounted {
   /** Whether the body is folded away. Collapse hides its children rather than unmounting them. */
   folded: boolean;
   text: string;
-  links: string[];
 }
 
 const read = (host: HTMLElement): Mounted => ({
   summary: host.querySelector("button")?.textContent ?? "",
   folded: !!host.querySelector(".MuiCollapse-hidden"),
   text: host.textContent ?? "",
-  links: [...host.querySelectorAll("a")].map((a) => a.getAttribute("href") ?? ""),
 });
 
 /** Mounts the panel and returns what it shows before and after the summary is clicked. */
@@ -62,13 +60,13 @@ describe("the AM32 panel", () => {
     expect(open.folded).toBe(false);
   });
 
-  it("names the two settings and links am32.ca", async () => {
+  it("names the two settings and where to set them", async () => {
     const { open } = await openPanel();
     expect(open.text).toContain("Stuck rotor protection");
     expect(open.text).toContain("Stall protection");
     expect(open.text).toContain("Motor poles");
-    expect(open.text).toContain("Motor KV");
-    expect(open.links).toContain("https://am32.ca/");
+    expect(open.text).toContain("Motor Kv");
+    expect(open.text).toContain("ESCs tab");
   });
 
   it("carries the device's own numbers, poles already doubled", async () => {
