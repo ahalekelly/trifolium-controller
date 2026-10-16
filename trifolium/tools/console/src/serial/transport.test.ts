@@ -259,3 +259,43 @@ describe("serialApi", () => {
     expect(SerialTransport.supported).toBe(false);
   });
 });
+
+describe("SerialTransport over real streams", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * A blaster that answers each line within the write that carried it - the fastest a device can
+   * be, and the case a listener registered after the write misses.
+   */
+  const instantBlaster = (answer: (line: string) => string) => {
+    let device!: ReadableStreamDefaultController<Uint8Array>;
+    const port = {
+      readable: new ReadableStream<Uint8Array>({ start: (c) => void (device = c) }),
+      writable: new WritableStream<Uint8Array>({
+        write: (chunk) => {
+          const line = new TextDecoder().decode(chunk).trim();
+          device.enqueue(new TextEncoder().encode(`${answer(line)}\n`));
+        },
+      }),
+      open: async () => {},
+      close: async () => {},
+      getInfo: () => ({ usbVendorId: 0x2e8a, usbProductId: 0x000a }),
+    };
+    vi.stubGlobal("navigator", {
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140.0.0.0",
+      serial: { getPorts: async () => [port], requestPort: async () => port },
+    });
+  };
+
+  it("catches a reply that arrives before the write returns", async () => {
+    instantBlaster((line) => (line === "DUMP_BOOT" ? '{"cmd":"DUMP_BOOT"}' : deviceDump));
+    const transport = new SerialTransport();
+    expect(await transport.connect()).toBe(true);
+    expect(await transport.waitReady(1, 500)).toBe(true);
+    expect(await transport.request("DUMP_DEVICE", 500)).toEqual(JSON.parse(deviceDump));
+    expect(await transport.requestWhole("DUMP_DEVICE", 500)).toEqual(JSON.parse(deviceDump));
+    await transport.disconnect();
+  });
+});
