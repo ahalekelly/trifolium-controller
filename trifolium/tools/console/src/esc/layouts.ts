@@ -160,7 +160,8 @@ const V4: EscField[] = [
     "Brake",
     ...[1, 2, 3, 4, 5, 6, 7].map((s) => `Brake after ${s} s`),
   ]),
-  num(12, "active_brake_power", "Active brake power", 0, 5, { unit: "%" }),
+  // Duty is raw * 0.5 %, on top of the dead-time duty AM32 always adds when braking.
+  num(12, "active_brake_power", "Active brake power", 0, 5, { scale: 0.5, unit: "% duty" }),
   num(41, "drag_brake_strength", "Brake strength", 1, 10),
   num(42, "driving_brake_strength", "Running brake level", 1, 9, { off: OFF(10) }),
 
