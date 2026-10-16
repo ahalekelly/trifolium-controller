@@ -33,6 +33,10 @@ struct SimFlywheel
     // With no pack behind it an ESC neither answers nor drives its wheel.
     bool powered = true;
 
+    // A beacon command plays a tune this long, deaf to the signal: AM32's BEACON4 runs with its
+    // interrupts off.
+    uint32_t beaconTune_ms = 225;
+
     // When modelled, an ESC ignores the signal until startup_ms after it first arrives, and
     // restart_ms longer when the RP2040 rebooted under a powered ESC, which restarts on losing the
     // signal. Unmodelled, it answers from its first frame.
@@ -109,6 +113,8 @@ struct SimFlywheel
     bool signalSeen_ = false;
     uint64_t signalAt_us_ = 0;
     uint64_t hitAt_us_ = 0;
+    size_t commandsSeen_ = 0;
+    uint64_t tuneEnds_us_ = 0;
     float hitLoss_ = 0.0f;
     Override override_ = Override::None;
     uint32_t overrideValue_ = 0;
@@ -150,7 +156,14 @@ struct SimFlywheel
             signalSeen_ = true;
             signalAt_us_ = now;
         }
-        const bool up = started(now);
+        if (esc.commands.size() > commandsSeen_)
+        {
+            commandsSeen_ = esc.commands.size();
+            const uint16_t command = esc.commands.back();
+            if (command >= DSHOT_CMD_BEACON1 && command <= DSHOT_CMD_BEACON5)
+                tuneEnds_us_ = now + (uint64_t)beaconTune_ms * 1000;
+        }
+        const bool up = started(now) && now >= tuneEnds_us_;
         throttle = up ? esc.lastThrottle : 0;
         if (!up)
             return;

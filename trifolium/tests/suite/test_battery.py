@@ -6,7 +6,7 @@ import pytest
 from helpers import armed_v12
 from test_idle_hold import power_on_holding_rev
 
-from trifolium_sim import FULLSPEED
+from trifolium_sim import ACCELERATING, FULLSPEED
 
 PACK_MV = 16400
 RISE_MS = 24000
@@ -181,6 +181,18 @@ def test_the_beacon_waits_for_the_wheels_to_stop_and_never_stalls_a_rev(blaster)
     assert len(beacons(b, 1)) == sent + 1
     b.run_ms(400)
     assert len(beacons(b, 1)) == sent + 2
+
+
+def test_a_rev_pressed_during_the_beacon_tune_starts_late_without_tripping_the_rampup_timeout(
+        blaster):
+    b = armed_v12(blaster, {"rampupTimeout_ms": 400}, display=False)
+    b.set_pack(WARN_MV)
+    assert b.run_until(lambda: beacons(b, 1), 5000, step_ms=1)
+    b.press("rev")
+    b.run_ms(200)
+    assert b.wheels()[1]["rpm"] < 100  # the ESC is still playing it
+    assert b.run_until(lambda: b.peek("flywheelState") != ACCELERATING, 600)
+    assert b.peek("flywheelState") == FULLSPEED
 
 
 def test_idle_hold_keeps_the_beacon_quiet(blaster):
