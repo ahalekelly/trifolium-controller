@@ -309,6 +309,8 @@ export function App() {
     [],
   );
   const tuneRunner = React.useMemo(() => new TuneRunner(transport), [transport]);
+  const tuneRun = React.useSyncExternalStore(tuneRunner.subscribe, tuneRunner.getRun);
+  const tuning = tuneRun !== null && tuneRun !== "unreadable" && tuneRun.status === "running";
   const [tuneDraft, setTuneDraft] = React.useState(DEFAULT_DRAFT);
   React.useEffect(() => {
     if (live) tuneRunner.connected();
@@ -319,10 +321,9 @@ export function App() {
     window.addEventListener("pagehide", abandon);
     return () => window.removeEventListener("pagehide", abandon);
   }, [tuneRunner]);
-  // A finished capture lands on the RPM capture page, and with Save CSV files on downloads, whichever
-  // page is open - a tuning run's aside, which are hundreds.
+  // A finished capture lands on the RPM capture page and, with Save CSV files on, downloads,
+  // whichever page is open - a tuning run's aside, which are hundreds.
   onCapture.current = (capture) => {
-    const tuning = tuneRunner.running;
     tuneRunner.capture(capture);
     if (tuning) return;
     setRpmText(capture.csv);
@@ -1796,6 +1797,8 @@ export function App() {
                                 motors: enabledMotors(device),
                                 available: consoleControls,
                                 ...motorActions,
+                                // A tune run's captures would take in a motor action.
+                                busy: motorActions.busy || tuning,
                               })}
                             />
                             <EscSetup device={device} />
@@ -1928,7 +1931,7 @@ export function App() {
                   onText={setRpmText}
                   autoSave={autoSaveCaptures}
                   onAutoSave={setAutoSaveCaptures}
-                  revHold={consoleControls ? <RevHold api={revHoldApi} live={live} /> : null}
+                  revHold={consoleControls ? <RevHold api={revHoldApi} live={live} tuning={tuning} /> : null}
                 />
               </Box>
             </Panel>

@@ -7,8 +7,8 @@ import Typography from "@mui/material/Typography";
 import * as React from "react";
 
 // A rev held from the console, for an RPM capture. Held only while the button is: the transport
-// renews REV_HOLD's 300 ms lease while it holds, so a frozen tab or a pulled cable lets go on its own.
-// Letting go of the button, moving off it, the window losing focus or the tab being hidden all
+// renews REV_HOLD's 300 ms lease while it holds, so a frozen tab or a pulled cable lets go on its
+// own. Letting go of the button, moving off it, the window losing focus or the tab being hidden all
 // release it at once. There is no fire: the firmware has no command for it.
 
 /** The firmware these commands arrived in. */
@@ -32,9 +32,11 @@ export interface RevHoldApi {
 export interface RevHoldProps {
   api: RevHoldApi;
   live: boolean;
+  /** A tune run is driving the blaster: it revs by itself, and another rev would spoil a capture. */
+  tuning: boolean;
 }
 
-export function RevHold({ api, live }: RevHoldProps) {
+export function RevHold({ api, live, tuning }: RevHoldProps) {
   const [status, setStatus] = React.useState<MotorsStatus | null>(null);
   /** Motors unticked by hand. Every enabled motor starts ticked. */
   const [unticked, setUnticked] = React.useState<Set<number>>(new Set());
@@ -65,15 +67,17 @@ export function RevHold({ api, live }: RevHoldProps) {
 
   const blocked = !live
     ? "Connect a blaster to rev it from here."
-    : !status
-      ? "Reading the blaster..."
-      : status.menuOpen
-        ? "The blaster's menu is open."
-        : status.burstMode === "safe"
-          ? "The blaster is in SAFE."
-          : !mask
-            ? "Tick a motor to rev."
-            : null;
+    : tuning
+      ? "A tune run is driving the blaster."
+      : !status
+        ? "Reading the blaster..."
+        : status.menuOpen
+          ? "The blaster's menu is open."
+          : status.burstMode === "safe"
+            ? "The blaster is in SAFE."
+            : !mask
+              ? "Tick a motor to rev."
+              : null;
 
   const stop = React.useCallback(() => {
     if (!release.current) return;

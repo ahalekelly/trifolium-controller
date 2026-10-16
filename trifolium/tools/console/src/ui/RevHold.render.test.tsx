@@ -40,7 +40,7 @@ function api(status: MotorsStatus | null = READY) {
 }
 
 async function mount(a: RevHoldApi, live = true) {
-  await act(async () => root.render(<RevHold api={a} live={live} />));
+  await act(async () => root.render(<RevHold api={a} live={live} tuning={false} />));
   await act(async () => {
     await vi.advanceTimersByTimeAsync(0);
   });
