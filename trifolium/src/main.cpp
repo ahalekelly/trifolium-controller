@@ -255,7 +255,7 @@ RpmLogger rpmLogger;
 
 // The console's TUNE (serialCommands.cpp): one control mode and pair of gains for every motor, and
 // with them a rev RPM, written straight into motorArr[].revRPM. RAM alone - the stored settings never
-// see it, so no save carries it to flash, and a reboot drops it.
+// see it, so no save carries it to flash. A bare TUNE or a reboot drops it.
 static struct
 {
     bool active = false;
@@ -263,6 +263,8 @@ static struct
     float kp = 0;
     float ki = 0;
 } tune;
+// Set by a bare TUNE on core 1; core 0 drops the override once the drive train is stopped.
+static volatile bool tuneClearWanted = false;
 
 static flywheelControlType_t flywheelControl()
 {
@@ -419,6 +421,7 @@ const char* applyTune(uint32_t revRPM, flywheelControlType_t control, float kp, 
         return "flywheels are running";
     }
     tune = {true, control, kp, ki};
+    tuneClearWanted = false;
     applyMotorConfig();
     for (int i = 0; i < 4; i++)
     {
@@ -427,6 +430,28 @@ const char* applyTune(uint32_t revRPM, flywheelControlType_t control, float kp, 
     }
     directMotorControlActive = false;
     return nullptr;
+}
+
+// A bare TUNE: the blaster's own settings come back once the wheels are stopped, so a console that
+// stops a run mid-spin-up, or closes, can ask at once.
+void clearTune()
+{
+    if (tune.active)
+        tuneClearWanted = true;
+}
+
+static void dropTuneWhenStopped()
+{
+    if (!tuneClearWanted || !driveTrainStopped())
+        return;
+    tuneClearWanted = false;
+    tune.active = false;
+    applyMotorConfig();
+    for (int i = 0; i < 4; i++)
+    {
+        if (motorsEnabled[i])
+            motorArr[i].revRPM = activeProfile.revRPM[i];
+    }
 }
 
 // Recomputes `half`, the EMA filter shift constant. EMAFilter must be >= 1.
@@ -1590,6 +1615,7 @@ bool fwControlLoop()
     }
 
     checkLowVoltageCutoff();
+    dropTuneWhenStopped();
 
     switch (flywheelState)
     {

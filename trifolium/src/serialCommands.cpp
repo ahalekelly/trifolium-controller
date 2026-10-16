@@ -48,8 +48,9 @@ extern ConsoleSwitch triggerSwitch;
 // menuMotors.cpp, shared with the menu's motor actions.
 void spinOneMotor(int motorIndex);
 void writeEscDirection(int motorIndex, bool reversed);
-// main.cpp - TUNE's override, or why it was refused.
+// main.cpp - TUNE's override, or why it was refused, and its end.
 const char* applyTune(uint32_t revRPM, flywheelControlType_t control, float kp, float ki);
+void clearTune();
 
 volatile bool serialCommandSeen = false;
 
@@ -505,7 +506,13 @@ void handleSerialCommands()
         // 'TUNE {"revRPM":30000,"control":"pid","kp":0.2,"ki":0.5}' - a rev RPM, control mode and
         // gains for every enabled motor at once, for the console's spin-up search. RAM only, so a
         // trial needs no flash write or reboot, and the stored settings stay what they were.
-        // TBH takes ki as its gain.
+        // TBH takes ki as its gain. A bare TUNE ends the trial once the wheels are stopped.
+        if (!hasArgument)
+        {
+            clearTune();
+            ackOk("TUNE", -1, false, false);
+            return;
+        }
         JsonDocument doc;
         if (deserializeJson(doc, argument))
         {

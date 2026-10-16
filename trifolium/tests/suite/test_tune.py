@@ -44,6 +44,20 @@ def test_tune_drives_every_motor_at_its_rpm_and_gains_until_a_reboot_and_writes_
     assert (m["revRPM"], round(m["kp"], 3)) == (30000, device["motorConfig"][1]["kp"])
 
 
+def test_a_bare_tune_puts_the_blasters_own_settings_back_once_the_wheels_stop(blaster):
+    b = armed_v12(blaster, display=False)
+    kp = b.command("DUMP_DEVICE")["motorConfig"][1]["kp"]
+    assert tune(b)["ok"]
+    b.press("rev")
+    b.run_ms(300)
+    assert b.command("TUNE")["ok"]
+    assert b.peek("motors")[1]["revRPM"] == 25000
+    b.release("rev")
+    b.run_ms(3000)
+    m = b.peek("motors")[1]
+    assert (m["revRPM"], round(m["kp"], 3)) == (30000, kp)
+
+
 def test_tune_is_refused_while_the_wheels_turn_and_for_anything_out_of_range(blaster):
     b = armed_v12(blaster, display=False)
     b.press("rev")
