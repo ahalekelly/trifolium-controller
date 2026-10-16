@@ -475,8 +475,13 @@ bool saveDeviceSettings(const DeviceSettings& settings)
     File f = LittleFS.open(tmpPath, "w");
     if (!f)
         return false;
-    serializeJson(doc, f);
+    const size_t written = serializeJson(doc, f);
     f.close();
+    if (written != measureJson(doc))
+    {
+        LittleFS.remove(tmpPath);
+        return false;
+    }
 
     return LittleFS.rename(tmpPath, DEVICE_PATH);
 }

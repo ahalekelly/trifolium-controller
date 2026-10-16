@@ -239,8 +239,13 @@ bool saveProfile(uint8_t index, const ShotProfile& settings)
     File f = LittleFS.open(tmpPath, "w");
     if (!f)
         return false;
-    serializeJson(doc, f);
+    const size_t written = serializeJson(doc, f);
     f.close();
+    if (written != measureJson(doc))
+    {
+        LittleFS.remove(tmpPath);
+        return false;
+    }
 
     // Temp-file-then-rename: this is flash storage on a device with no clean shutdown
     // path (batteries, motors) - a power loss mid-write must not corrupt the real file. The rename
