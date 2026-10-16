@@ -40,6 +40,18 @@ def test_a_motor_action_is_refused_while_the_flywheels_run(blaster):
     assert b.command("TEST_MOTOR 1")["ok"]
 
 
+def test_a_motor_action_is_refused_in_safe(blaster):
+    b = armed_v12(blaster, {"safetySwitchPin": 11}, display=False)
+    b.press("safety")
+    b.run_ms(100)
+    assert refusal(b, "TEST_MOTOR 1") == {"cmd": "TEST_MOTOR", "ok": False, "index": 1,
+                                          "err": "blaster can't rev now"}
+    assert refusal(b, "ESC_DIRECTION 1 reversed")["err"] == "blaster can't rev now"
+    b.release("safety")
+    b.run_ms(100)
+    assert b.command("TEST_MOTOR 1")["ok"]
+
+
 def test_a_motor_action_is_refused_while_the_menu_runs_one(blaster):
     """The menu's spin polls serial, so a command can arrive in the middle of it."""
     b = armed_v12(blaster)
@@ -48,7 +60,7 @@ def test_a_motor_action_is_refused_while_the_menu_runs_one(blaster):
     select(b, "Test This Motor")
     b.tap("menu")
     assert b.run_until(lambda: b.panel().shows("any press = stop"), 500, step_ms=5)
-    assert refusal(b, "TEST_MOTOR 3")["err"] == "a motor action is already running"
+    assert refusal(b, "TEST_MOTOR 3")["err"] == "blaster can't rev now"
 
 
 SPIN_DIRECTION_1, SPIN_DIRECTION_2, SAVE_SETTINGS = 7, 8, 12

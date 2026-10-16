@@ -134,9 +134,11 @@ static bool takeMotor(const char* command, int motorIndex)
         ackError(command, motorIndex, "motor not attached this boot");
         return false;
     }
-    if (directMotorControlActive)
+    // Only when the blaster could rev: the menu's own actions run with the blaster in hand, and an
+    // open menu also rules out one of its spins being under way.
+    if (!revControlAllowed())
     {
-        ackError(command, motorIndex, "a motor action is already running");
+        ackError(command, motorIndex, "blaster can't rev now");
         return false;
     }
     directMotorControlActive = true;
