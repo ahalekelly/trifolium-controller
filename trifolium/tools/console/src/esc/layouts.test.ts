@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { BLOCK_SIZE, LAYOUTS, firmwareOf, layoutOf, rawFrom, shown, withValues } from "./layouts";
+import {
+  BLOCK_SIZE,
+  LAYOUTS,
+  firmwareOf,
+  layoutOf,
+  parseShown,
+  rawFrom,
+  shown,
+  withValues,
+} from "./layouts";
 import { V2_DEFAULT, V4_DEFAULT } from "./testdata";
 
 const field = (version: number, name: string) =>
@@ -136,6 +145,23 @@ describe("shown and rawFrom", () => {
         expect(rawFrom(f, Number.parseFloat(shown(f, raw)))).toBe(raw);
       }
     }
+  });
+});
+
+describe("parseShown", () => {
+  it("reads what shown() writes: options by label, Off, and numbers with or without their unit", () => {
+    expect(parseShown(field(4, "variable_pwm"), " by rpm")).toBe(2);
+    expect(parseShown(field(4, "motor_kv"), "Off")).toBe(0);
+    expect(parseShown(field(4, "pwm_frequency"), "24 kHz")).toBe(24);
+    expect(parseShown(field(4, "pwm_frequency"), "24")).toBe(24);
+    expect(parseShown(field(4, "advance_level"), "15°")).toBe(26);
+  });
+
+  it("refuses what the field does not take", () => {
+    expect(parseShown(field(4, "pwm_frequency"), "200")).toBeNull();
+    expect(parseShown(field(4, "pwm_frequency"), "kHz")).toBeNull();
+    expect(parseShown(field(4, "startup_power"), "off")).toBeNull();
+    expect(parseShown(field(4, "variable_pwm"), "2")).toBeNull();
   });
 });
 

@@ -237,6 +237,31 @@ export const rawFrom = (field: EscField, value: number): number =>
   Math.round((value - field.shift) / field.scale);
 
 /**
+ * A value typed as shown, as the raw byte a write takes, or null when the field does not take it: an
+ * option by its label, "off" where the field has Off, or a number in the field's unit, with or
+ * without the unit, which goes to the nearest raw step and must land in range.
+ */
+export function parseShown(field: EscField, text: string): number | null {
+  const typed = text.trim().toLowerCase();
+  if (field.options) {
+    const i = field.options.findIndex((o) => o.toLowerCase() === typed);
+    return i < 0 ? null : field.min + i;
+  }
+  if (field.off && typed === "off") return field.off.raw;
+  const unit = field.unit.toLowerCase();
+  const number = unit && typed.endsWith(unit) ? typed.slice(0, -unit.length) : typed;
+  const raw = rawFrom(field, Number(number));
+  return number.trim() !== "" && raw >= field.min && raw <= field.max ? raw : null;
+}
+
+/** What parseShown() takes for a field, to say when it refuses something. */
+export function accepted(field: EscField): string {
+  if (field.options) return field.options.join(", ");
+  const range = `${shown(field, field.min)} to ${shown(field, field.max)}`;
+  return field.off ? `${range}, or Off` : range;
+}
+
+/**
  * A block with `values` (raw, by field name) written into it, leaving every other byte as it was.
  * A name the layout lacks or a value outside its field's range throws, naming both.
  */
