@@ -70,7 +70,11 @@ export interface SetRecord {
 
 export type RunStatus = "running" | "paused" | "done";
 
+/** Changes whenever Run's shape does, so a run another build saved is refused rather than misread. */
+const RUN_VERSION = 1;
+
 export interface Run {
+  version: typeof RUN_VERSION;
   config: TuneConfig;
   baseline: Gains;
   candidates: Candidate[];
@@ -120,6 +124,7 @@ export function candidatesFor(config: TuneConfig, baseline: Gains): Candidate[] 
 export function startRun(config: TuneConfig, baseline: Gains): Run {
   const candidates = candidatesFor(config, baseline);
   return {
+    version: RUN_VERSION,
     config,
     baseline,
     candidates,
@@ -202,14 +207,18 @@ export function measure(
 
 const STORAGE_KEY = "trifolium.tune";
 
+/** The run left in this browser: none, or one another build saved and this one cannot read. */
+export type Saved = Run | null | "unreadable";
+
 /**
- * The run left in this browser, if any. One that was running when the page went away comes back
- * paused: nothing is driving the blaster now.
+ * The run left in this browser. One that was running when the page went away comes back paused:
+ * nothing is driving the blaster now.
  */
-export function loadRun(): Run | null {
+export function loadRun(): Saved {
   const text = localStorage.getItem(STORAGE_KEY);
   if (!text) return null;
-  const run = JSON.parse(text) as Run;
+  const run = JSON.parse(text) as Run | null;
+  if (run?.version !== RUN_VERSION) return "unreadable";
   return run.status === "running"
     ? { ...run, status: "paused", note: "The console was closed mid-run. Resume to carry on." }
     : run;

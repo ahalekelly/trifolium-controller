@@ -229,6 +229,22 @@ export function Tune({
     />
   );
 
+  if (run === "unreadable") {
+    return (
+      <Alert
+        severity="error"
+        action={
+          <Button size="small" color="inherit" onClick={() => runner.discard()}>
+            Discard run
+          </Button>
+        }
+      >
+        The run saved in this browser came from a different build of the console, and this build
+        can't read it.
+      </Alert>
+    );
+  }
+
   if (!run) {
     const baseline = baselineOf(device);
     const ready = typeof config !== "string" && baseline !== null;

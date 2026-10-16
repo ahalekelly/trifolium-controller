@@ -20,6 +20,7 @@ import {
   startRun,
   type Gains,
   type Run,
+  type Saved,
   type Spinup,
   type TuneConfig,
 } from "./run";
@@ -53,7 +54,7 @@ export function runSettings(
 }
 
 export class TuneRunner {
-  private run: Run | null = loadRun();
+  private run: Saved = loadRun();
   private listeners = new Set<() => void>();
   private pauseWanted = false;
   private looping = false;
@@ -90,7 +91,7 @@ export class TuneRunner {
   }
 
   resume(device: unknown) {
-    if (this.looping || !this.run) return;
+    if (this.looping || this.run === null || this.run === "unreadable") return;
     void this.loop({ ...this.run, status: "running", note: null }, device);
   }
 
