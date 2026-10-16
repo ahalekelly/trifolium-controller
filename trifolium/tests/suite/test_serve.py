@@ -9,9 +9,10 @@ import pytest
 
 serial = pytest.importorskip("serial")
 
-from helpers import start_server  # noqa: E402
+from helpers import armed_v12, start_server  # noqa: E402
 
-from trifolium_sim import preset  # noqa: E402
+from trifolium_sim import FULLSPEED, preset  # noqa: E402
+from trifolium_sim.serve import Server  # noqa: E402
 
 # A build on 3S with 6000 Kv motors of six pole pairs, unlike the simulator's stock 3200 Kv on 4S.
 THREE_CELL = {"batteryType": "3s", "motorConfig": [{"motorKv": 6000, "motorPolesDiv2": 6}] * 4}
@@ -215,3 +216,15 @@ def test_a_host_slow_to_read_still_gets_a_whole_capture_dump(capturing):
     rows = [line for line in received.decode(errors="replace").splitlines()
             if line[:1].isdigit() and line.count(",") >= 8]
     assert len(rows) == bench(control_port, op="wiring")["settings"]["rpmLogLength"]
+
+
+def test_renewals_queued_while_serve_py_was_held_up_reach_the_blaster_as_far_apart_as_sent(blaster):
+    """A busy machine can stop serve.py for longer than a held rev's lease. The renewals the browser
+    sent on time meanwhile reach the blaster 100 ms apart by its clock all the same, so the rev does
+    not lapse between them."""
+    b = armed_v12(blaster, display=False)
+    server = Server(b, 0, 0)
+    held_up_since = time.time() - 1.5
+    server.paced_from = (held_up_since, b.now_us)
+    server._deliver([(held_up_since + k / 10, b"REV_HOLD 10\n") for k in range(15)])
+    assert b.peek("flywheelState") == FULLSPEED
