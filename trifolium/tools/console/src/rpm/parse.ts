@@ -1,4 +1,4 @@
-// Parsing the CSV that RpmLogger::dumpIfReady() writes (src/rpmLogger.h).
+// Parsing the CSV that RpmLogger::sendIfFull() writes (src/rpmLogger.h).
 //
 // Ported from tools/serial-config.html, which is proven against real captures. The shape is an
 // optional leading "Voltage_mv" column, an optional "Current_mv" column after it, then

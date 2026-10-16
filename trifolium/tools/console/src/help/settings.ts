@@ -83,8 +83,7 @@ export const SETTING_HELP: Record<string, string> = {
   "device:throttleCap":
     "Extra throttle TBH allows on the first rev, before its own feedback takes over.",
   "device:dshotMode": "The DShot rate the ESCs are driven at. Every ESC must support the rate chosen.",
-  "device:useRpmLogging":
-    "Records RPM against time on every rev, for the RPM capture and Tune pages. Sending each capture pauses the blaster for a moment, so turn it off for normal use.",
+  "device:useRpmLogging": "Records RPM against time on every rev, for the RPM capture and Tune pages.",
   "device:rpmLogLength": "How many samples a capture takes, one per millisecond, so 2000 is two seconds.",
 
   // Solenoid and pusher

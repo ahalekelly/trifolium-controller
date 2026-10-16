@@ -17,6 +17,7 @@
 #include "schemaDump.h"
 #include "gpioReport.h"
 #include "flywheelMotor.h"
+#include "rpmLogger.h"
 #include "enumIds.h" // kBurstModeIds - DUMP_MOTORS names the live mode rather than numbering it
 
 // Owned by main.cpp - the live config these commands read and write.
@@ -47,6 +48,8 @@ extern volatile uint8_t serialRevMask;
 extern volatile uint32_t serialRevUntil_ms;
 void runMotorTest(uint8_t motorIndex);                  // menuMotors.cpp
 void runMotorDirection(uint8_t motorIndex, bool reversed); // menuMotors.cpp
+extern volatile bool directMotorControlActive;
+extern RpmLogger rpmLogger;
 // main.cpp - TUNE's override, or why it was refused, and its end.
 const char* applyTune(uint32_t revRPM, flywheelControlType_t control, float kp, float ki);
 void clearTune();
@@ -180,6 +183,12 @@ void handleSerialCommands()
     // this function's line-oriented reads don't steal bytes from that binary protocol.
     if (bootReason == BootReason::TO_ESC_PASSTHROUGH)
         return;
+
+    // A full RPM capture goes out between commands, from this core, so the control loop never
+    // waits on the port. Not while this core drives the ESCs itself (the menu's motor actions):
+    // the pause would starve them of frames.
+    if (!directMotorControlActive)
+        rpmLogger.sendIfFull();
 
     if (!Serial.available())
         return;
