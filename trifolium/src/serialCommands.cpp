@@ -51,12 +51,18 @@ void serialCommandsBegin()
     Serial.ignoreFlowControl(true);
 }
 
-// Every LOAD_* answers with one of these.
-static void ackError(const char* command, const char* reason)
+// Every LOAD_* answers with one of these. `index` is as in ackOk().
+static void ackError(const char* command, int index, const char* reason)
 {
     Serial.print("{\"cmd\":\"");
     Serial.print(command);
-    Serial.print("\",\"ok\":false,\"err\":\"");
+    Serial.print("\",\"ok\":false");
+    if (index >= 0)
+    {
+        Serial.print(",\"index\":");
+        Serial.print(index);
+    }
+    Serial.print(",\"err\":\"");
     Serial.print(reason);
     Serial.println("\"}");
 }
@@ -67,7 +73,7 @@ static const char* parseError(DeserializationError err)
     return err == DeserializationError::NoMemory ? "too large" : "invalid JSON";
 }
 
-// `index` is the profile slot, or -1 where the command has no slot.
+// `index` is the slot the command names, or -1 if none. A host matches replies by it.
 static void ackOk(const char* command, int index, bool clamped, bool rebooting)
 {
     Serial.print("{\"cmd\":\"");
@@ -84,7 +90,7 @@ static void ackOk(const char* command, int index, bool clamped, bool rebooting)
 
 // Rejects a payload whose schema version isn't the one this build speaks, before it reaches
 // fromJson().
-static bool schemaVersionOk(const char* command, JsonDocument& doc, uint16_t expected)
+static bool schemaVersionOk(const char* command, int index, JsonDocument& doc, uint16_t expected)
 {
     uint16_t loaded = doc["schemaVersion"] | (uint16_t)0; // 0 = predates versioning
     if (loaded == expected)
@@ -92,7 +98,13 @@ static bool schemaVersionOk(const char* command, JsonDocument& doc, uint16_t exp
 
     Serial.print("{\"cmd\":\"");
     Serial.print(command);
-    Serial.print("\",\"ok\":false,\"err\":\"schemaVersion ");
+    Serial.print("\",\"ok\":false");
+    if (index >= 0)
+    {
+        Serial.print(",\"index\":");
+        Serial.print(index);
+    }
+    Serial.print(",\"err\":\"schemaVersion ");
     Serial.print(loaded);
     Serial.print(" != ");
     Serial.print(expected);
@@ -169,7 +181,7 @@ void handleSerialCommands()
         // unwired device never reaches the branch.
         if (!wiringLive)
         {
-            ackError("ESC_PASSTHROUGH", "no wiring configured");
+            ackError("ESC_PASSTHROUGH", -1, "no wiring configured");
             return;
         }
         // No switch ends this one: the host that asked closes the port instead.
@@ -197,12 +209,12 @@ void handleSerialCommands()
     {
         if (!hasIndex || explicitIndex < 0 || explicitIndex >= ProfileStore::MAX_PROFILE_COUNT)
         {
-            ackError("FACTORY_RESET_PROFILE", "needs a slot index");
+            ackError("FACTORY_RESET_PROFILE", -1, "needs a slot index");
             return;
         }
         if (!ProfileStore::resetProfile((uint8_t)explicitIndex))
         {
-            ackError("FACTORY_RESET_PROFILE", "could not write the slot");
+            ackError("FACTORY_RESET_PROFILE", explicitIndex, "could not write the slot");
             return;
         }
         // Reboots whichever slot it was: activeProfile is a RAM copy loaded at boot, so resetting
@@ -276,7 +288,7 @@ void handleSerialCommands()
     {
         if (hasIndex && (explicitIndex < 0 || explicitIndex >= ProfileStore::MAX_PROFILE_COUNT))
         {
-            ackError("LOAD_PROFILE", "index out of range");
+            ackError("LOAD_PROFILE", -1, "index out of range");
             return;
         }
         const uint8_t activeIndex = activeProfileIndex;
@@ -286,10 +298,10 @@ void handleSerialCommands()
         DeserializationError err = deserializeJson(doc, Serial);
         if (err)
         {
-            ackError("LOAD_PROFILE", parseError(err));
+            ackError("LOAD_PROFILE", targetIndex, parseError(err));
             return;
         }
-        if (!schemaVersionOk("LOAD_PROFILE", doc, ProfileStore::CURRENT_SCHEMA_VERSION))
+        if (!schemaVersionOk("LOAD_PROFILE", targetIndex, doc, ProfileStore::CURRENT_SCHEMA_VERSION))
             return;
 
         ShotProfile newSettings;
@@ -425,10 +437,10 @@ void handleSerialCommands()
         DeserializationError err = deserializeJson(doc, Serial);
         if (err)
         {
-            ackError("LOAD_DEVICE", parseError(err));
+            ackError("LOAD_DEVICE", -1, parseError(err));
             return;
         }
-        if (!schemaVersionOk("LOAD_DEVICE", doc, DeviceStore::CURRENT_SCHEMA_VERSION))
+        if (!schemaVersionOk("LOAD_DEVICE", -1, doc, DeviceStore::CURRENT_SCHEMA_VERSION))
             return;
         DeviceSettings newSettings = deviceSettings;
         DeviceStore::fromJson(doc, newSettings);
