@@ -14,6 +14,7 @@ import {
   type SerialApi,
   type Capture,
 } from "./transport";
+import { sleep } from "./sleep";
 import { SerialPort as UsbSerialPort, serial as usbSerial } from "../vendor/web-serial-polyfill/dist/serial.js";
 import deviceJson from "../fixtures/device.json";
 import profile0 from "../fixtures/profile0.json";
@@ -132,6 +133,23 @@ describe("captureReport", () => {
     expect(captureReport('{"evt":"unconfigured"}')).toBe(null);
     expect(captureReport("16390,0,30000,7143,0.00,")).toBe(null);
     expect(captureReport('{"evt":"rpmCapture","readyMs":17')).toBe(null);
+  });
+});
+
+vi.mock("./sleep", () => ({ sleep: vi.fn() }));
+
+describe("holdRev", () => {
+  it("lets go, saying why, once a renewal falls behind", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    const gaps = [0, 100, 100, 250];
+    vi.mocked(sleep).mockImplementation(async () => {
+      now += gaps.shift()!;
+    });
+    const why = await new Promise((resolve) => new SerialTransport().holdRev(0b1010, resolve));
+    expect(why).toBe("renewals fell 250 ms apart");
+    expect(gaps).toEqual([]);
+    vi.restoreAllMocks();
   });
 });
 

@@ -632,8 +632,8 @@ export function App() {
   const revHoldApi: RevHoldApi = React.useMemo(
     () => ({
       hold: (mask, onLost) =>
-        transport.holdRev(mask, (err) => {
-          note("err", `REV_HOLD: ${err}`);
+        transport.holdRev(mask, (why) => {
+          note("err", `Let go of Rev: ${why}.`);
           onLost();
         }),
       status: () =>

@@ -11,6 +11,7 @@
 
 import { serial as usbSerial } from "../vendor/web-serial-polyfill/dist/serial.js";
 import { isCaptureHeader, isCaptureRow } from "../rpm/parse";
+import { sleep } from "./sleep";
 
 export type LogKind = "out" | "in" | "ok" | "err";
 
@@ -199,7 +200,12 @@ export class CaptureAssembler {
 }
 
 /** How often a held rev renews REV_HOLD - well inside the device's 300 ms lease. */
-export const REV_RENEW_MS = 100;
+const REV_RENEW_MS = 100;
+/**
+ * A renewal this long after the last lets go. The device would soon have let go itself, and the next
+ * late renewal would rev it again - from speed, not from rest.
+ */
+const REV_LATE_MS = 200;
 
 const WHOLE_ATTEMPTS = 3;
 
@@ -663,31 +669,47 @@ export class SerialTransport {
   /**
    * Revs the motors in `mask` until the returned function lets go: REV_HOLD now and every
    * REV_RENEW_MS, then REV_RELEASE. The device lets go by itself when the renewals stop, so a closed
-   * tab or a dropped link lets go too. A refusal ends the hold and is passed to `onRefused`.
+   * tab or a dropped link lets go too. A refusal, or renewals falling behind, ends the hold and
+   * `onLost` hears why.
    */
-  holdRev(mask: number, onRefused: (err: string) => void): () => void {
+  holdRev(mask: number, onLost: (why: string) => void): () => void {
     let held = true;
-    // Not awaited: the device lets go if a renewal is late, so the next one goes out on time
-    // whatever became of the last one's reply.
-    const renew = () => {
-      if (!this.writer) return;
-      const reply = this.waitForLine(repliesTo("REV_HOLD"), TIMEOUT_SHORT_MS);
-      void this.sendQuiet(`REV_HOLD ${mask}`);
-      void reply.then((line) => {
-        const ack = line === null ? null : (JSON.parse(line) as CommandAck);
-        if (!ack || ack.ok || !held) return;
-        release();
-        onRefused(ack.err ?? "refused");
-      });
-    };
-    const timer = setInterval(renew, REV_RENEW_MS);
     const release = () => {
       if (!held) return;
       held = false;
-      clearInterval(timer);
       if (this.writer) void this.sendQuiet("REV_RELEASE");
     };
-    renew();
+    const lose = (why: string) => {
+      if (!held) return;
+      release();
+      onLost(why);
+    };
+    void (async () => {
+      await sleep(0); // starts the timer worker the first time, outside the gaps measured
+      let last = performance.now();
+      while (held) {
+        // Not awaited: the device lets go if a renewal is late, so the next one goes out on time
+        // whatever became of the last one's reply.
+        if (this.writer) {
+          const reply = this.waitForLine(repliesTo("REV_HOLD"), TIMEOUT_SHORT_MS);
+          void this.sendQuiet(`REV_HOLD ${mask}`);
+          void reply.then((line) => {
+            if (line === null) return;
+            let ack: CommandAck;
+            try {
+              ack = JSON.parse(line) as CommandAck;
+            } catch {
+              return; // garbled, so it says nothing either way; the next renewal's ack will
+            }
+            if (!ack.ok) lose(`the blaster refused it (${ack.err})`);
+          });
+        }
+        await sleep(REV_RENEW_MS);
+        const now = performance.now();
+        if (now - last > REV_LATE_MS) lose(`renewals fell ${Math.round(now - last)} ms apart`);
+        last = now;
+      }
+    })();
     return release;
   }
 
