@@ -6,6 +6,8 @@ import pytest
 from helpers import armed_v12
 from test_idle_hold import power_on_holding_rev
 
+from trifolium_sim import FULLSPEED
+
 PACK_MV = 16400
 RISE_MS = 24000
 QUICK_RISE_MS = 5000  # still under the cutoff at 2 s, over it by 9 s: the same story, sooner
@@ -73,9 +75,6 @@ def test_with_nothing_reading_the_pack_it_is_taken_as_3_5_v_a_cell_and_never_cut
     assert len(b.edges(20, armed_at)) <= 1  # the LED came on, at most, and never blinked
 
 
-@pytest.mark.xfail(reason="checkLowVoltageCutoff() trusts the reading as soon as ESC arming ends and "
-                          "latches ESC enable off, so a divider still rising then cuts the ESCs until "
-                          "the next boot")
 def test_a_divider_still_rising_at_boot_does_not_cut_the_escs_for_the_session(blaster):
     b = blaster
     b.esc_startup()
@@ -84,3 +83,59 @@ def test_a_divider_still_rising_at_boot_does_not_cut_the_escs_for_the_session(bl
     b.run_ms(15000)
     assert b.peek("battery")["mv"] > CUTOFF_MV
     assert b.pin(22)["outputLevel"] is True
+
+
+def test_a_pack_under_the_cutoff_at_rest_spins_down_and_cuts_the_escs_until_it_reads_over_it(
+        blaster):
+    b = armed_v12(blaster, {"escEnablePin": 22}, display=False)
+    b.press("rev")
+    assert b.run_until_peek("flywheelState", FULLSPEED, limit_ms=600)
+    b.set_pack(12400)  # 3.1 V per cell
+    b.run_ms(1500)
+    assert b.peek("flywheelState") == FULLSPEED  # a rev's sag never trips it
+
+    b.tap("trigger")  # a shot starts the 1 s dwell over
+    b.release("rev")
+    b.run_ms(1500)  # the dwell holds the rev, so its sag does not count either
+    assert b.peek("lowVoltageCutoffTripped") is False
+    b.run_ms(900)  # a second under the cutoff since the dwell ended and the ramp began
+    assert b.peek("lowVoltageCutoffTripped") is True
+    assert b.peek("motors")[1]["targetRPM"] == 0
+    assert b.pin(22)["outputLevel"] is False
+
+    fired = len(b.extends())
+    b.press("rev")
+    b.press("trigger")
+    b.run_ms(1000)
+    assert b.peek("motors")[1]["targetRPM"] == 0
+    assert len(b.extends()) == fired
+    b.release("trigger")
+
+    b.set_pack(13600)  # back over the cutoff
+    assert b.run_until_peek("flywheelState", FULLSPEED, limit_ms=1600)
+    assert b.pin(22)["outputLevel"] is True
+
+
+def test_the_cutoff_trips_with_idle_hold_keeping_the_wheels_at_idle(blaster):
+    b = power_on_holding_rev(blaster)
+    assert b.peek("motors")[1]["targetRPM"] == IDLE
+    b.set_pack(12400)
+    b.run_ms(1100)
+    assert b.peek("lowVoltageCutoffTripped") is True
+    b.run_ms(500)
+    assert b.peek("motors")[1]["targetRPM"] == 0
+
+
+def test_the_cutoff_ends_a_post_rev_idle_window(blaster):
+    b = blaster
+    b.flash_profile(1, {"schemaVersion": 2, "dwellTime_ms": 0, "idleTime_ms": 10000})
+    armed_v12(b, display=False)
+    b.press("rev")
+    assert b.run_until_peek("flywheelState", FULLSPEED, limit_ms=600)
+    b.release("rev")
+    b.set_pack(12400)
+    b.run_ms(900)
+    assert b.peek("motors")[1]["targetRPM"] == IDLE
+    b.run_ms(600)
+    assert b.peek("lowVoltageCutoffTripped") is True
+    assert b.peek("motors")[1]["targetRPM"] == 0
