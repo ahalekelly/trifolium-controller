@@ -39,7 +39,7 @@ import { DirtyKeys } from "./ui/dirty";
 import { PresetPicker } from "./ui/PresetPicker";
 import { BootFaults } from "./ui/BootFaults";
 import { EscSetup } from "./ui/EscSetup";
-import { MotorActions } from "./ui/MotorActions";
+import { MotorActions, type MotorsDump } from "./ui/MotorActions";
 import { FireModes } from "./ui/FireModes";
 import { FlashDialog } from "./ui/FlashDialog";
 import { DEVICE_LAYOUT, PROFILE_LAYOUT } from "./ui/layout";
@@ -126,6 +126,9 @@ const OFFLINE_DEVICE = {
 };
 
 type TabId = "profile" | "device" | "rpm" | "splash" | "wiring" | "raw";
+
+/** How often the motors panel asks for DUMP_MOTORS - the menu's ESC Dashboard redraws at 10 Hz. */
+const MOTOR_POLL_MS = 500;
 
 /** An edit not yet written: its mark as `dirty` holds it, and the value it stages. */
 interface Staged {
@@ -595,6 +598,28 @@ export function App() {
       setBusy(false);
     }
   };
+
+  /**
+   * The motors panel's live telemetry, polled while the Device tab is on screen. Paused while busy:
+   * a motor action holds the device for seconds, and a write may be about to reboot it.
+   */
+  const [motorsDump, setMotorsDump] = React.useState<MotorsDump | null>(null);
+  React.useEffect(() => {
+    if (!live) setMotorsDump(null);
+    if (!live || tab !== "device" || busy) return;
+    let stopped = false;
+    void (async () => {
+      while (!stopped) {
+        const dump = await transport.poll<MotorsDump>("DUMP_MOTORS");
+        if (stopped) return;
+        if (dump) setMotorsDump(dump);
+        await new Promise((r) => setTimeout(r, MOTOR_POLL_MS));
+      }
+    })();
+    return () => {
+      stopped = true;
+    };
+  }, [live, tab, busy, transport]);
 
   const askReset = (kind: ResetKind) =>
     setPendingReset(
@@ -1268,7 +1293,7 @@ export function App() {
                             <Section node={section} payloads={payloads} onEdit={onEdit} />
                             {live && (
                               <MotorActions
-                                device={device}
+                                motors={motorsDump?.motors ?? null}
                                 disabled={busy}
                                 onTest={(motor) => void motorActions(`TEST_MOTOR ${motor}`)}
                                 // The spin is the readback: an ESC cannot report its direction.

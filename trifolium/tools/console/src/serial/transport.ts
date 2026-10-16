@@ -550,6 +550,23 @@ export class SerialTransport {
     }
   }
 
+  /**
+   * request() for a live view, asked again and again: neither the command nor a missed reply is
+   * logged, since the next poll replaces it. Null when not connected, as polling can outlive that.
+   */
+  async poll<T>(command: string): Promise<T | null> {
+    if (!this.writer) return null;
+    const pending = this.waitForLine(repliesTo(command), TIMEOUT_SHORT_MS);
+    await this.write(`${command}\n`);
+    const line = await pending;
+    if (line === null) return null;
+    try {
+      return JSON.parse(line) as T;
+    } catch {
+      return null;
+    }
+  }
+
   /** request(), asked again while the reply comes back garbled - see askUntilWhole(). */
   async requestWhole<T>(command: string, timeoutMs = TIMEOUT_SHORT_MS): Promise<T | null> {
     return askUntilWhole<T>(
@@ -579,9 +596,8 @@ export class SerialTransport {
   async load(command: string, body: unknown): Promise<CommandAck | null> {
     const text = JSON.stringify(body);
     this.log("out", `> ${command}  (${text.length} bytes)`);
-    await this.write(`${command}\n`);
     const pending = this.waitForLine(repliesTo(command), TIMEOUT_SHORT_MS);
-    await this.write(text);
+    await this.write(`${command}\n${text}`);
 
     return this.settleAck(command, await pending);
   }

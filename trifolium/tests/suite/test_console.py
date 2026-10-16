@@ -379,6 +379,20 @@ def test_a_direction_set_from_motors_and_pid_is_written_then_spun_and_a_refusal_
     served.bench("release", role="rev")
 
 
+def test_the_motors_panel_lists_the_attached_motors_with_live_telemetry(page, serve):
+    served = serve()
+    connect(open_console(page, served))
+    served.wait_armed()
+    page.get_by_role("tab", name="Device").click()
+    rows = page.get_by_role("row").filter(has=page.get_by_role("button", name="Test"))
+    expect(rows).to_have_count(2)  # a v1.2 drives motors 2 and 4
+    served.bench("press", role="rev")
+    for row in rows.all():
+        rpm = row.get_by_role("cell").nth(1)
+        expect(rpm).to_have_text(re.compile(r"^[1-9]\d{3,}$"), timeout=5000)
+    served.bench("release", role="rev")
+
+
 def test_a_setting_that_governs_others_shows_and_hides_them_as_it_is_edited(page, serve):
     """The console evaluates the schema's visibleWhen itself, so the rows move before any write."""
     served = serve()
