@@ -268,6 +268,10 @@ class Blaster:
         """Power goes as the n-th flash write from now is about to land."""
         self._call("flash.cut", write=n)
 
+    def fill_flash(self, full=True):
+        """Out of space: every file write from now stores nothing, until full=False."""
+        self._call("flash.full", value=full)
+
     def flash_writes(self):
         return self._call("flash.stats")["writes"]
 

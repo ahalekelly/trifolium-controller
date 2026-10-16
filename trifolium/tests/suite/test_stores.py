@@ -272,6 +272,31 @@ def test_a_saved_device_file_leaves_no_temp_file_behind(blaster):
     assert b.command("DUMP_DEVICE")["blasterName"] == "saved"
 
 
+LOW_KV = [{"motorKv": 300}] * 4  # clamps the profile's rev RPM, so the profile needs putting back too
+
+
+@pytest.mark.parametrize("command, err", [
+    ("FACTORY_RESET_DEVICE", "could not write the device settings"),
+    ("FACTORY_RESET_ALL", "could not write a slot"),
+    ("RESET_PINS", "could not write the device settings"),
+    ("LOAD_DEVICE\n" + json.dumps({"schemaVersion": 3, "blasterName": "x", "motorConfig": LOW_KV}),
+     "could not write the device settings"),
+    ('LOAD_PROFILE\n{"schemaVersion": 2, "dwellTime_ms": 2500}', "could not write the slot"),
+    ('LOAD_PROFILE 2\n{"schemaVersion": 2, "dwellTime_ms": 2500}', "could not write the slot"),
+])
+def test_a_save_that_fails_is_refused_and_the_device_keeps_what_flash_holds(blaster, command, err):
+    b = armed_v12(blaster, display=False, settle_ms=100)
+    assert b.peek("activeProfileIndex") != 2
+    device, profile, files = b.command("DUMP_DEVICE"), b.command("DUMP_PROFILE"), b.flash_files()
+    b.fill_flash()
+    assert b.command(command) == {"cmd": command.split()[0], "ok": False, "err": err}
+    assert b.run_ms(500)
+    assert len(b.history) == 0  # no reboot
+    assert b.command("DUMP_DEVICE") == device
+    assert b.command("DUMP_PROFILE") == profile
+    assert b.flash_files() == files
+
+
 def test_a_corrupt_device_file_boots_on_defaults(make_blaster):
     b = make_blaster()
     b.flash_put("/device.cfg", '{"schemaVersion":3,')
