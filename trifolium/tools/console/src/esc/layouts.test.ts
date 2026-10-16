@@ -55,6 +55,7 @@ describe("the v4 table", () => {
     expect(shown(field(4, "motor_poles"), V4_DEFAULT[27])).toBe("14");
     expect(shown(field(4, "max_ramp"), V4_DEFAULT[5])).toBe("16 % duty/ms");
     expect(shown(field(4, "variable_pwm"), V4_DEFAULT[21])).toBe("Variable");
+    expect(shown(field(4, "active_brake_power"), 5)).toBe("2.5 % duty");
   });
 
   it("marks the spin-up fields searchable and nothing else", () => {
