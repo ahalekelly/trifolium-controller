@@ -57,7 +57,8 @@ class RpmLogger
             timedOut_ = true;
     }
 
-    // Call once per control-loop tick to record the current sample, if a capture is active.
+    // Call once per control-loop tick to record the current sample, if a capture is active. Each
+    // tick gets its own row.
     void record(FlywheelMotor motorArr[4], const bool motors[4], int32_t batteryVoltage_mv)
     {
         if (!armed() || cacheIndex_ >= length_)
@@ -76,19 +77,13 @@ class RpmLogger
                 valueCache_[cacheIndex_][i] = motorArr[i].PIDIntegral;
             }
         }
+        cacheIndex_++;
     }
 
     bool dumpIfReady(const bool motors[4])
     {
-        if (!armed())
+        if (!armed() || cacheIndex_ < length_)
             return false;
-        if (cacheIndex_ < length_)
-        {
-            cacheIndex_++;
-            return false;
-        }
-        if (cacheIndex_ > length_)
-            return false; // already dumped this capture
 
         char rowBuf[240];
         int len = snprintf(rowBuf, sizeof(rowBuf), "%s",
@@ -133,7 +128,6 @@ class RpmLogger
         else
             Serial.print(slowestMotor_);
         Serial.println(timedOut_ ? ",\"timedOut\":true}" : ",\"timedOut\":false}");
-        cacheIndex_++; // prevent re-dumping
         freeBuffers(); // capture complete - release the buffer
         return true;
     }
