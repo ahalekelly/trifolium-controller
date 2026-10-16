@@ -473,7 +473,7 @@ void handleSerialCommands()
         const String direction = argument.substring(2);
         if (direction != "normal" && direction != "reversed")
         {
-            ackError("ESC_DIRECTION", -1, "needs normal or reversed");
+            ackError("ESC_DIRECTION", motorIndex, "needs normal or reversed");
             return;
         }
         if (!takeMotor("ESC_DIRECTION", motorIndex))
