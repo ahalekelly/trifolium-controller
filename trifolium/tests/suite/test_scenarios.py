@@ -106,7 +106,12 @@ def test_an_rpm_log_captures_the_rev_then_prints_it_and_when_the_wheels_were_rea
     mark = len(b.transcript)
     boots = len(b.history)
     b.press("rev")
-    assert b.run_until(lambda: '"evt":"rpmCapture"' in b.transcript[mark:], 1000)
+    # The console reading the device all the while keeps the port busy: every tick still gets its
+    # row.
+    deadline = b.now_us + 1_000_000
+    while '"evt":"rpmCapture"' not in b.transcript[mark:]:
+        assert b.now_us < deadline
+        assert b.command("DUMP_DEVICE")
 
     log = b.transcript[mark:]
     header = log.find("Voltage_mv,Current_mv,Motor 1,TargetRPM 1,Throttle 1,value 1,Motor 3,")
