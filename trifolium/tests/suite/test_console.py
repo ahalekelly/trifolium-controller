@@ -343,10 +343,13 @@ def test_choose_device_asks_even_when_a_blaster_is_already_allowed(page, serve):
     expect(page.get_by_text(re.compile("Connect failed: No port selected"))).to_be_visible()
 
 
-def test_an_rpm_capture_from_a_rev_charts_every_motor_at_the_length_the_device_published(page, serve):
+def test_an_rpm_capture_from_a_rev_charts_itself_with_every_motor_at_the_published_length(
+        page, serve):
     served = serve(device={"useRpmLogging": True})
     connect(open_console(page, served))
     served.wait_armed()
+    page.get_by_role("tab", name="RPM Log").click()
+    expect(page.get_by_text(re.compile("^Rev the blaster"))).to_be_visible()
     served.bench("press", role="rev")
     served.run_for(1500)
     served.bench("release", role="rev")
@@ -354,10 +357,12 @@ def test_an_rpm_capture_from_a_rev_charts_every_motor_at_the_length_the_device_p
         timeout=REBOOT_MS)
     expect(page.get_by_text(re.compile(r"Connected · fw \d"))).to_be_visible()
 
+    summary = re.compile(rf"^2 motors, {served.settings()['rpmLogLength']} samples")
+    expect(page.get_by_text(summary)).to_be_visible()
+    # Coming back to the tab finds the capture in the log again.
+    page.get_by_role("tab", name="Device").click()
     page.get_by_role("tab", name="RPM Log").click()
-    page.get_by_role("button", name="Take from device log").click()
-    length = served.settings()["rpmLogLength"]
-    expect(page.get_by_text(re.compile(rf"^2 motors, {length} samples"))).to_be_visible()
+    expect(page.get_by_text(summary)).to_be_visible()
 
 
 def test_a_direction_set_from_motors_and_pid_is_written_then_spun_and_a_refusal_says_why(page, serve):

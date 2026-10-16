@@ -196,6 +196,8 @@ export function App() {
 
   // The transport is built once, so it reaches afterReboot() - rebuilt every render - through this.
   const onRebooting = React.useRef<(reason: string) => void>(() => {});
+  // RPM captures finished this session; each one's dump is in the log before its reboot is seen.
+  const [captures, setCaptures] = React.useState(0);
   const transport = React.useMemo(
     () =>
       new SerialTransport({
@@ -493,8 +495,10 @@ export function App() {
     }
     note("err", `${label}, but the device did not come back. Reconnect when it has restarted.`);
   };
-  onRebooting.current = (reason) =>
+  onRebooting.current = (reason) => {
+    if (reason === "rpmLog") setCaptures((n) => n + 1);
     void afterReboot(reason === "rpmLog" ? "RPM capture finished" : "The device restarted");
+  };
 
   /**
    * Only a plain reboot comes back to us. The other two hand the device to something else, and the
@@ -1388,6 +1392,7 @@ export function App() {
                 device={device}
                 onEdit={onEdit}
                 logText={deviceLogText}
+                captures={captures}
                 capturing={getByKey(device, "device:useRpmLogging") === true}
                 switches={<ConsoleSwitches blocked={switchesBlocked} onHold={holdSwitch} />}
               />

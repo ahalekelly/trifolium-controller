@@ -29,8 +29,8 @@ export interface RpmLog {
  * Sized here rather than in the log view, because it is this parser that imposes it: a capture is
  * one header line plus one row per sample, extractRpmCsv() finds the block by its *header*, and the
  * firmware's ceiling is 2000 samples. A smaller buffer keeps only the tail of a default-length
- * capture, the header having been evicted, so "Take from device log" can never work - which is
- * exactly how it failed on the bench. Keep this above the largest rpmLogLength the firmware allows.
+ * capture, the header having been evicted, so the RPM Log tab never finds it - which is exactly
+ * how it failed on the bench. Keep this above the largest rpmLogLength the firmware allows.
  */
 export const LOG_LINE_CAP = 4000;
 
@@ -39,14 +39,16 @@ const HEADER_RE = /^(?:Voltage_mv,(?:Current_mv,)?)?(?:Motor \d+,TargetRPM \d+,T
 const DATA_ROW_RE = /^[\d.\-,]+$/;
 
 /**
- * Pulls the CSV block out of arbitrary log text, stripping the console's "(device) " prefix.
+ * Pulls the newest CSV block out of arbitrary log text, stripping the console's "(device) " prefix.
  *
- * Returns null when there is no header, or a header with no rows - a header alone is not a capture.
+ * Returns null when there is no header, or a newest header with no rows - a header alone is not a
+ * capture.
  */
 export function extractRpmCsv(rawText: string): string | null {
   const lines = rawText.split(/\r?\n/).map((l) => l.replace(/^\s*\(device\)\s*/, "").trim());
 
-  const headerIdx = lines.findIndex((l) => HEADER_RE.test(l));
+  let headerIdx = lines.length - 1;
+  while (headerIdx >= 0 && !HEADER_RE.test(lines[headerIdx])) headerIdx--;
   if (headerIdx === -1) return null;
 
   const csv = [lines[headerIdx]];

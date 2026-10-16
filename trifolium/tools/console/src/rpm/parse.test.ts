@@ -38,6 +38,17 @@ describe("extractRpmCsv", () => {
     expect(extractRpmCsv(old)).not.toBeNull();
   });
 
+  it("takes the newest of several captures", () => {
+    const two = [
+      "Motor 1,TargetRPM 1,Throttle 1,value 1,",
+      "100,200,300,1",
+      "(device) Rev switch pressed",
+      "Motor 1,TargetRPM 1,Throttle 1,value 1,",
+      "900,800,700,6",
+    ].join("\n");
+    expect(extractRpmCsv(two)).toBe("Motor 1,TargetRPM 1,Throttle 1,value 1,\n900,800,700,6");
+  });
+
   it("returns null for a header with no rows, which is not a capture", () => {
     expect(extractRpmCsv("Motor 1,TargetRPM 1,Throttle 1,value 1,")).toBeNull();
   });
@@ -169,8 +180,8 @@ describe("a full-length capture survives the console's log buffer", () => {
 
   /**
    * The bug this cap exists for. extractRpmCsv() finds the block by its header, so a buffer that
-   * holds only the tail of a capture yields nothing at all - "Take from device log" reported no
-   * capture on a device that had just dumped one perfectly.
+   * holds only the tail of a capture yields nothing at all - the RPM Log tab reported no capture
+   * on a device that had just dumped one perfectly.
    */
   it("finds nothing when the header has been evicted", () => {
     expect(extractRpmCsv(capture(FULL).slice(-500).join("\n"))).toBeNull();

@@ -31,7 +31,7 @@ import { RpmChart, type Series } from "./RpmChart";
 //
 // Not a live feature: the firmware records a fixed-length capture into RAM during a rev and dumps the
 // whole thing as CSV afterwards, then reboots. So this reads the CSV out of whatever text is to hand -
-// the device log, a pasted block, or a dropped file - rather than streaming.
+// the newest capture in the device log, a pasted block, or a dropped file - rather than streaming.
 //
 // `useRpmLogging` is the only switch a capture needs. RpmLogger::dumpIfReady writes the CSV to
 // Serial directly rather than through the logger, precisely so that the capture a user asked for
@@ -60,14 +60,26 @@ export interface RpmLogProps {
   device: unknown;
   onEdit: (key: string, value: unknown) => void;
   logText: string;
+  /** How many captures have finished this session. Each new one replaces whatever the box holds. */
+  captures: number;
   /** device:useRpmLogging - whether the next rev records a capture at all. */
   capturing: boolean;
   /** Rev and Fire, held from the browser to run a capture. */
   switches: React.ReactNode;
 }
 
-export function RpmLog({ schema, device, onEdit, logText, capturing, switches }: RpmLogProps) {
-  const [text, setText] = React.useState("");
+export function RpmLog({
+  schema,
+  device,
+  onEdit,
+  logText,
+  captures,
+  capturing,
+  switches,
+}: RpmLogProps) {
+  // The extracted block, not the whole log. The box is also what you read, edit and save - and a
+  // capture buried in a few thousand lines of boot chatter is not something you can check by eye.
+  const [text, setText] = React.useState(() => extractRpmCsv(logText) ?? "");
   const [trim, setTrim] = React.useState(true);
   const [showThrottle, setShowThrottle] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -155,22 +167,17 @@ export function RpmLog({ schema, device, onEdit, logText, capturing, switches }:
   // tens of milliseconds, which is where the lines on the chart overlap.
   const crossings = React.useMemo(() => (parsed ? targetCrossings(parsed) : []), [parsed]);
 
-  const takeFromLog = () => {
-    setError(null);
+  // A capture that finishes while the tab is open replaces the box, a loaded file or an edit
+  // included. The count moves on the reboot that follows the dump, so the log already holds it whole.
+  const shownCaptures = React.useRef(captures);
+  React.useEffect(() => {
+    if (captures === shownCaptures.current) return;
+    shownCaptures.current = captures;
     const csv = extractRpmCsv(logText);
-    if (!csv) {
-      setError(
-        capturing
-          ? "No CSV capture in the device log yet. RPM Logging is on, so rev the blaster and wait - the device dumps the whole capture at once and reboots straight after."
-          : "No CSV capture found in the device log. RPM Logging is off: turn it on above, then rev the blaster.",
-      );
-      return;
-    }
-    // The extracted block, not the whole log. The parser finds the CSV either way, but the box is
-    // also what you read, edit and save - and a capture buried in a few thousand lines of boot
-    // chatter is not something you can check by eye or hand to anyone else.
+    if (!csv) return;
     setText(csv);
-  };
+    setError(null);
+  }, [captures, logText]);
 
   /** Picked or dropped, a file lands in the box the same way. */
   const readFile = async (file: File) => {
@@ -233,9 +240,6 @@ export function RpmLog({ schema, device, onEdit, logText, capturing, switches }:
       </Fieldset>
 
       <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }}>
-        <Button size="small" variant="outlined" onClick={takeFromLog}>
-          Take from device log
-        </Button>
         <Button size="small" variant="outlined" onClick={() => fileRef.current?.click()}>
           Open CSV file
         </Button>
@@ -286,6 +290,14 @@ export function RpmLog({ schema, device, onEdit, logText, capturing, switches }:
           </Typography>
         )}
       </Stack>
+
+      {!text && (
+        <Typography variant="caption" color="text.secondary">
+          {capturing
+            ? "Rev the blaster to capture. It reboots after each capture."
+            : "Turn on RPM Logging to capture."}
+        </Typography>
+      )}
 
       {error && (
         <Alert severity="info" sx={{ py: 0 }}>
@@ -377,7 +389,7 @@ export function RpmLog({ schema, device, onEdit, logText, capturing, switches }:
         minRows={4}
         maxRows={10}
         size="small"
-        placeholder="Paste a capture here, drop a .csv file anywhere on this tab, or use the buttons above."
+        placeholder="Paste a capture here, drop a .csv file anywhere on this tab, or open one above."
         value={text}
         onChange={(e) => setText(e.target.value)}
         slotProps={{ htmlInput: { style: { fontSize: 11, fontFamily: "ui-monospace, monospace" } } }}
