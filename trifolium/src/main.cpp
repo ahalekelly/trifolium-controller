@@ -1399,6 +1399,40 @@ void checkLowVoltageCutoff()
     }
 }
 
+// The battery warning on the ESCs, for blasters with no screen or LED: BEACON4, AM32's three
+// falling notes, once the wheels stand still and every 15 seconds while they do. ESCs beep only
+// when stopped, and a command takes that tick's throttle frame, so nothing may want the wheels.
+static const uint32_t kBeaconPeriod_ms = 15000;
+// AM32 plays BEACON4 for 225 ms with its interrupts off, deaf to throttle: a rev pressed meanwhile
+// starts late, and the spin-up clock waits for it.
+static const uint32_t kBeaconTune_ms = 250;
+static uint32_t beaconTuneEnds_ms = 0;
+
+static bool sendLowBatteryBeacon()
+{
+    static uint32_t due_ms = 0;
+
+    bool wanted = batteryWarningActive && !menuIsOpen() && driveTrainStopped();
+    for (int i = 0; i < 4; i++)
+        wanted = wanted && (!motorsEnabled[i] || motorArr[i].motorRPM == 0);
+    if (!wanted)
+    {
+        due_ms = time_ms;
+        return false;
+    }
+    if ((int32_t)(time_ms - due_ms) < 0)
+        return false;
+
+    due_ms = time_ms + kBeaconPeriod_ms;
+    beaconTuneEnds_ms = time_ms + kBeaconTune_ms;
+    for (int i = 0; i < 4; i++)
+    {
+        if (motorsEnabled[i])
+            motorArr[i].esc->sendRaw11Bit(DSHOT_CMD_BEACON4);
+    }
+    return true;
+}
+
 // RPM-drop-based shot detection
 void checkRpmDropShotDetection()
 {
@@ -1675,6 +1709,10 @@ bool fwControlLoop()
             motorArr[i].targetRPM = (rpmScale_ >= 0.0f) ? (uint32_t)(motorArr[i].revRPM * rpmScale_)
                                                        : motorArr[i].revRPM;
 
+        // The spin-up clock waits out a beacon tune still playing.
+        if ((int32_t)(time_ms - beaconTuneEnds_ms) < 0)
+            revStartTime_us = loopStartTimer_us;
+
         // If all motors are at target RPM, update the blaster's state to FULLSPEED.
         if (wheelsAtSpeed()) {
             flywheelState = STATE_FULLSPEED;
@@ -1826,7 +1864,7 @@ bool fwControlLoop()
             break;
         }
     }
-    else
+    else if (!sendLowBatteryBeacon())
     {
         // we are spinning down or idling, just do open loop control
         for (int i = 0; i < 4; i++)

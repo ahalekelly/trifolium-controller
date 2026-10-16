@@ -123,7 +123,7 @@ export const SETTING_HELP: Record<string, string> = {
   "device:lowVoltageCutoffPerCell_mv":
     "Below this voltage per cell the blaster refuses to spin up, to protect the pack.",
   "device:lowVoltageWarningPerCell_mv":
-    "An earlier warning: LOW BATT blinks on the home screen, but you can still fire. Set it above the cutoff.",
+    "An earlier warning: LOW BATT blinks on the home screen and the ESCs beep once the flywheels stop, then every 15 seconds. You can still fire. Set it above the cutoff.",
   "device:voltageCalibrationFactor":
     "A correction for when the blaster's battery reading does not match a multimeter.",
   "device:voltageAveragingWindow":
