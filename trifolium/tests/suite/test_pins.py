@@ -103,14 +103,16 @@ def test_esc_enable_is_high_through_an_esc_passthrough_session(blaster):
     assert b.pin(22)["outputLevel"] is True
 
 
-def test_the_low_voltage_cutoff_drops_esc_enable_until_the_next_boot(blaster):
+def test_the_low_voltage_cutoff_drops_esc_enable_until_the_pack_reads_over_it(blaster):
     b = armed_v12(blaster, {"escEnablePin": 22})
     b.set_pack(12400)  # 3.1 V per cell, under the 3.3 V cutoff
     b.run_ms(3000)
     assert b.pin(22)["outputLevel"] is False
     b.set_pack(16400)
-    b.run_ms(1000)
+    b.run_ms(900)
     assert b.pin(22)["outputLevel"] is False
+    b.run_ms(200)
+    assert b.pin(22)["outputLevel"] is True
 
 
 def test_the_schema_header_is_right_in_the_first_reply_after_a_reboot(blaster):
