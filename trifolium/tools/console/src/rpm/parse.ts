@@ -19,6 +19,8 @@ export interface RpmLog {
   motors: MotorSeries[];
   /** Empty for captures taken before the voltage column existed. */
   voltage: number[];
+  /** The ESC current-sense pin, in mV. Empty when no currentAdcPin was set. */
+  current: number[];
 }
 
 /**
@@ -82,14 +84,15 @@ export function parseRpmCsv(text: string): RpmLog {
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
-  if (!lines.length) return { motors: [], voltage: [] };
+  if (!lines.length) return { motors: [], voltage: [], current: [] };
 
   const headerCells = lines[0]
     .split(",")
     .map((c) => c.trim())
     .filter(Boolean);
   const hasVoltage = /^Voltage/i.test(headerCells[0] ?? "");
-  const base = hasVoltage ? (headerCells[1] === "Current_mv" ? 2 : 1) : 0;
+  const hasCurrent = hasVoltage && headerCells[1] === "Current_mv";
+  const base = hasVoltage ? (hasCurrent ? 2 : 1) : 0;
 
   const motors: MotorSeries[] = [];
   for (let i = base; i < headerCells.length; i += 4) {
@@ -97,9 +100,10 @@ export function parseRpmCsv(text: string): RpmLog {
     if (!m) continue;
     motors.push({ index: Number(m[1]), rpm: [], targetRpm: [], throttle: [] });
   }
-  if (!motors.length) return { motors: [], voltage: [] };
+  if (!motors.length) return { motors: [], voltage: [], current: [] };
 
   const voltage: number[] = [];
+  const current: number[] = [];
   const width = fieldsOf(lines[0]).length;
   for (let r = 1; r < lines.length; r++) {
     const cells = lines[r].split(",");
@@ -107,6 +111,10 @@ export function parseRpmCsv(text: string): RpmLog {
     if (hasVoltage) {
       const v = Number(cells[0]);
       if (Number.isFinite(v)) voltage.push(v);
+    }
+    if (hasCurrent) {
+      const c = Number(cells[1]);
+      if (Number.isFinite(c)) current.push(c);
     }
     motors.forEach((motor, i) => {
       const col = base + i * 4;
@@ -118,7 +126,7 @@ export function parseRpmCsv(text: string): RpmLog {
       if (Number.isFinite(throttle)) motor.throttle.push(throttle);
     });
   }
-  return { motors, voltage };
+  return { motors, voltage, current };
 }
 
 /**

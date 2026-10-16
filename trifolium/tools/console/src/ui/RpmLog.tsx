@@ -45,6 +45,8 @@ import { RpmChart, type Series } from "./RpmChart";
 const CSV_ACCEPT = [".csv", ".txt", ".log", "text/plain"] as const;
 
 const COLOURS = ["#4f9dff", "#ff9f40", "#4ad991", "#e57bd8"];
+// What a motor was told (target, throttle) in its colour at half strength; what it did at full.
+const faded = (colour: string) => `${colour}80`;
 
 /** Trim ends when a capture's tail is flat for this many samples, within this fractional jitter. */
 const MIN_FLAT_RUN = 200;
@@ -89,46 +91,63 @@ export function RpmLog({ schema, device, onEdit, logText, capturing }: RpmLogPro
   }, [text]);
   const parsed = React.useMemo(() => (whole ? parseRpmCsv(whole.csv) : null), [whole]);
 
-  const series: Series[] = React.useMemo(() => {
-    if (!parsed?.motors.length) return [];
-
-    // Trim against the first motor's RPM: every column is sampled on the same tick, so one series
-    // decides the cut for all of them and the x-axis stays aligned.
-    const cut = trim
+  // Trim against the first motor's RPM: every column is sampled on the same tick, so one series
+  // decides the cut for both charts and their x-axes stay aligned.
+  const cut = React.useMemo(() => {
+    if (!parsed?.motors.length) return 0;
+    return trim
       ? findTrailingFlatStart(parsed.motors[0].rpm, MIN_FLAT_RUN, FLAT_JITTER)
       : parsed.motors[0].rpm.length;
+  }, [parsed, trim]);
 
+  const series: Series[] = React.useMemo(() => {
+    if (!parsed?.motors.length) return [];
     const out: Series[] = [];
     parsed.motors.forEach((m, i) => {
       const colour = COLOURS[i % COLOURS.length];
       out.push({ name: `M${m.index} rpm`, colour, values: m.rpm.slice(0, cut) });
       out.push({
         name: `M${m.index} target`,
-        colour,
+        colour: faded(colour),
         values: m.targetRpm.slice(0, cut),
-        dash: "4 3",
       });
-      if (showThrottle) {
-        out.push({
-          name: `M${m.index} throttle`,
-          colour,
-          values: m.throttle.slice(0, cut),
-          dash: "1 3",
-          axis: "right",
-        });
-      }
     });
     if (parsed.voltage.length) {
       out.push({
         name: "pack mV",
         colour: "#9aa0a6",
         values: parsed.voltage.slice(0, cut),
-        dash: "6 3",
         axis: "right",
       });
     }
     return out;
-  }, [parsed, trim, showThrottle]);
+  }, [parsed, cut]);
+
+  // What drives the wheels, under the speed it buys: throttle on the left, the current-sense pin's
+  // mV on the right.
+  const driveSeries: Series[] = React.useMemo(() => {
+    if (!parsed?.motors.length) return [];
+    const out: Series[] = [];
+    if (showThrottle) {
+      parsed.motors.forEach((m, i) => {
+        out.push({
+          name: `M${m.index} throttle`,
+          colour: faded(COLOURS[i % COLOURS.length]),
+          values: m.throttle.slice(0, cut),
+        });
+      });
+    }
+    if (parsed.current.length) {
+      out.push({
+        name: "current-sense mV",
+        colour: "#9aa0a6",
+        values: parsed.current.slice(0, cut),
+        // On the left when alone, else the chart draws an empty left axis.
+        axis: showThrottle ? "right" : "left",
+      });
+    }
+    return out;
+  }, [parsed, cut, showThrottle]);
 
   // Read off the samples rather than the picture: the differences worth seeing between motors are
   // tens of milliseconds, which is where the lines on the chart overlap.
@@ -280,6 +299,7 @@ export function RpmLog({ schema, device, onEdit, logText, capturing }: RpmLogPro
       {series.length > 0 ? (
         <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 1 }}>
           <RpmChart series={series} />
+          {driveSeries.length > 0 && <RpmChart series={driveSeries} height={180} />}
           {crossings.length > 0 && (
             <Box sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: "divider" }}>
               <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.5 }}>
