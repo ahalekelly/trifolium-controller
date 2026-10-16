@@ -193,8 +193,10 @@ class Host:
         self.out = bytearray()
 
     def feed(self, data):
-        """Bytes from the host: the serial stream in them, or None if the host has gone."""
-        return data
+        """Bytes from the host: the serial stream in them, as (wall-clock time sent, bytes) pairs, or
+        None if the host has gone. pyserial says nothing of when it sent them, so they count as sent
+        now."""
+        return [(time.time(), data)]
 
     def send(self, data):
         self.out += data
@@ -214,7 +216,7 @@ class Host:
 
 class WebSocketHost(Host):
     """RFC 6455, as much of it as a browser's serial bridge uses: the handshake, then one binary
-    message per write each way."""
+    message per write each way, each of the browser's led by when it sent it (webserial_shim.js)."""
 
     ready = False
 
@@ -227,21 +229,21 @@ class WebSocketHost(Host):
         self.buf += data
         if not self.ready:
             if HEADERS_END not in self.buf:
-                return b""
+                return []
             head, self.buf = self.buf.split(HEADERS_END, 1)
             return self._handshake(head)
-        stream = b""
+        sent = []
         while True:
             frame = self._frame()
             if frame is None:
-                return stream
+                return sent
             opcode, payload = frame
-            if opcode in (0x1, 0x2):
-                stream += payload
+            if opcode == 0x2:
+                sent.append((struct.unpack(">d", payload[:8])[0] / 1000, payload[8:]))
             elif opcode == 0x8:
                 # A page going away sends its last writes and the close together; the writes count.
                 self.closed = True
-                return stream
+                return sent
             elif opcode == 0x9:
                 self._queue_frame(0xA, payload)
 
@@ -342,7 +344,7 @@ class Server:
     def __init__(self, blaster, serial_port, control_port, speed=1.0, ws_port=None, http_port=None):
         self.b = blaster
         self.speed = speed
-        self.rebase = False  # the speed changed: measure wall-clock time from now
+        self.rebase = True  # serving starts, or the speed changed: measure wall-clock time from now
         self.sel = selectors.DefaultSelector()
         self.serial_listener = self._listen(serial_port)
         self.control_listener = self._listen(control_port)
@@ -503,10 +505,10 @@ class Server:
 
     def _from_host(self, sock):
         data = self._recv(sock)
-        stream = None if data is None else self.host.feed(data)
-        if stream:
-            self.b.send(stream)
-        if stream is None or self.host.closed:
+        sent = None if data is None else self.host.feed(data)
+        if sent:
+            self._deliver(sent)
+        if sent is None or self.host.closed:
             self._drop_host()
             return
         self._flush_host()  # a pong, if the browser pinged
@@ -514,8 +516,8 @@ class Server:
     def _handshake(self, sock):
         ws = self.pending[sock]
         data = self._recv(sock)
-        stream = None if data is None else ws.feed(data)
-        if stream is None:
+        sent = None if data is None else ws.feed(data)
+        if sent is None:
             ws.flush()  # the refusal, if there is one
             del self.pending[sock]
             self._close(sock)
@@ -523,8 +525,8 @@ class Server:
             del self.pending[sock]
             self._become_host(ws)
             ws.hello(self.b.boot_count)
-            if stream:
-                self.b.send(stream)
+            if sent:
+                self._deliver(sent)
             if ws.closed:
                 self._drop_host()
             else:
@@ -632,14 +634,28 @@ class Server:
             self._drop_host(drain=True)  # re-enumeration: the host has to open the port again
             self.enumerated_at = time.monotonic() + ENUMERATION_S / self.speed
 
+    def _behind_us(self, wall):
+        """How far the blaster's clock is short of where wall-clock time `wall` puts it. time.time()
+        rather than a monotonic clock, since the browser stamps what it sends with the wall clock."""
+        start_wall, start_sim = self.paced_from
+        return start_sim + (wall - start_wall) * 1e6 * self.speed - self.b.now_us
+
+    def _deliver(self, sent):
+        """Hands the host's bytes to the blaster at the moment of its clock each was sent. A busy
+        machine can hold this process up while they queue; given all at once, then caught up on,
+        they would leave the blaster longer gaps than the host did - long enough for a hold to
+        lapse between renewals sent on time."""
+        for at, data in sent:
+            behind = self._behind_us(at)
+            if self.b.state == "running" and behind > 0:
+                self.b.run_us(int(behind))
+            self.b.send(data)
+
     def serve_forever(self, stop=lambda: False):
-        start_wall = time.monotonic()
-        start_sim = self.b.now_us
         while not stop():
             if self.rebase:
-                start_wall, start_sim, self.rebase = time.monotonic(), self.b.now_us, False
-            due = start_sim + (time.monotonic() - start_wall) * 1e6 * self.speed
-            behind = due - self.b.now_us
+                self.paced_from, self.rebase = (time.time(), self.b.now_us), False
+            behind = self._behind_us(time.time())
             if self.b.state == "running" and behind > 0:
                 self.b.run_us(int(min(behind, CATCH_UP_MS * 1000)))
                 # Not a moment's sleep while behind: Windows rounds a short select() up to ~15 ms.

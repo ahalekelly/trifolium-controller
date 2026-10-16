@@ -119,7 +119,8 @@ python -m trifolium_sim.serve --preset trifolium_v1_2 --display
 ```
 
 This keeps a blaster running in wall-clock time. Its USB serial is `socket://127.0.0.1:5333`, which
-pyserial opens with `serial.serial_for_url()`; `ws://127.0.0.1:5335` is the same serial for a browser.
+pyserial opens with `serial.serial_for_url()`; `ws://127.0.0.1:5335` is the same serial for a browser,
+each write a binary message led by when it was sent (`webserial_shim.js` says how).
 One host at a time. A reboot drops it, as re-enumeration drops the COM port, and for a moment after
 nothing can connect. Port 5334 takes one JSON request per line for the bench: `press`, `release`,
 `tap`, `pack` (with `riseMs` for a divider still charging), `pot` (a `fraction` of its travel),

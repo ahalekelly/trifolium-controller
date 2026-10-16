@@ -7,6 +7,14 @@
 // window.__simSerial.granted = true is a browser that already allowed the port on an earlier visit.
 (() => {
   const lost = () => new DOMException("The device has been lost.", "NetworkError");
+  // Each write goes out led by when it was sent, Date.now() as a big-endian float64, so serve.py
+  // hands it to the blaster at that moment of its clock however late serve.py gets to it.
+  const stamped = (bytes) => {
+    const message = new Uint8Array(8 + bytes.byteLength);
+    new DataView(message.buffer).setFloat64(0, Date.now());
+    message.set(bytes, 8);
+    return message;
+  };
 
   class SimSerialPort extends EventTarget {
     constructor(url) {
@@ -54,7 +62,7 @@
       this.writable = new WritableStream({
         write(chunk) {
           if (ws.readyState !== WebSocket.OPEN) throw lost();
-          ws.send(chunk);
+          ws.send(stamped(chunk));
         },
       });
     }

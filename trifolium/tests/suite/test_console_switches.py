@@ -1,8 +1,11 @@
 """The console's Rev and Fire buttons: HOLD resent as a keepalive, then RELEASE. A hold reads as the
 physical switch pressed, so every rule that governs the switch governs the button."""
 
+import time
+
 from helpers import armed_v12, open_menu
 from trifolium_sim import FULLSPEED, IDLE
+from trifolium_sim.serve import Server
 
 OK = {"ok": True, "clamped": False, "rebooting": False}
 
@@ -63,3 +66,15 @@ def test_a_hold_does_nothing_while_the_menu_is_open(blaster):
     hold_for(b, "rev", 400)
     assert b.peek("flywheelState") == IDLE
     assert b.command("HOLD pusher")["err"] == "needs rev or trigger"
+
+
+def test_renewals_queued_while_serve_py_was_held_up_reach_the_blaster_as_far_apart_as_sent(blaster):
+    """A busy machine can stop serve.py for longer than a hold lasts. The renewals the browser sent
+    on time meanwhile reach the blaster 100 ms apart by its clock all the same, so the hold does not
+    lapse between them."""
+    b = armed_v12(blaster, display=False)
+    server = Server(b, 0, 0)
+    held_up_since = time.time() - 1.5
+    server.paced_from = (held_up_since, b.now_us)
+    server._deliver([(held_up_since + k / 10, b"HOLD rev\n") for k in range(15)])
+    assert b.peek("flywheelState") == FULLSPEED

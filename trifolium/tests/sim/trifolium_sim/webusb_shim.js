@@ -10,6 +10,14 @@
 // window.__simUsb.granted = true is a browser that already allowed the device on an earlier visit.
 (() => {
   const lost = () => new DOMException("The device was disconnected.", "NotFoundError");
+  // Each write goes out led by when it was sent, Date.now() as a big-endian float64, so serve.py
+  // hands it to the blaster at that moment of its clock however late serve.py gets to it.
+  const stamped = (bytes) => {
+    const message = new Uint8Array(8 + bytes.byteLength);
+    new DataView(message.buffer).setFloat64(0, Date.now());
+    message.set(bytes, 8);
+    return message;
+  };
   const closed = () => new DOMException("The device must be opened first.", "InvalidStateError");
 
   const configuration = () => {
@@ -125,7 +133,7 @@
     async transferOut(endpointNumber, data) {
       if (this.gone || !this.ws || this.ws.readyState !== WebSocket.OPEN) throw lost();
       if (!this.opened) throw closed();
-      this.ws.send(data);
+      this.ws.send(stamped(data));
       return { status: "ok", bytesWritten: data.byteLength };
     }
 
