@@ -124,9 +124,6 @@ export const DEVICE_LAYOUT: SectionSpec[] = [
       "device:lowVoltageCutoffPerCell_mv",
       "device:lowVoltageWarningPerCell_mv",
       "device:voltageCalibrationFactor",
-      // Moved here from Device: it is the averaging window for the voltage reading, so it belongs
-      // with the thresholds it smooths rather than with unrelated device options.
-      "device:voltageAveragingWindow",
     ],
   },
   {

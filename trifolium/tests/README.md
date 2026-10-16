@@ -5,7 +5,7 @@ Everything that checks the firmware and the console, as opposed to operating a b
 
 | | |
 |---|---|
-| `sim/` | The blaster simulator. `host/` is the firmware, `src/` unmodified, compiled for this PC against a fake board (C++); `trifolium_sim/` drives it from Python. |
+| `sim/` | The blaster simulator. `host/` is the firmware, `src/` unmodified but for the DMA-fed ADC sampler `hal_adc.cpp` stands in for, compiled for this PC against a fake board (C++); `trifolium_sim/` drives it from Python. |
 | `suite/` | The pytest suite against the simulator, the web console in a browser included. `golden/` holds its OLED images and `fixtures/` the stepping table the console's `grid.test.ts` shares. |
 | `bench/` | What only hardware can answer: `bench_acceptance.py`, walked once per release candidate, on `bench_harness.py`. |
 | `checks/` | Static checks of the source and the checked-in data - `check_*.py`, each with `--self-test`. |

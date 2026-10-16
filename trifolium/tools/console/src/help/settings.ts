@@ -126,8 +126,6 @@ export const SETTING_HELP: Record<string, string> = {
     "An earlier warning: LOW BATT blinks on the home screen, but you can still fire. Set it above the cutoff.",
   "device:voltageCalibrationFactor":
     "A correction for when the blaster's battery reading does not match a multimeter.",
-  "device:voltageAveragingWindow":
-    "How many battery readings are averaged. Higher steadies a jittery reading but reacts more slowly to a real drop.",
 
   // Wiring
   "device:boardId":

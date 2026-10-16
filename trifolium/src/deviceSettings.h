@@ -85,7 +85,6 @@ struct DeviceSettings
     uint16_t dartWaitTimeout_ms;    // how long queued shots wait for a dart before they're dropped
     uint16_t minPushTime_ms;        // how long a push ignores the dart switch before it can end
     bool revOnlyWithDart;           // a rev only starts with a dart in the breech
-    int voltageAveragingWindow;
 
     bool useRpmBaseShotCounter; // if true, shot counter increases based on detected rpm drop,
                                 // otherwise increases based on pusher cycles

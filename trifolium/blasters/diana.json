@@ -59,7 +59,6 @@
     "debounceTime_ms": 20,
     "menuButtonHoldTime_ms": 1500,
     "pusherDebounceTime_ms": 25,
-    "voltageAveragingWindow": 5,
     "useRpmBaseShotCounter": true,
     "goodRpmShotReads": 5,
     "rpmDropThreshold": 200,

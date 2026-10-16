@@ -71,7 +71,6 @@
     "dartWaitTimeout_ms": 500,
     "minPushTime_ms": 8,
     "revOnlyWithDart": true,
-    "voltageAveragingWindow": 5,
     "useRpmBaseShotCounter": true,
     "goodRpmShotReads": 5,
     "rpmDropThreshold": 200,
