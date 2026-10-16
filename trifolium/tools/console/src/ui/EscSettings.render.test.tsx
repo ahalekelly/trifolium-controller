@@ -54,6 +54,16 @@ describe("editedValues", () => {
     expect(values).toEqual({ motor_kv: 80, advance_level: 26, max_ramp: 25, variable_pwm: 2 });
   });
 
+  it("takes Off where a field has one", () => {
+    expect(editedValues(rows, { "limits.current": "off", motor_kv: "Off" }).values).toEqual({
+      "limits.current": 0,
+      motor_kv: 0,
+    });
+    expect(editedValues(rows, { startup_power: "off" }).errors).toEqual({
+      startup_power: "50 % to 150 %",
+    });
+  });
+
   it("says the range of a value out of it, or not a number", () => {
     const { values, errors } = editedValues(rows, { startup_power: "200", motor_poles: "x" });
     expect(values).toEqual({});
