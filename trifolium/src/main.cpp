@@ -160,11 +160,20 @@ volatile bool directMotorControlActive = false;
 
 bool escDashboardOpen = false;
 
-// SAFE beats everything here, the ESC dashboard included: a switch that stops the pusher but leaves
-// the wheels turning is worse than none. Menu motor tests bypass this via directMotorControlActive.
+bool lowVoltageCutoffTripped = false; // set and cleared by checkLowVoltageCutoff()
+
+// SAFE and the cutoff rule out rev and idle alike.
+bool spinDownForced()
+{
+    return burstMode == SAFE || lowVoltageCutoffTripped;
+}
+
+// spinDownForced() beats everything here, the ESC dashboard included: a switch that stops the
+// pusher but leaves the wheels turning is worse than none. Menu motor tests bypass this via
+// directMotorControlActive.
 bool revControlAllowed()
 {
-    return (!menuIsOpen() || escDashboardOpen) && burstMode != SAFE;
+    return (!menuIsOpen() || escDashboardOpen) && !spinDownForced();
 }
 
 bool revSafetyLatched = false;
@@ -200,10 +209,10 @@ burstFireType_t effectiveBurstMode(burstFireType_t selected)
     return safetyEngaged ? SAFE : selected;
 }
 
-// SAFE always spins fully down regardless, and the menu needs motors stopped for bench testing.
+// The menu needs motors stopped for bench testing.
 bool idleHoldWanted()
 {
-    return idleHoldActive && burstMode != SAFE && !menuIsOpen();
+    return idleHoldActive && !spinDownForced() && !menuIsOpen();
 }
 
 Bounce2::Button revSwitch = Bounce2::Button();
@@ -1078,8 +1087,15 @@ static bool dartAllowsRev()
 
 static bool revStartWanted()
 {
-    const bool wanted =
-        shotsToFire > 0 || (revControlAllowed() && revRequestedNow() && !revSafetyLatched);
+    // An aborted rev stays down, dropping any shots queued meanwhile, until rev and the trigger
+    // are both let go.
+    if (revSafetyLatched)
+    {
+        shotsToFire = 0;
+        revSafetyLatched = revSwitch.isPressed() || triggerSwitch.isPressed();
+        return false;
+    }
+    const bool wanted = shotsToFire > 0 || (revControlAllowed() && revRequestedNow());
     if (!wanted || dartAllowsRev())
     {
         revHeldForDart = false;
@@ -1180,7 +1196,6 @@ void mainFiringLogic()
         else if (revSwitch.released())
         {
             logger.info("Rev switch released");
-            revSafetyLatched = false;
         }
     }
     if (pinDefined(triggerSwitchPin))
@@ -1229,7 +1244,7 @@ void mainFiringLogic()
 
     requestRev = false;
 
-    if (menuIsOpen())
+    if (menuIsOpen() || spinDownForced())
     {
         shotsToFire = 0;
     }
@@ -1317,6 +1332,8 @@ void updateSpeedPot()
 static uint32_t ledTime_ms = 0;
 static bool ledOn = true;
 
+bool driveTrainStopped();
+
 void checkLowVoltageCutoff()
 {
     if (batteryMonitor->isDefined() && time_ms > 2000)
@@ -1324,23 +1341,25 @@ void checkLowVoltageCutoff()
         uint8_t cells = cellCount(deviceSettings.batteryType);
         bool belowCutoff =
             batteryMonitor->getVoltage_mv() < deviceSettings.lowVoltageCutoffPerCell_mv * cells;
-        // On the way into cutoff only: this runs every control loop iteration, so reporting each
-        // pass would put hundreds of lines a second on the port.
-        static bool cutoffReported = false;
-        if (belowCutoff)
+        // The cutoff follows a reading held for a second on the other side of it. Going under
+        // counts only under open-loop control - idling, ramping down or stopped - since a rev or
+        // its dwell sags even a healthy pack.
+        static uint32_t since_ms = 0;
+        if (belowCutoff == lowVoltageCutoffTripped ||
+            (belowCutoff && (flywheelState != STATE_IDLE || enableFwControl)))
+            since_ms = time_ms;
+        else if (time_ms - since_ms >= 1000)
         {
-            if (pinDefined(escEnablePin))
-                digitalWrite(escEnablePin, LOW); // cut power to ESCs and pusher
-            if (!cutoffReported)
+            lowVoltageCutoffTripped = belowCutoff;
+            if (belowCutoff)
             {
-                cutoffReported = true;
-                logger.error("Battery low, shutting down! ", batteryMonitor->getVoltage_mv(), "mv");
+                lastRevTime_ms = 0; // ends a post-rev idle window
+                logger.error("Battery low, spinning down! ", batteryMonitor->getVoltage_mv(), "mv");
             }
         }
-        else
-        {
-            cutoffReported = false;
-        }
+        // Cut power to the ESCs and pusher once the ramp has brought the wheels down.
+        if (pinDefined(escEnablePin))
+            digitalWrite(escEnablePin, lowVoltageCutoffTripped && driveTrainStopped() ? LOW : HIGH);
         // Non-cutoff early warning - lowVoltageWarningPerCell_mv is above the cutoff, so this
         // trips first as the battery depletes.
         batteryWarningActive =
@@ -1508,12 +1527,12 @@ bool fwControlLoop()
         speedWaitSince_ms = 0;
     }
 
+    checkLowVoltageCutoff();
+
     switch (flywheelState)
     {
 
     case STATE_IDLE:
-        checkLowVoltageCutoff();
-
         {
             // Catch the instant the menu closes so motors resume at idle - the ratchet below only
             // pulls targetRPM down, so real RPM would stay wherever it decayed to.
@@ -1584,7 +1603,7 @@ bool fwControlLoop()
                 // logger.info("Holding for dwell");
             }
         }
-        else if (((pinDefined(idleSwitchPin) && idleSwitch.isPressed() && burstMode != SAFE) ||
+        else if (((pinDefined(idleSwitchPin) && idleSwitch.isPressed() && !spinDownForced()) ||
                   idleHoldWanted()) &&
                  motorArr[0].targetRPM == 0 && motorArr[1].targetRPM == 0 &&
                  motorArr[2].targetRPM == 0 && motorArr[3].targetRPM == 0)
@@ -1594,7 +1613,7 @@ bool fwControlLoop()
             enableFwControl = false;
             kickMotorsToIdle();
         }
-        else if ((pinDefined(idleSwitchPin) && idleSwitch.isPressed() && burstMode != SAFE) ||
+        else if ((pinDefined(idleSwitchPin) && idleSwitch.isPressed() && !spinDownForced()) ||
                  idleHoldWanted() ||
                  (time_ms < lastRevTime_ms + dwellTime_ms + idleTime_ms && lastRevTime_ms > 0))
         { // idle flywheels - post-dwell idle window, the idle switch held, or idle-hold standing
@@ -1655,16 +1674,14 @@ bool fwControlLoop()
             logger.info("STATE_FULLSPEED transition 1");
         } else if (!behaviorFor(burstMode).managesOwnRevLifecycle() &&
                    loopStartTimer_us - revStartTime_us > deviceSettings.rampupTimeout_ms * 1000UL) {
+            // Spin down on the normal ramp, skipping dwell and idle, and latch until released.
             flywheelState = STATE_IDLE;
-            resetFWControl();
             shotsToFire = 0;
+            lastRevTime_ms = 0;
+            revSafetyLatched = true;
             for (int i = 0; i < 4; i++) {
-                if (motorsEnabled[i]) {
-                    if ((int32_t)motorArr[i].motorRPM <= atSpeedRpm(i)) {
-                        logger.warn("Motor ", i + 1, " failed to reach target speed! motorRPM=", motorArr[i].motorRPM, " firingRPM=", atSpeedRpm(i));
-                    }
-                    motorArr[i].targetRPM = 0;
-                    motorArr[i].PIDOutput = 0;
+                if (motorsEnabled[i] && (int32_t)motorArr[i].motorRPM <= atSpeedRpm(i)) {
+                    logger.warn("Motor ", i + 1, " failed to reach target speed! motorRPM=", motorArr[i].motorRPM, " firingRPM=", atSpeedRpm(i));
                 }
             }
         }
