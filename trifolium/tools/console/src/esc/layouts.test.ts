@@ -64,6 +64,7 @@ describe("the v4 table", () => {
       "auto_advance",
       "comp_pwm",
       "max_ramp",
+      "motor_kv",
       "pwm_frequency",
       "sine_mode_changeover_thottle_level",
       "sine_mode_power",
