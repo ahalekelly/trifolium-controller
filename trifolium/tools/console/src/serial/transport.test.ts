@@ -11,6 +11,7 @@ import {
   repliesTo,
   serialApi,
   type Capture,
+  type LogLine,
 } from "./transport";
 import { sleep } from "./sleep";
 import { serial as usbSerial } from "../vendor/web-serial-polyfill/dist/serial.js";
@@ -296,6 +297,30 @@ describe("SerialTransport over real streams", () => {
     expect(await transport.waitReady(1, 500)).toBe(true);
     expect(await transport.request("DUMP_DEVICE", 500)).toEqual(JSON.parse(deviceDump));
     expect(await transport.requestWhole("DUMP_DEVICE", 500)).toEqual(JSON.parse(deviceDump));
+    await transport.disconnect();
+  });
+
+  it("hands every byte to the binary link, none to the log or a capture", async () => {
+    instantBlaster((line) => line); // echoes, so what is written comes back as device output
+    const logged: LogLine[] = [];
+    const captured: Capture[] = [];
+    const transport = new SerialTransport({
+      onLog: (line) => logged.push(line),
+      onCapture: (capture) => captured.push(capture),
+    });
+    expect(await transport.connect()).toBe(true);
+    const link = transport.binaryLink();
+    const lines = [
+      "Voltage_mv,Motor 1,TargetRPM 1,Throttle 1,value 1,",
+      "16390,0,30000,1115,0.00,",
+      '{"evt":"rpmCapture","readyMs":178,"slowestMotor":1,"timedOut":false}',
+      "[info] chatter",
+    ].join("\n");
+    await link.write(new TextEncoder().encode(lines));
+    const back = await link.read(lines.length + 1, 500);
+    expect(new TextDecoder().decode(back)).toBe(`${lines}\n`);
+    expect(logged.filter((l) => l.kind === "in")).toEqual([]);
+    expect(captured).toEqual([]);
     await transport.disconnect();
   });
 });
