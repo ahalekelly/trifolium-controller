@@ -15,6 +15,7 @@
 #include "schemaDump.h"
 #include "gpioReport.h"
 #include "flywheelMotor.h"
+#include "rpmLogger.h"
 #include "consoleSwitch.h"
 #include "enumIds.h" // kBurstModeIds - DUMP_MOTORS names the live mode rather than numbering it
 
@@ -43,6 +44,7 @@ bool menuIsOpen();
 bool revControlAllowed();
 bool driveTrainStopped();
 extern volatile bool directMotorControlActive;
+extern RpmLogger rpmLogger;
 extern ConsoleSwitch revSwitch;
 extern ConsoleSwitch triggerSwitch;
 // menuMotors.cpp, shared with the menu's motor actions.
@@ -171,6 +173,12 @@ void handleSerialCommands()
     // this function's line-oriented reads don't steal bytes from that binary protocol.
     if (bootReason == BootReason::TO_ESC_PASSTHROUGH)
         return;
+
+    // A full RPM capture goes out between commands, from this core, so the control loop never
+    // waits on the port. Not while this core drives the ESCs itself (the menu's motor actions):
+    // the pause would starve them of frames.
+    if (!directMotorControlActive)
+        rpmLogger.sendIfFull();
 
     if (!Serial.available())
         return;

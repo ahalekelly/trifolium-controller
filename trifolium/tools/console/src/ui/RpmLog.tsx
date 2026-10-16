@@ -34,7 +34,7 @@ import { RpmChart, type Series } from "./RpmChart";
 // whole thing as CSV afterwards. So this charts whichever CSV is to hand - the newest capture the
 // blaster sent, a pasted block, or a dropped file - rather than streaming.
 //
-// `useRpmLogging` is the only switch a capture needs. RpmLogger::dumpIfReady writes the CSV to
+// `useRpmLogging` is the only switch a capture needs. RpmLogger::sendIfFull writes the CSV to
 // Serial directly rather than through the logger, precisely so that the capture a user asked for
 // cannot be silenced by a logging preference - only the "dump complete" line after it is gated.
 //

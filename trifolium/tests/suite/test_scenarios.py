@@ -148,6 +148,47 @@ def test_an_rpm_log_leaves_out_the_current_column_when_no_pin_reads_it(blaster):
     assert "Voltage_mv,Motor 1,TargetRPM 1," in b.transcript[mark:]
 
 
+def test_a_rev_whose_capture_will_not_fit_goes_uncaptured_and_the_next_one_is(blaster):
+    """A rev again before the last capture filled starts a fresh one in its place, which may not
+    fit."""
+    b = armed_v12(blaster, {"useRpmLogging": True, "rpmLogLength": 2000}, display=False)
+    b.press("rev")
+    b.run_ms(300)
+    b.release("rev")
+    b.run_ms(100)
+    b.set_heap_limit(b.heap()["live"] - 1000)
+    mark = len(b.transcript)
+    b.press("rev")
+    b.run_ms(2500)
+    b.release("rev")
+    assert "RPM logging: the capture buffers would not fit in memory" in b.transcript[mark:]
+    assert '"evt":"rpmCapture"' not in b.transcript[mark:]
+
+    b.set_heap_limit(0)
+    b.run_ms(3000)
+    mark = len(b.transcript)
+    b.press("rev")
+    assert b.run_until(lambda: '"evt":"rpmCapture"' in b.transcript[mark:], 3000)
+
+
+def test_the_drive_keeps_getting_frames_while_a_capture_goes_out(blaster):
+    """A full-length capture is over 100 KB of CSV, a tenth of a second or more on the port. Rev is
+    still held when it goes out, so the wheels are under drive throughout, and an ESC that missed
+    its frames for that long would take it as signal loss."""
+    b = armed_v12(blaster, {"useRpmLogging": True, "rpmLogLength": 2000}, display=False)
+    mark = len(b.transcript)
+    b.press("rev")
+    b.run_ms(1900)
+    frames = lambda: [b.escs()[pin]["frames"] for pin in (1, 3)]
+    last = frames()
+    for _ in range(100):
+        b.run_ms(5)
+        now = frames()
+        assert all(n > l for n, l in zip(now, last))
+        last = now
+    assert '"evt":"rpmCapture"' in b.transcript[mark:]
+
+
 def test_plasma_through_the_real_loop_the_wheels_follow_the_charge_and_release_fires_the_slots(blaster):
     b = blaster
     b.flash_preset("trifolium_v1_2")

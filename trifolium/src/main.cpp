@@ -369,9 +369,9 @@ static int8_t laggingMotor()
 
 void logData()
 {
-    // record() is a no-op unless a capture is currently armed (startCapture() succeeded and
-    // hasn't been dumped yet) - no separate deviceSettings.useRpmLogging check needed here.
-    rpmLogger.record(motorArr, motorsEnabled, batteryMonitor->getVoltage_mv());
+    // record() is a no-op unless a capture is recording (startCapture() succeeded and it is not
+    // full yet) - no separate deviceSettings.useRpmLogging check needed here.
+    rpmLogger.record(motorArr, batteryMonitor->getVoltage_mv());
 }
 
 // call this whenever a shot is detected/fired, regardless of which detection method triggered it
@@ -1645,9 +1645,9 @@ bool fwControlLoop()
             resetFWControl();
             if (deviceSettings.useRpmLogging)
             {
-                if (!rpmLogger.startCapture(deviceSettings.rpmLogLength, currentAdcPin))
-                    logger.error(
-                        "RPM logging: capture buffer allocation failed, skipping this rev");
+                if (const char* skipped = rpmLogger.startCapture(deviceSettings.rpmLogLength,
+                                                                 currentAdcPin, motorsEnabled))
+                    logger.error("RPM logging: ", skipped, ", skipping this rev");
             }
         }
         else if ((time_ms < lastRevTime_ms + dwellTime_ms && lastRevTime_ms > 0) ||
@@ -1735,7 +1735,7 @@ bool fwControlLoop()
                                                        : motorArr[i].revRPM;
 
         // A capture records when the wheels got to speed, and which got there last.
-        if (rpmLogger.armed())
+        if (rpmLogger.recording())
             rpmLogger.noteSpinup(wheelsAtSpeed(), laggingMotor(),
                                  (loopStartTimer_us - revStartTime_us) / 1000);
 
@@ -1900,20 +1900,6 @@ bool fwControlLoop()
 
     logData();
 
-    // Held off while the port is busy with a reply. Skipping a tick is free - the capture waits.
-    if (rpmLogger.armed() && SerialLock::tryHold())
-    {
-        const bool dumped = rpmLogger.dumpIfReady(motorsEnabled);
-        SerialLock::release();
-        if (dumped)
-        {
-            // The dump held this tick for as long as sending it took. Timing the tick from here
-            // keeps that out of loopTime_us, which the next tick's PID and spin-down take as
-            // their step.
-            loopStartTimer_us = micros();
-            logger.info("RPM log dump complete");
-        }
-    }
     // update pusher driver
     pusher->update();
 

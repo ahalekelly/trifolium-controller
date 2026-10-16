@@ -1,20 +1,28 @@
 #pragma once
 #include <Arduino.h>
+#include <atomic>
 #include <new> // std::nothrow - startCapture() must not treat allocation failure as fatal
 #include "adcSampler.h"
 #include "flywheelMotor.h"
 #include "logging.h"
+#include "serialLock.h"
 #include "types.h" // PIN_NOT_USED
 
+// Core 0 records a capture a row a tick; once it is full, core 1 sends it (sendIfFull()), so the
+// control loop never waits for a capture to go out. state_ says whose the buffers are: core 0's
+// until full, core 1's once full, until it sends and frees them.
 class RpmLogger
 {
   public:
     ~RpmLogger() { freeBuffers(); }
 
-    // Returns false if the allocation failed - caller should just skip logging that rev cycle.
+    // Core 0, at a rev's start. Returns why this rev goes uncaptured, or nullptr.
     // currentAdcPin is the ESC's current-sense output, or PIN_NOT_USED to leave its column out.
-    bool startCapture(uint32_t length, uint8_t currentAdcPin)
+    const char* startCapture(uint32_t length, uint8_t currentAdcPin, const bool motors[4])
     {
+        if (state_ == State::Full)
+            return "the last capture is still being sent";
+        state_ = State::Idle;
         freeBuffers();
         targetRpmCache_ = new (std::nothrow) uint32_t[length][4];
         rpmCache_ = new (std::nothrow) uint32_t[length][4];
@@ -27,15 +35,18 @@ class RpmLogger
             (currentAdcPin != PIN_NOT_USED && !currentCache_))
         {
             freeBuffers();
-            return false;
+            return "the capture buffers would not fit in memory";
         }
         currentAdcPin_ = currentAdcPin;
+        for (int i = 0; i < 4; i++)
+            motors_[i] = motors[i];
         length_ = length;
         cacheIndex_ = 0;
         readyMs_ = -1;
         slowestMotor_ = -1;
         timedOut_ = false;
-        return true;
+        state_ = State::Recording;
+        return nullptr;
     }
 
     // Each spin-up tick of the capture: whether the firmware's fire-ready test passes, and the
@@ -57,11 +68,11 @@ class RpmLogger
             timedOut_ = true;
     }
 
-    // Call once per control-loop tick to record the current sample, if a capture is active. Each
-    // tick gets its own row.
-    void record(FlywheelMotor motorArr[4], const bool motors[4], int32_t batteryVoltage_mv)
+    // Core 0, once per control-loop tick: the current sample, if a capture is recording. Each tick
+    // gets its own row.
+    void record(FlywheelMotor motorArr[4], int32_t batteryVoltage_mv)
     {
-        if (!armed() || cacheIndex_ >= length_)
+        if (state_ != State::Recording)
             return;
         voltageCache_[cacheIndex_] = batteryVoltage_mv;
         // The pin's own voltage, unscaled: amps per volt and the zero offset vary by ESC.
@@ -69,7 +80,7 @@ class RpmLogger
             currentCache_[cacheIndex_] = AdcSampler::millivolts(currentAdcPin_);
         for (int i = 0; i < 4; i++)
         {
-            if (motors[i])
+            if (motors_[i])
             {
                 rpmCache_[cacheIndex_][i] = motorArr[i].motorRPM;
                 targetRpmCache_[cacheIndex_][i] = motorArr[i].targetRPM; // mostly for reference
@@ -77,20 +88,23 @@ class RpmLogger
                 valueCache_[cacheIndex_][i] = motorArr[i].PIDIntegral;
             }
         }
-        cacheIndex_++;
+        if (++cacheIndex_ == length_)
+            state_ = State::Full;
     }
 
-    bool dumpIfReady(const bool motors[4])
+    // Core 1: sends a full capture in one piece, then frees it for the next rev. The port is this
+    // core's for as long as that takes, which may be hundreds of ms.
+    void sendIfFull()
     {
-        if (!armed() || cacheIndex_ < length_)
-            return false;
-
+        if (state_ != State::Full)
+            return;
+        SerialHold serial;
         char rowBuf[240];
         int len = snprintf(rowBuf, sizeof(rowBuf), "%s",
                            currentCache_ ? "Voltage_mv,Current_mv," : "Voltage_mv,");
         for (int j = 0; j < 4; j++)
         {
-            if (motors[j])
+            if (motors_[j])
                 len += snprintf(rowBuf + len, sizeof(rowBuf) - len,
                                 "Motor %d,TargetRPM %d,Throttle %d,value %d,", j, j, j, j);
         }
@@ -103,7 +117,7 @@ class RpmLogger
                 len += snprintf(rowBuf + len, sizeof(rowBuf) - len, "%d,", currentCache_[i]);
             for (int j = 0; j < 4; j++)
             {
-                if (motors[j])
+                if (motors_[j])
                 {
                     char valueStr[10];
                     dtostrf(valueCache_[i][j], 1, 2, valueStr);
@@ -128,18 +142,23 @@ class RpmLogger
         else
             Serial.print(slowestMotor_);
         Serial.println(timedOut_ ? ",\"timedOut\":true}" : ",\"timedOut\":false}");
-        freeBuffers(); // capture complete - release the buffer
-        return true;
+        logger.info("RPM log dump complete");
+        freeBuffers();
+        state_ = State::Idle; // last: core 0 may start the next capture from here
     }
 
-    bool armed() const { return targetRpmCache_ != nullptr; }
+    bool recording() const { return state_ == State::Recording; }
 
   private:
-    // Still recording, and neither fire-ready nor timed out yet: only the first outcome counts.
-    bool recordingSpinup() const
+    enum class State : uint8_t
     {
-        return armed() && cacheIndex_ < length_ && readyMs_ < 0 && !timedOut_;
-    }
+        Idle,
+        Recording,
+        Full,
+    };
+
+    // Still recording, and neither fire-ready nor timed out yet: only the first outcome counts.
+    bool recordingSpinup() const { return recording() && readyMs_ < 0 && !timedOut_; }
 
     void freeBuffers()
     {
@@ -166,9 +185,11 @@ class RpmLogger
     int32_t* voltageCache_ = nullptr;
     int16_t* currentCache_ = nullptr; // null when no currentAdcPin is set
     uint8_t currentAdcPin_ = PIN_NOT_USED;
+    bool motors_[4] = {};
     uint32_t length_ = 0;
     uint32_t cacheIndex_ = 0;
     int32_t readyMs_ = -1;
     int8_t slowestMotor_ = -1;
     bool timedOut_ = false;
+    std::atomic<State> state_{State::Idle};
 };
