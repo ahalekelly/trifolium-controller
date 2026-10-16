@@ -32,7 +32,29 @@ class RpmLogger
         currentAdcPin_ = currentAdcPin;
         length_ = length;
         cacheIndex_ = 0;
+        readyMs_ = -1;
+        slowestMotor_ = -1;
+        timedOut_ = false;
         return true;
+    }
+
+    // Each spin-up tick of the capture: whether the firmware's fire-ready test passes, and the
+    // motor furthest short of firing speed. The last one short before it passes is the slowest.
+    void noteSpinup(bool ready, int8_t lagging, uint32_t sinceRevStart_ms)
+    {
+        if (!recordingSpinup())
+            return;
+        if (ready)
+            readyMs_ = (int32_t)sinceRevStart_ms;
+        else if (lagging >= 0)
+            slowestMotor_ = lagging;
+    }
+
+    // The rampup timeout ended the rev before it was fire-ready.
+    void noteTimeout()
+    {
+        if (recordingSpinup())
+            timedOut_ = true;
     }
 
     // Call once per control-loop tick to record the current sample, if a capture is active.
@@ -98,6 +120,19 @@ class RpmLogger
             }
             Serial.println(rowBuf);
         }
+        // After the rows, so a host has the whole capture by the time it reads this. readyMs is
+        // null when the rev ended, or the capture did, before the wheels were at speed.
+        Serial.print("{\"evt\":\"rpmCapture\",\"readyMs\":");
+        if (readyMs_ < 0)
+            Serial.print("null");
+        else
+            Serial.print(readyMs_);
+        Serial.print(",\"slowestMotor\":");
+        if (slowestMotor_ < 0)
+            Serial.print("null");
+        else
+            Serial.print(slowestMotor_);
+        Serial.println(timedOut_ ? ",\"timedOut\":true}" : ",\"timedOut\":false}");
         cacheIndex_++; // prevent re-dumping
         freeBuffers(); // capture complete - release the buffer
         return true;
@@ -106,6 +141,12 @@ class RpmLogger
     bool armed() const { return targetRpmCache_ != nullptr; }
 
   private:
+    // Still recording, and neither fire-ready nor timed out yet: only the first outcome counts.
+    bool recordingSpinup() const
+    {
+        return armed() && cacheIndex_ < length_ && readyMs_ < 0 && !timedOut_;
+    }
+
     void freeBuffers()
     {
         delete[] targetRpmCache_;
@@ -133,4 +174,7 @@ class RpmLogger
     uint8_t currentAdcPin_ = PIN_NOT_USED;
     uint32_t length_ = 0;
     uint32_t cacheIndex_ = 0;
+    int32_t readyMs_ = -1;
+    int8_t slowestMotor_ = -1;
+    bool timedOut_ = false;
 };

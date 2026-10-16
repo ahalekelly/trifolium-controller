@@ -4,6 +4,10 @@
 
 static constexpr int8_t NO_PROFILE = -1;
 
+// The gains' range, which the menu and the console's TUNE both hold them to.
+inline constexpr float KP_MAX = 2.0f;
+inline constexpr float KI_MAX = 4.0f;
+
 struct MotorConfig
 {
     bool enabled;
