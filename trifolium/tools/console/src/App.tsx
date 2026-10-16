@@ -43,6 +43,14 @@ import { SetupWizard } from "./ui/SetupWizard";
 import { BootFaults } from "./ui/BootFaults";
 import { BootRules } from "./ui/BootRules";
 import { EscSetup } from "./ui/EscSetup";
+import { EscSettingsPanel } from "./ui/EscSettings";
+import {
+  escTargets,
+  readEscSettings,
+  writeEscSettings,
+  type EscSettings,
+  type EscTargets,
+} from "./esc/session";
 import { FireModes } from "./ui/FireModes";
 import { FlashDialog } from "./ui/FlashDialog";
 import { DEVICE_LAYOUT, PROFILE_LAYOUT } from "./ui/layout";
@@ -289,6 +297,9 @@ export function App() {
   // null closed; {to: null} open with nothing picked yet.
   const [copyTo, setCopyTo] = React.useState<{ to: number | null } | null>(null);
 
+  /** The flywheel ESCs' AM32 settings as last read or written. Null until read. */
+  const [escs, setEscs] = React.useState<EscSettings[] | null>(null);
+
   /** The last read found boot faults or a resolved pin conflict, which Overview explains. */
   const bootProblem = React.useRef(false);
 
@@ -481,6 +492,7 @@ export function App() {
       return;
     }
     if (!(await transport.connect(choose))) return;
+    setEscs(null); // another blaster's, or this one's from before whatever happened since
     if (!(await transport.waitReady())) return;
     if ((await readSchemaAndValues()) && bootProblem.current) setView("overview");
   };
@@ -633,6 +645,36 @@ export function App() {
     if (!reply?.b64) return null;
     return { custom: reply.custom, bytes: Uint8Array.from(atob(reply.b64), (c) => c.charCodeAt(0)) };
   }, [consoleControls, transport]);
+  /**
+   * Reads or writes the flywheel ESCs' AM32 settings - see esc/session.ts.
+   *
+   * Either way the blaster reboots into ESC passthrough and comes back on its own, which the
+   * transport reports as a disconnect, so the schema and values are re-read after, with any staged
+   * edits laid back over them as after any other reboot. Which motors are ESCs comes from the
+   * settings the blaster holds, not the form's edits: passthrough hands over what it has stored.
+   *
+   * A failure clears the table, since a write that stopped partway leaves some ESCs changed and the
+   * table no longer says which.
+   */
+  const escSession = async (
+    what: string,
+    run: (targets: EscTargets) => Promise<EscSettings[]>,
+  ) => {
+    setBusy(true);
+    const keep = stagedExcept(new Set());
+    try {
+      setEscs(await run(escTargets(baseline.device)));
+      note("ok", `${what}: done.`);
+    } catch (e) {
+      setEscs(null);
+      const why = (e as Error).message.replace(/\.$/, "");
+      note("err", `${what} failed: ${why}. Read the ESCs again to see what they hold.`);
+    } finally {
+      if (transport.connected) await readSchemaAndValues(keep);
+      setBusy(false);
+    }
+  };
+
   const revHoldApi: RevHoldApi = React.useMemo(
     () => ({
       hold: (mask, onLost) =>
@@ -1935,6 +1977,35 @@ export function App() {
                   autoSave={autoSaveCaptures}
                   onAutoSave={setAutoSaveCaptures}
                   revHold={consoleControls ? <RevHold api={revHoldApi} live={live} tuning={tuning} /> : null}
+                />
+              </Box>
+            </Panel>
+          </Page>
+        );
+
+      case "escs":
+        return (
+          <Page>
+            <PageHead
+              title="ESCs"
+              lede="Read and write every flywheel ESC's AM32 settings, through the blaster."
+            />
+            <Panel>
+              <Box sx={{ p: 1.5 }}>
+                <EscSettingsPanel
+                  escs={escs}
+                  motors={escTargets(baseline.device).motors}
+                  disabled={!live || busy}
+                  onRead={() =>
+                    void escSession("Reading the ESCs", (targets) =>
+                      readEscSettings(transport, targets),
+                    )
+                  }
+                  onWrite={(values) =>
+                    escSession("Writing the ESCs", (targets) =>
+                      writeEscSettings(transport, targets, values),
+                    )
+                  }
                 />
               </Box>
             </Panel>

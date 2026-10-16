@@ -22,6 +22,7 @@ The pages are in the sidebar. On a phone the main four are tabs along the bottom
 | **Profiles** | RPM targets, dwell and idle, spindown, and the fire mode list, for whichever of the 3 profile slots you pick at the top. |
 | **Blaster settings** | Everything shared across profiles: motors and PID, solenoid timing, battery, display, debounce, shot counting, and on firmware 2.3.0 and later the [boot rules](Device#boot-actions) and each motor's [Test, Normal and Reversed](Motors-and-PID) buttons. |
 | **Wiring** | Which pin each thing is on, with a diagram of your board where one has been drawn. Also where pin conflicts are reported, and where you change board. |
+| **ESCs** | Reads the flywheel ESCs' AM32 settings side by side and writes edits to all of them at once, through the blaster's ESC passthrough. The blaster restarts for each read or write. |
 | **RPM capture** | Records a spin-up and charts it. |
 | **Tune** | Searches flywheel gains for the fastest dependable spin-up, on the blaster itself. |
 | **Splash screen** | Upload a custom 128x64 boot image from any picture, or clear it back to the default. Takes effect next boot. On firmware 2.3.0 and later the page opens on the image the blaster holds, custom or built-in, and **Download** saves the one shown as a PNG that uploads back unchanged. |
