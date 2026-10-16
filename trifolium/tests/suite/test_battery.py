@@ -139,3 +139,53 @@ def test_the_cutoff_ends_a_post_rev_idle_window(blaster):
     b.run_ms(600)
     assert b.peek("lowVoltageCutoffTripped") is True
     assert b.peek("motors")[1]["targetRPM"] == 0
+
+
+BEACON = 4  # DSHOT_CMD_BEACON4
+WARN_MV = 14000  # 3.5 V per cell: under the shipped 3.7 V warning, over the cutoff
+
+
+def beacons(b, pin):
+    return [c for c in b.escs()[pin]["commands"] if c == BEACON]
+
+
+def test_a_pack_under_the_warning_beeps_every_esc_at_once_then_every_15_seconds(blaster):
+    b = armed_v12(blaster, display=False)
+    b.run_ms(4000)
+    assert beacons(b, 1) == []
+
+    b.set_pack(WARN_MV)
+    assert b.run_until(lambda: beacons(b, 1), 5000, step_ms=5)
+    b.run_ms(14900)
+    assert beacons(b, 1) == [BEACON]
+    b.run_ms(200)
+    assert beacons(b, 1) == beacons(b, 3) == [BEACON, BEACON]
+
+
+def test_the_beacon_waits_for_the_wheels_to_stop_and_never_stalls_a_rev(blaster):
+    b = armed_v12(blaster, display=False)
+    b.set_pack(WARN_MV)
+    assert b.run_until(lambda: beacons(b, 1), 5000)
+
+    for _ in range(3):  # a rev can start at any point in the beacon's cycle
+        sent = len(beacons(b, 1))
+        b.press("rev")
+        assert b.run_until_peek("flywheelState", FULLSPEED, limit_ms=600)
+        b.release("rev")
+        assert b.run_until(lambda: len(beacons(b, 1)) > sent, 15000, step_ms=1)
+        assert b.peek("motors")[1]["motorRPM"] == 0
+        assert len(beacons(b, 1)) == sent + 1
+        b.run_ms(1700)
+
+    b.run_ms(13000)
+    assert len(beacons(b, 1)) == sent + 1
+    b.run_ms(400)
+    assert len(beacons(b, 1)) == sent + 2
+
+
+def test_idle_hold_keeps_the_beacon_quiet(blaster):
+    b = power_on_holding_rev(blaster)
+    b.set_pack(WARN_MV)
+    b.run_ms(8000)
+    assert b.peek("idleHoldActive") is True
+    assert beacons(b, 1) == []

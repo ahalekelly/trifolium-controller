@@ -1378,6 +1378,35 @@ void checkLowVoltageCutoff()
     }
 }
 
+// The battery warning on the ESCs, for blasters with no screen or LED: BEACON4, AM32's three
+// falling notes, once the wheels stand still and every 15 seconds while they do. ESCs beep only
+// when stopped, and a command takes that tick's throttle frame, so nothing may want the wheels.
+static const uint32_t kBeaconPeriod_ms = 15000;
+
+static bool sendLowBatteryBeacon()
+{
+    static uint32_t due_ms = 0;
+
+    bool wanted = batteryWarningActive && !menuIsOpen() && driveTrainStopped();
+    for (int i = 0; i < 4; i++)
+        wanted = wanted && (!motorsEnabled[i] || motorArr[i].motorRPM == 0);
+    if (!wanted)
+    {
+        due_ms = time_ms;
+        return false;
+    }
+    if ((int32_t)(time_ms - due_ms) < 0)
+        return false;
+
+    due_ms = time_ms + kBeaconPeriod_ms;
+    for (int i = 0; i < 4; i++)
+    {
+        if (motorsEnabled[i])
+            motorArr[i].esc->sendRaw11Bit(DSHOT_CMD_BEACON4);
+    }
+    return true;
+}
+
 // RPM-drop-based shot detection
 void checkRpmDropShotDetection()
 {
@@ -1806,7 +1835,7 @@ bool fwControlLoop()
             break;
         }
     }
-    else
+    else if (!sendLowBatteryBeacon())
     {
         // we are spinning down or idling, just do open loop control
         for (int i = 0; i < 4; i++)
