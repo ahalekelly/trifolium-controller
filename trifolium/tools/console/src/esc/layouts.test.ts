@@ -19,6 +19,7 @@ describe("every layout table", () => {
         expect(f.min).toBeLessThanOrEqual(f.max);
         expect(f.max).toBeLessThanOrEqual(255);
         if (f.options) expect(f.options).toHaveLength(f.max - f.min + 1);
+        if (f.off) expect(f.off.raw < f.min || f.off.raw > f.max).toBe(true);
       }
     });
   }
@@ -90,6 +91,38 @@ describe("layoutOf", () => {
 
   it("says a blank block is blank", () => {
     expect(() => layoutOf(new Uint8Array(BLOCK_SIZE).fill(0xff))).toThrow(/never run/);
+  });
+});
+
+describe("Off", () => {
+  it("shows every disabled protection as Off, as each layout's AM32 treats it", () => {
+    const temperature = field(4, "limits.temperature");
+    expect([69, 70, 140, 141, 255].map((raw) => shown(temperature, raw))).toEqual([
+      "Off",
+      "70 °C",
+      "140 °C",
+      "Off",
+      "Off",
+    ]);
+    // 2.21 limits current up to raw 100; 2.19 and 2.20 only below it.
+    expect([0, 1, 100, 101].map((raw) => shown(field(4, "limits.current"), raw))).toEqual([
+      "Off",
+      "2 A",
+      "200 A",
+      "Off",
+    ]);
+    expect(shown(field(3, "limits.current"), 100)).toBe("Off");
+    expect(shown(field(4, "driving_brake_strength"), 10)).toBe("Off");
+  });
+
+  it("shows Kv 20 as low-RPM power protection off", () => {
+    expect(shown(field(4, "motor_kv"), 0)).toBe("Off (low-RPM power protection disabled)");
+    expect(shown(field(4, "motor_kv"), 1)).toBe("60 Kv");
+  });
+
+  it("writes Off as its own raw value and nothing else outside the range", () => {
+    expect(withValues(V4_DEFAULT, { "limits.temperature": 255 })[43]).toBe(255);
+    expect(() => withValues(V4_DEFAULT, { "limits.temperature": 141 })).toThrow(/255 for Off/);
   });
 });
 
