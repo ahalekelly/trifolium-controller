@@ -307,10 +307,19 @@ export function App() {
   );
   const tuneRunner = React.useMemo(() => new TuneRunner(transport), [transport]);
   const [tuneDraft, setTuneDraft] = React.useState(DEFAULT_DRAFT);
+  React.useEffect(() => {
+    if (live) tuneRunner.connected();
+  }, [live, tuneRunner]);
+  // Closing or reloading the page stops a run too, as far as one last write can get out.
+  React.useEffect(() => {
+    const abandon = () => tuneRunner.abandon();
+    window.addEventListener("pagehide", abandon);
+    return () => window.removeEventListener("pagehide", abandon);
+  }, [tuneRunner]);
   // A finished capture lands on the RPM capture page, and with Save CSV files on downloads, whichever
   // page is open - a tuning run's aside, which are hundreds.
   onCapture.current = (capture) => {
-    const tuning = tuneRunner.getRun()?.status === "running";
+    const tuning = tuneRunner.running;
     tuneRunner.capture(capture);
     if (tuning) return;
     setRpmText(capture.csv);
