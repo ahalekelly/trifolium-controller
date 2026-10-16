@@ -4,7 +4,9 @@
 // the rampup timeout plus a settling time, lets go, and reads the capture the firmware dumps. Rev
 // goes through HOLD, so SAFE, the menu and the rev safety latch govern it exactly as they govern
 // the switch. TUNE lives in RAM, so a run leaves the stored settings as they were, and a reboot
-// mid-run (a pack swap) costs nothing: every spin-up sends it again.
+// mid-run (a pack swap) costs nothing: every spin-up sends it again. A run that stops for any
+// reason sends a bare TUNE, which puts the blaster's own settings back once its wheels stop - or,
+// when a dropped link stopped it, the next connection does.
 
 import { getByKey } from "../schema/keyPath";
 import type { Capture, CommandAck, SerialTransport } from "../serial/transport";
@@ -66,6 +68,11 @@ export class TuneRunner {
 
   getRun = () => this.run;
 
+  /** Whether a run is driving the blaster. */
+  get running() {
+    return this.looping;
+  }
+
   private set(run: Run | null) {
     this.run = run;
     saveRun(run);
@@ -79,14 +86,12 @@ export class TuneRunner {
 
   start(config: TuneConfig, baseline: Gains, device: unknown) {
     if (this.looping) throw new Error("a run is already going");
-    this.set(startRun(config, baseline));
-    void this.loop(device);
+    void this.loop(startRun(config, baseline), device);
   }
 
   resume(device: unknown) {
-    if (!this.run || this.looping) return;
-    this.set({ ...this.run, status: "running", note: null });
-    void this.loop(device);
+    if (this.looping || !this.run) return;
+    void this.loop({ ...this.run, status: "running", note: null }, device);
   }
 
   /** Stops after the spin-up under way; a set it leaves half done is dropped. */
@@ -99,17 +104,33 @@ export class TuneRunner {
     this.set(null);
   }
 
-  private async loop(device: unknown) {
+  /** A blaster just connected: whatever TUNE a dropped link left on it goes. */
+  connected() {
+    if (!this.looping) void this.untune();
+  }
+
+  /** The page is going: the bare TUNE goes out with no time to hear the answer. */
+  abandon() {
+    if (this.looping && this.transport.connected) void this.transport.sendLine("TUNE");
+  }
+
+  private untune() {
+    if (this.transport.connected) return this.transport.request<CommandAck>("TUNE");
+  }
+
+  private async loop(run: Run, device: unknown) {
     this.looping = true;
     this.pauseWanted = false;
+    // Every change to `run` goes through here, so it stays the run this.run holds.
+    const update = (next: Run) => this.set((run = next));
+    update(run);
     try {
       const settings = runSettings(device);
       if (typeof settings === "string") throw new Error(settings);
       for (;;) {
-        const run = this.run!;
         const { search, next } = nextSet(run);
         if (next === null) {
-          this.set({ ...run, search, status: "done" });
+          update({ ...run, search, status: "done" });
           return;
         }
         const gains =
@@ -118,7 +139,7 @@ export class TuneRunner {
         const traces: number[][] = [];
         for (const rpm of run.config.rpms) {
           if (this.pauseWanted) {
-            this.set({ ...this.run!, status: "paused", note: null });
+            update({ ...run, status: "paused", note: null });
             return;
           }
           const { spinup, trace } = await this.spinup(
@@ -133,7 +154,7 @@ export class TuneRunner {
         const traceKept = next === BASELINE ? run.traces : { ...run.traces, [next]: traces };
         // Only the finalists' traces are charted, so a dropped candidate's go.
         for (const id of Object.keys(search.dropped)) delete traceKept[id];
-        this.set({
+        update({
           ...run,
           search,
           sets: [...run.sets, { id: next, at: Date.now(), spinups }],
@@ -149,9 +170,10 @@ export class TuneRunner {
       }
     } catch (e) {
       // Whatever stopped it, a dropped link included, is the note the run pauses with.
-      this.set({ ...this.run!, status: "paused", note: (e as Error).message });
+      update({ ...run, status: "paused", note: (e as Error).message });
     } finally {
       this.looping = false;
+      await this.untune();
     }
   }
 

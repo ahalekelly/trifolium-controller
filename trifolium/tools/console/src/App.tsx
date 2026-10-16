@@ -221,10 +221,19 @@ export function App() {
   );
   const tuneRunner = React.useMemo(() => new TuneRunner(transport), [transport]);
   const [tuneDraft, setTuneDraft] = React.useState(DEFAULT_DRAFT);
+  React.useEffect(() => {
+    if (live) tuneRunner.connected();
+  }, [live, tuneRunner]);
+  // Closing or reloading the page stops a run too, as far as one last write can get out.
+  React.useEffect(() => {
+    const abandon = () => tuneRunner.abandon();
+    window.addEventListener("pagehide", abandon);
+    return () => window.removeEventListener("pagehide", abandon);
+  }, [tuneRunner]);
   // With Save CSV files on, every finished capture downloads as it arrives, whichever tab is open -
   // a tuning run's aside, which are hundreds.
   onCapture.current = (capture) => {
-    const tuning = tuneRunner.getRun()?.status === "running";
+    const tuning = tuneRunner.running;
     tuneRunner.capture(capture);
     setCaptures((n) => n + 1);
     if (tuning) return;

@@ -74,6 +74,9 @@ class Served:
     def settings(self):
         return self.bench("wiring")["settings"]
 
+    def motor(self, index):
+        return self.bench("peek", names=["motors"])["values"]["motors"][index]
+
     def flash(self, path):
         """A file off the blaster's flash, or None."""
         reply = self.bench("flash", path=path)
@@ -422,6 +425,8 @@ def test_a_tune_run_outlives_a_reload_paused_then_resumes_to_the_end_and_exports
         timeout=30000)
 
     page.reload()
+    # Closing the page sent a bare TUNE, so once the wheels stop the blaster runs on its own ki.
+    served.until(lambda: served.motor(1)["ki"] == 0.5)
     page.get_by_role("tab", name="Tune").click()
     expect(page.get_by_text("The console was closed mid-run. Resume to carry on.")).to_be_visible()
     expect(page.get_by_role("button", name="Resume")).to_be_disabled()
@@ -440,11 +445,14 @@ def test_a_tune_run_pauses_for_a_pack_swap_once_a_cell_reads_below_the_level_set
     connect(open_console(page, served))
     served.wait_armed()
     page.get_by_role("tab", name="Tune").click()
+    page.get_by_label("Target RPMs").fill("25000")
     page.get_by_label("Pause below V a cell").fill("4.3")  # a charged cell is 4.2
     page.get_by_role("button", name="Start").click()
     paused = re.compile(r"^The pack read 4\.\d\d V a cell, below 4\.30 V\. Swap it")
     expect(page.get_by_text(paused)).to_be_visible(timeout=30000)
     expect(page.get_by_role("button", name="Resume")).to_be_enabled()
+    # A paused run leaves the blaster on its own settings.
+    served.until(lambda: served.motor(1)["revRPM"] == 30000)
 
 
 def test_a_direction_set_from_motors_and_pid_is_written_then_spun_and_a_refusal_says_why(page, serve):
