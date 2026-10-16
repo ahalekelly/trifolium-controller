@@ -15,12 +15,13 @@ void FlywheelMotor::sendThrottle(int32_t value)
 
 void FlywheelMotor::resetControl(flywheelControlType_t mode)
 {
+    firstCrossing = false;
+    PIDErrorPrior = 1;
     switch (mode)
     {
     case PID_CONTROL:
         PIDOutput = 0;
         PIDIntegral = 0; // stop reset PID
-        firstCrossing = false;
         break;
     case TBH_CONTROL:
         PIDIntegral = 0; // reset TBH to target RPM value
@@ -135,15 +136,16 @@ void FlywheelMotor::updatePID(int32_t batteryVoltage_mv, int32_t loopTime_us, in
     }
 
     PIDErrorPrior = PIDError;
-    esc->sendThrottle(max(0, min(maxThrottle, static_cast<int32_t>(PIDOutput))));
+    PIDOutput = limitThrottle(PIDOutput, maxThrottle, batteryVoltage_mv, batteryType);
+    esc->sendThrottle(PIDOutput);
 }
 
 void FlywheelMotor::updateTBH(int32_t batteryVoltage_mv, flywheelState_t flywheelState,
-                              int32_t maxThrottle)
+                              int32_t maxThrottle, int batteryType, int32_t throttleCap)
 {
     /*
     so slightly confusing, but we use PIDIntegral for TBH variable, and KI for gain, and PIDOutput
-    for our error accumulator, which we cap at 1999. Just trying to reuse variables to save runtime
+    for our error accumulator, which we cap at the voltage-limited throttle. Just trying to reuse variables to save runtime
     memory
     */
     uint32_t erpm;
@@ -162,6 +164,17 @@ void FlywheelMotor::updateTBH(int32_t batteryVoltage_mv, flywheelState_t flywhee
 
     PIDError = targetRPM - motorRPM;
 
+    if (!firstCrossing)
+    {
+        // Recompute startup drive as the pack sags or the target rises. A clamped accumulator
+        // cannot recover on its own until the first crossing.
+        int32_t openLoopThrottle =
+            maxThrottle * targetRPM / batteryVoltage_mv * 1000 / m_config->m_motorKv;
+        PIDOutput = limitThrottle(openLoopThrottle + throttleCap, maxThrottle,
+                                  batteryVoltage_mv, batteryType);
+        PIDIntegral = 2 * openLoopThrottle - PIDOutput;
+    }
+
     if (signbit(PIDError) && !firstCrossing)
     {
         firstCrossing = true;
@@ -177,14 +190,7 @@ void FlywheelMotor::updateTBH(int32_t batteryVoltage_mv, flywheelState_t flywhee
         PIDErrorPrior = PIDError;
     }
 
-    if (PIDOutput > 1999)
-    {
-        PIDOutput = 1999; // prevent negative output and cap output
-    }
-    else if (PIDOutput < 0)
-    {
-        PIDOutput = 0;
-    }
+    PIDOutput = limitThrottle(PIDOutput, maxThrottle, batteryVoltage_mv, batteryType);
     // prevent output from being zero if non zero targetRPM since we don't want to hard brake if we
     // overshoot for heat optimization
     if ((flywheelState == STATE_ACCELERATING || flywheelState == STATE_FULLSPEED) &&
@@ -192,7 +198,7 @@ void FlywheelMotor::updateTBH(int32_t batteryVoltage_mv, flywheelState_t flywhee
     {
         PIDOutput = 1;
     }
-    esc->sendThrottle(max(0, min(maxThrottle, static_cast<int32_t>(PIDOutput))));
+    esc->sendThrottle(PIDOutput);
 }
 
 void FlywheelMotor::updateOpenLoop(int32_t batteryVoltage_mv, int32_t maxThrottle)
@@ -210,4 +216,15 @@ void FlywheelMotor::updateOpenLoop(int32_t batteryVoltage_mv, int32_t maxThrottl
     }
     PIDOutput = constrain(PIDOutput, 0, maxThrottle);
     esc->sendThrottle(PIDOutput);
+}
+
+int32_t FlywheelMotor::limitThrottle(int32_t throttle, int32_t maxThrottle,
+                                     int32_t batteryVoltage_mv, int batteryType) const
+{
+    // Same 0.5 V/cell headroom as motorRpmCeiling(), so every allowed RPM target gets its voltage.
+    int32_t targetVoltage_mv = (int64_t)targetRPM * 1000 / m_config->m_motorKv +
+                               cellCount((batteryType_t)batteryType) * 500;
+    int32_t limit = (int64_t)maxThrottle *
+                    max(m_config->m_maxSpinupVoltage_mv, targetVoltage_mv) / batteryVoltage_mv;
+    return constrain(throttle, 0, min(maxThrottle, limit));
 }

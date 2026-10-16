@@ -67,7 +67,6 @@ void BatteryMonitor::update()
         {
             voltage_mv_ += voltageBuffer_[i];
         }
-        voltage_mv_ /= averagingWindow_; // apply exponential moving average to smooth out noise.
-                                         // Time constant ~= 1.44 ms
+        voltage_mv_ /= averagingWindow_; // mean of the last averagingWindow_ readings, ~1 ms apart
     }
 }
