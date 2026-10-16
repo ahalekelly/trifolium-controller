@@ -167,28 +167,30 @@ export const captureReport = (line: string): CaptureReport | null => {
 };
 
 /**
- * Gathers each capture from its header to the report after its rows. Any other line in between - the
- * other core's chatter - is left to the log.
+ * Gathers each capture from its header to the report after its rows, and hands it over whole. Any
+ * other line in between - the other core's chatter - is left to the log.
  */
 export class CaptureAssembler {
   private lines: string[] | null = null;
 
-  /** The capture this line completes, or null. */
-  push(line: string): Capture | null {
+  constructor(private onCapture: (capture: Capture) => void) {}
+
+  /** Whether the line was a capture's. */
+  take(line: string): boolean {
     if (isCaptureHeader(line)) {
       this.lines = [line];
-      return null;
+      return true;
     }
-    if (!this.lines) return null;
+    if (!this.lines) return false;
     if (isCaptureRow(line)) {
       this.lines.push(line);
-      return null;
+      return true;
     }
     const report = captureReport(line);
-    if (!report) return null;
-    const csv = this.lines.join("\n");
+    if (!report) return false;
+    this.onCapture({ csv: this.lines.join("\n"), report });
     this.lines = null;
-    return { csv, report };
+    return true;
   }
 
   reset() {
@@ -277,7 +279,7 @@ export class SerialTransport {
   private rebootedPort: Port | null = null;
   /** A reopen that only the user's Connect can finish: Android's permission ends with the reboot. */
   private reconnectWaiter: ((ok: boolean) => void) | null = null;
-  private captures = new CaptureAssembler();
+  private captures = new CaptureAssembler((capture) => this.events.onCapture?.(capture));
 
   constructor(private events: TransportEvents = {}) {}
 
@@ -532,6 +534,8 @@ export class SerialTransport {
         if (done) break;
         const line = (value ?? "").trim();
         if (!line) continue;
+        // A capture goes to onCapture whole rather than into the log line by line.
+        if (this.captures.take(line)) continue;
 
         // Anything not claimed by a waiting caller is device chatter worth showing - except the acks
         // of a command sent quietly, which say only that it was taken again.
@@ -543,9 +547,6 @@ export class SerialTransport {
           resolve(line);
           return false;
         });
-
-        const capture = this.captures.push(line);
-        if (capture) this.events.onCapture?.(capture);
       }
     } catch {
       // Expected on disconnect() cancelling the reader, or the device rebooting mid-session.

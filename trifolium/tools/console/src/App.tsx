@@ -34,7 +34,7 @@ import {
 } from "./serial/transport";
 import { bundleFilename, buildBundle, checkBundle, diffKeys, downloadJson } from "./config/bundle";
 import { blasterLoads, schemaMismatch, type Blaster } from "./config/blasters";
-import { LOG_LINE_CAP, wholeRows } from "./rpm/parse";
+import { wholeRows } from "./rpm/parse";
 import { compareVersions } from "./firmware/releases";
 import { applyLayout } from "./ui/applyLayout";
 import { listChanges, marksToRevert, sectionSummary, splitMark, type Change } from "./ui/changes";
@@ -157,6 +157,9 @@ const OFFLINE_DEVICE = {
   ...fixtureDevice,
   ...(OFFLINE_PRESET?.wiring ?? {}),
 };
+
+/** The device log keeps the newest this many lines. */
+const LOG_LINES = 1000;
 
 /** Device keys edited on the Wiring page, whose edits count there rather than under Blaster. */
 const WIRING_KEYS = new Set([
@@ -293,7 +296,7 @@ export function App() {
   const transport = React.useMemo(
     () =>
       new SerialTransport({
-        onLog: (line) => setLog((prev) => [...prev.slice(-(LOG_LINE_CAP - 1)), line]),
+        onLog: (line) => setLog((prev) => [...prev.slice(-(LOG_LINES - 1)), line]),
         onDisconnect: () => {
           setLive(false);
           setWiringByHand(false); // a different device may need the picker
@@ -330,16 +333,6 @@ export function App() {
   const note = (kind: LogLine["kind"], text: string) =>
     setLog((prev) => [...prev, { kind, text, at: Date.now() }]);
 
-  // Only the device's own lines. Our "> COMMAND" echoes would break the contiguous-numeric-rows scan
-  // that finds a CSV capture.
-  const deviceLogText = React.useMemo(
-    () =>
-      log
-        .filter((l) => l.kind === "in")
-        .map((l) => l.text)
-        .join("\n"),
-    [log],
-  );
 
   /**
    * The schema as it applies to the values in the form right now.
@@ -1930,7 +1923,6 @@ export function App() {
                   schema={resolved}
                   device={device}
                   onEdit={onEdit}
-                  logText={deviceLogText}
                   capturing={getByKey(device, "device:useRpmLogging") === true}
                   text={rpmText}
                   onText={setRpmText}
