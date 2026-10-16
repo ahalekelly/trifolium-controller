@@ -497,6 +497,17 @@ def test_a_tune_run_pauses_for_a_pack_swap_once_a_cell_reads_below_the_level_set
     served.until(lambda: served.motor(1)["revRPM"] == 30000)
 
 
+def test_a_tune_run_saved_by_another_build_is_refused_and_can_be_discarded(page, serve):
+    served = serve()
+    open_console(page, served)
+    page.evaluate("localStorage.setItem('trifolium.tune', JSON.stringify({status: 'paused'}))")
+    page.reload()
+    go(page, "Tune")
+    expect(page.get_by_text(re.compile("this build can't read it"))).to_be_visible()
+    page.get_by_role("button", name="Discard run").click()
+    expect(page.get_by_role("button", name="Start", exact=True)).to_be_visible()
+
+
 def test_holding_rev_in_the_console_takes_a_capture(page, serve):
     served = serve(device={"useRpmLogging": True})
     connect(open_console(page, served))
