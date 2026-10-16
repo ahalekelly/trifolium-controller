@@ -14,7 +14,7 @@ class FlywheelMotor
     uint32_t targetRPM = 0;      // current target RPM (ramps/dwells/idles toward this)
     uint32_t motorRPM = 0;       // filtered/last-known-good RPM reading
     uint32_t motorRPMRaw = 0;    // raw RPM reading before filtering (PID_CONTROL only)
-    uint32_t motorRPMFilter = 0; // EMA filter accumulator (PID_CONTROL only)
+    uint32_t motorRPMFilter = 0; // PID: the EMA accumulator. TBH: the last valid reading
     int32_t PIDError = 0;
     int32_t PIDErrorPrior = 1;
     int32_t PIDOutput = 0;
@@ -48,7 +48,7 @@ class FlywheelMotor
     void updateTBH(int32_t batteryVoltage_mv, flywheelState_t flywheelState, int32_t maxThrottle,
                    int batteryType, int32_t throttleCap);
     void updateOpenLoop(int32_t batteryVoltage_mv, int32_t maxThrottle);
-    void resetControl(flywheelControlType_t mode);
+    void resetControl(flywheelControlType_t mode, uint8_t EMAFilter);
     void sendThrottle(int32_t value);
 
     // Clamps to 0..maxThrottle and to the throttle at which battery voltage x throttle reaches the

@@ -13,7 +13,10 @@ void FlywheelMotor::sendThrottle(int32_t value)
     esc->sendThrottle(value);
 }
 
-void FlywheelMotor::resetControl(flywheelControlType_t mode)
+// Spin-down and idle read RPM straight, past motorRPMFilter, so it still holds the last rev's
+// speed. Each mode's filter starts from the current reading instead, or the first ticks of the next
+// rev see a wheel that has long since slowed.
+void FlywheelMotor::resetControl(flywheelControlType_t mode, uint8_t EMAFilter)
 {
     firstCrossing = false;
     PIDErrorPrior = 1;
@@ -22,9 +25,11 @@ void FlywheelMotor::resetControl(flywheelControlType_t mode)
     case PID_CONTROL:
         PIDOutput = 0;
         PIDIntegral = 0; // stop reset PID
+        motorRPMFilter = motorRPM * ((uint32_t{1} << EMAFilter) - 1); // the EMA's steady state
         break;
     case TBH_CONTROL:
-        PIDIntegral = 0; // reset TBH to target RPM value
+        PIDIntegral = 0;          // reset TBH to target RPM value
+        motorRPMFilter = motorRPM; // TBH's last valid reading
         break;
     }
 }

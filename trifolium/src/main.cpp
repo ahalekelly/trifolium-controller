@@ -2062,7 +2062,7 @@ void resetFWControl()
     {
         if (motorsEnabled[i])
         {
-            motorArr[i].resetControl(flywheelControl());
+            motorArr[i].resetControl(flywheelControl(), deviceSettings.EMAFilter);
         }
     }
 }
