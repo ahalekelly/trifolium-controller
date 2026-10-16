@@ -6,10 +6,10 @@ import { HelpSection, Para, Step, Steps } from "./Help";
 // The ESC's half of the motor settings, stated next to the controller's half.
 //
 // The fields above are what the firmware does with the motors - it divides the ESC's eRPM by
-// Poles/2 to get RPM and estimates throttle from Kv, both in flywheelMotor.cpp - while AM32 holds its
-// own copy of the same two facts and decides, through its protections, whether a motor is allowed
-// to keep turning at all. The two copies have to agree, and the ESC's are set on the ESCs tab. So:
-// prose beside the fields, with the numbers it tells you to set read from the fields themselves.
+// Poles/2 to get RPM and estimates throttle from Kv, both in flywheelMotor.cpp. AM32 keeps its own
+// Kv and poles, used only for the RPM range of its low-RPM power protection, and set on the ESCs
+// tab. Matching the motor is the starting point the panel names, read from the fields themselves;
+// a spin-up search may move the ESC's Kv from there.
 
 export interface EscMotorSetup {
   /** 1-based, as the motor matrix above labels them. */
@@ -80,8 +80,10 @@ export function EscSetup({ device }: { device: unknown }) {
           Turn <b>Stuck rotor protection</b> and <b>Stall protection</b> off.
         </Step>
         <Step>
-          Set <b>Motor poles</b> and <b>Motor Kv</b> to the motor you actually fitted, matching what
-          this page holds. AM32 wants the whole pole count, which is twice the Poles/2 above.
+          Set <b>Motor poles</b> and <b>Motor Kv</b> to the motor you fitted. The blaster uses the
+          Kv and Poles/2 above; AM32 uses its own pair only for the RPM range of its low-RPM power
+          protection, which limits power while a motor turns slowly, and Kv Off disables it. AM32
+          wants the whole pole count, twice the Poles/2 above.
           {groups.length > 0 && (
             <Box component="ul" sx={{ m: 0, mt: 0.35, pl: 2.5 }}>
               {groups.map((group) => (
