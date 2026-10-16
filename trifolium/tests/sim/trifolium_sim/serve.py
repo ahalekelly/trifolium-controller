@@ -39,6 +39,11 @@ from .host import PROJECT
 
 SLICE_MS = 5
 CATCH_UP_MS = 20
+# The furthest the blaster's clock falls behind the wall clock. A machine too busy for more stops it
+# instead: a stall up to this long is caught up on, its writes delivered as they were sent (see
+# Server._deliver()), but time queued past it would hold every reply up behind it, past a host's
+# timeout.
+LAG_LIMIT_MS = 1000
 ENUMERATION_S = 0.8  # after a reboot, how long before the port can be opened again
 # What the firmware prints as it goes to reboot. A blaster is off the bus within milliseconds of
 # saying so, where the simulator, paced to the wall clock on a busy machine, can take longer than a
@@ -656,6 +661,10 @@ class Server:
             if self.rebase:
                 self.paced_from, self.rebase = (time.time(), self.b.now_us), False
             behind = self._behind_us(time.time())
+            if behind > LAG_LIMIT_MS * 1000:
+                start_wall, start_sim = self.paced_from
+                self.paced_from = (start_wall, start_sim - (behind - LAG_LIMIT_MS * 1000))
+                behind = LAG_LIMIT_MS * 1000
             if self.b.state == "running" and behind > 0:
                 self.b.run_us(int(min(behind, CATCH_UP_MS * 1000)))
                 # Not a moment's sleep while behind: Windows rounds a short select() up to ~15 ms.
