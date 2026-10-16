@@ -185,7 +185,11 @@ void handleSerialCommands()
     {
         // factoryResetSettings(), not a payload the host composes - the device decides what the
         // preserved set is. Wiring survives this; RESET_PINS is what moves it.
-        DeviceStore::saveDeviceSettings(DeviceStore::factoryResetSettings());
+        if (!DeviceStore::saveDeviceSettings(DeviceStore::factoryResetSettings()))
+        {
+            ackError("FACTORY_RESET_DEVICE", "could not write the device settings");
+            return;
+        }
         ackOk("FACTORY_RESET_DEVICE", -1, false, true);
         SerialLock::printKept();
         Serial.flush();
@@ -217,10 +221,21 @@ void handleSerialCommands()
     else if (command == "FACTORY_RESET_ALL")
     {
         // What the OLED's "Factory Reset All" does, in the order it does it. Still not the wiring -
-        // RESET_PINS stays the only command that moves it.
+        // RESET_PINS stays the only command that moves it. A failed write stops it there: slots
+        // already reset stay reset, and the next boot loads them.
         for (uint8_t i = 0; i < ProfileStore::MAX_PROFILE_COUNT; i++)
-            ProfileStore::resetProfile(i);
-        DeviceStore::saveDeviceSettings(DeviceStore::factoryResetSettings());
+        {
+            if (!ProfileStore::resetProfile(i))
+            {
+                ackError("FACTORY_RESET_ALL", "could not write a slot");
+                return;
+            }
+        }
+        if (!DeviceStore::saveDeviceSettings(DeviceStore::factoryResetSettings()))
+        {
+            ackError("FACTORY_RESET_ALL", "could not write the device settings");
+            return;
+        }
         ackOk("FACTORY_RESET_ALL", -1, false, true);
         SerialLock::printKept();
         Serial.flush();
@@ -232,8 +247,13 @@ void handleSerialCommands()
     {
         // Back to no wiring at all: the device comes up driving nothing and asks for a preset. Also
         // the only thing that clears wiringConfigured - editing a pin deliberately does not.
-        DeviceStore::clearWiring(deviceSettings);
-        DeviceStore::saveDeviceSettings(deviceSettings);
+        DeviceSettings unwired = deviceSettings;
+        DeviceStore::clearWiring(unwired);
+        if (!DeviceStore::saveDeviceSettings(unwired))
+        {
+            ackError("RESET_PINS", "could not write the device settings");
+            return;
+        }
         ackOk("RESET_PINS", -1, false, true);
         SerialLock::printKept();
         Serial.flush();
@@ -306,9 +326,18 @@ void handleSerialCommands()
 
         if (targetIndex == activeIndex)
         {
-            activeProfile = newSettings;
+            // Published before clamping, which works on the live settings. Some profile bounds come
+            // from device settings, so a failed save puts both back: flash still holds them.
+            const DeviceSettings runningDevice = deviceSettings;
+            std::swap(activeProfile, newSettings); // newSettings now holds the running profile
             const bool clamped = clampAllSettings();
-            ProfileStore::saveProfile(targetIndex, activeProfile);
+            if (!ProfileStore::saveProfile(targetIndex, activeProfile))
+            {
+                activeProfile = newSettings;
+                deviceSettings = runningDevice;
+                ackError("LOAD_PROFILE", "could not write the slot");
+                return;
+            }
             ackOk("LOAD_PROFILE", targetIndex, clamped, true);
             SerialLock::printKept();
             Serial.flush();
@@ -318,7 +347,11 @@ void handleSerialCommands()
         }
         else
         {
-            ProfileStore::saveProfile(targetIndex, newSettings);
+            if (!ProfileStore::saveProfile(targetIndex, newSettings))
+            {
+                ackError("LOAD_PROFILE", "could not write the slot");
+                return;
+            }
             ackOk("LOAD_PROFILE", targetIndex, false, false);
         }
     }
@@ -432,10 +465,17 @@ void handleSerialCommands()
             return;
         DeviceSettings newSettings = deviceSettings;
         DeviceStore::fromJson(doc, newSettings);
-        // Publish before clamping, same reason as LOAD_PROFILE - and this path always reboots.
-        deviceSettings = newSettings;
+        // Published before clamping and put back if the save fails, same as LOAD_PROFILE.
+        const ShotProfile runningProfile = activeProfile;
+        std::swap(deviceSettings, newSettings); // newSettings now holds the running settings
         const bool clamped = clampAllSettings();
-        DeviceStore::saveDeviceSettings(deviceSettings);
+        if (!DeviceStore::saveDeviceSettings(deviceSettings))
+        {
+            deviceSettings = newSettings;
+            activeProfile = runningProfile;
+            ackError("LOAD_DEVICE", "could not write the device settings");
+            return;
+        }
         ackOk("LOAD_DEVICE", -1, clamped, true);
         SerialLock::printKept();
         Serial.flush();

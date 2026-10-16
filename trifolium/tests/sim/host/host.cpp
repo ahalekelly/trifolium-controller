@@ -319,6 +319,8 @@ class Host
         }
         else if (op == "flash.cut")
             hal::flash().cutPowerBeforeWrite = hal::flash().writes + (req["write"] | 1);
+        else if (op == "flash.full")
+            hal::flash().full = req["value"] | true;
         else if (op == "flash.stats")
         {
             out["writes"] = hal::flash().writes;
