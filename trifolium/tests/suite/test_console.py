@@ -365,7 +365,8 @@ def test_a_direction_set_from_motors_and_pid_is_written_then_spun_and_a_refusal_
     connect(open_console(page, served))
     served.wait_armed()
     page.get_by_role("tab", name="Device").click()
-    motor2 = page.get_by_text("Motor 2", exact=True).locator("..")
+    motor2 = page.get_by_role("row").filter(has=page.get_by_text("Motor 2", exact=True)).filter(
+        has=page.get_by_role("button", name="Test"))
     motor2.get_by_role("button", name="Reversed").click()
     expect(page.get_by_text("ESC_DIRECTION 1 reversed: done")).to_be_visible()
     expect(page.get_by_text("TEST_MOTOR 1: done")).to_be_visible(timeout=10000)

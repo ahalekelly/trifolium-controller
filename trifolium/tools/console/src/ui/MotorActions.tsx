@@ -1,8 +1,13 @@
 import Button from "@mui/material/Button";
 import Stack from "@mui/material/Stack";
+import Table from "@mui/material/Table";
+import TableBody from "@mui/material/TableBody";
+import TableCell from "@mui/material/TableCell";
+import TableContainer from "@mui/material/TableContainer";
+import TableHead from "@mui/material/TableHead";
+import TableRow from "@mui/material/TableRow";
 import Typography from "@mui/material/Typography";
 import { getByKey } from "../schema/keyPath";
-import { Para } from "./Help";
 
 // The menu's per-motor actions, run over serial. Offered for the motors this config enables; the
 // device refuses one it did not attach this boot, and while the flywheels are running.
@@ -25,36 +30,64 @@ export function MotorActions({
   onTest: (motor: number) => void;
   onDirection: (motor: number, direction: Direction) => void;
 }) {
+  const cellSx = { py: 0.35, px: 0.75, borderBottom: "none" } as const;
+
   return (
     <Stack spacing={0.5}>
-      <Para>
-        Test spins a motor for two seconds at low throttle. Normal and Reversed write the direction
-        stored in the ESC, then spin it: the spin is how you check which way it turns.
-      </Para>
-      {enabledMotors(device).map((motor) => (
-        <Stack key={motor} direction="row" spacing={1} sx={{ alignItems: "center" }}>
-          <Typography variant="body2" sx={{ minWidth: 64 }}>
-            Motor {motor + 1}
-          </Typography>
-          <Button size="small" variant="outlined" disabled={disabled} onClick={() => onTest(motor)}>
-            Test
-          </Button>
-          <Typography variant="body2" color="text.secondary" sx={{ pl: 1 }}>
-            Set ESC direction:
-          </Typography>
-          {(["normal", "reversed"] as const).map((direction) => (
-            <Button
-              key={direction}
-              size="small"
-              disabled={disabled}
-              onClick={() => onDirection(motor, direction)}
-              sx={{ textTransform: "none" }}
-            >
-              {direction === "normal" ? "Normal" : "Reversed"}
-            </Button>
-          ))}
-        </Stack>
-      ))}
+      <Typography variant="caption" color="text.secondary">
+        Test spins a motor for two seconds. Normal and Reversed set its ESC&rsquo;s direction, then
+        spin it to check.
+      </Typography>
+      <TableContainer sx={{ overflowX: "auto" }}>
+        <Table size="small" sx={{ width: "auto" }}>
+          <TableHead>
+            <TableRow>
+              <TableCell sx={cellSx} colSpan={2} />
+              <TableCell sx={cellSx}>
+                <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                  ESC direction
+                </Typography>
+              </TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {enabledMotors(device).map((motor) => (
+              <TableRow key={motor}>
+                <TableCell sx={{ ...cellSx, whiteSpace: "nowrap" }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Motor {motor + 1}
+                  </Typography>
+                </TableCell>
+                <TableCell sx={cellSx}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={disabled}
+                    onClick={() => onTest(motor)}
+                  >
+                    Test
+                  </Button>
+                </TableCell>
+                <TableCell sx={cellSx}>
+                  <Stack direction="row" spacing={1}>
+                    {(["normal", "reversed"] as const).map((direction) => (
+                      <Button
+                        key={direction}
+                        size="small"
+                        variant="outlined"
+                        disabled={disabled}
+                        onClick={() => onDirection(motor, direction)}
+                      >
+                        {direction === "normal" ? "Normal" : "Reversed"}
+                      </Button>
+                    ))}
+                  </Stack>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
     </Stack>
   );
 }
