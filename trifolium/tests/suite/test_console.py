@@ -365,7 +365,7 @@ def test_an_rpm_capture_from_a_rev_downloads_and_charts_itself_with_every_motor(
 
     summary = re.compile(rf"^2 motors, {served.settings()['rpmLogLength']} samples")
     expect(page.get_by_text(summary)).to_be_visible()
-    # Coming back to the tab finds the capture in the log again.
+    # Coming back to the tab finds the capture again.
     page.get_by_role("tab", name="Device").click()
     page.get_by_role("tab", name="RPM Log").click()
     expect(page.get_by_text(summary)).to_be_visible()

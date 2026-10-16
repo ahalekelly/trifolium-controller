@@ -35,7 +35,7 @@ import {
 } from "./serial/transport";
 import { bundleFilename, buildBundle, checkBundle, diffKeys, downloadJson } from "./config/bundle";
 import { blasterLoads, schemaMismatch, type Blaster } from "./config/blasters";
-import { LOG_LINE_CAP, wholeRows } from "./rpm/parse";
+import { wholeRows } from "./rpm/parse";
 import { applyLayout } from "./ui/applyLayout";
 import { PresetApplyDialog } from "./ui/PresetApplyDialog";
 import { DirtyKeys } from "./ui/dirty";
@@ -136,6 +136,8 @@ type TabId = "profile" | "device" | "rpm" | "tune" | "splash" | "wiring" | "raw"
 
 /** How often the motors panel asks for DUMP_MOTORS - the menu's ESC Dashboard redraws at 10 Hz. */
 const MOTOR_POLL_MS = 500;
+/** The device log keeps the newest this many lines. */
+const LOG_LINES = 1000;
 
 /** An edit not yet written: its mark as `dirty` holds it, and the value it stages. */
 interface Staged {
@@ -202,13 +204,13 @@ export function App() {
 
   // The transport is built once, so it reaches state - rebuilt every render - through this.
   const onCapture = React.useRef<(capture: Capture) => void>(() => {});
-  // RPM captures finished this session; each one's dump is in the log by the time it counts.
-  const [captures, setCaptures] = React.useState(0);
+  /** The newest RPM capture this session, for the RPM Log tab. */
+  const [capture, setCapture] = React.useState<Capture | null>(null);
   const [autoSaveCaptures, setAutoSaveCaptures] = React.useState(true);
   const transport = React.useMemo(
     () =>
       new SerialTransport({
-        onLog: (line) => setLog((prev) => [...prev.slice(-(LOG_LINE_CAP - 1)), line]),
+        onLog: (line) => setLog((prev) => [...prev.slice(-(LOG_LINES - 1)), line]),
         onDisconnect: () => {
           setLive(false);
           setWiringByHand(false); // a different device may need the picker
@@ -235,7 +237,7 @@ export function App() {
   onCapture.current = (capture) => {
     const tuning = tuneRunner.running;
     tuneRunner.capture(capture);
-    setCaptures((n) => n + 1);
+    setCapture(capture);
     if (tuning) return;
     note("ok", "RPM capture finished.");
     if (autoSaveCaptures) downloadCsv(wholeRows(capture.csv).csv);
@@ -243,17 +245,6 @@ export function App() {
 
   const note = (kind: LogLine["kind"], text: string) =>
     setLog((prev) => [...prev, { kind, text, at: Date.now() }]);
-
-  // Only the device's own lines. Our "> COMMAND" echoes would break the contiguous-numeric-rows scan
-  // that finds a CSV capture.
-  const deviceLogText = React.useMemo(
-    () =>
-      log
-        .filter((l) => l.kind === "in")
-        .map((l) => l.text)
-        .join("\n"),
-    [log],
-  );
 
   const store: Store = tab === "device" || tab === "wiring" ? "device" : "profile";
 
@@ -1443,8 +1434,7 @@ export function App() {
                 schema={view}
                 device={device}
                 onEdit={onEdit}
-                logText={deviceLogText}
-                captures={captures}
+                capture={capture}
                 autoSave={autoSaveCaptures}
                 onAutoSave={setAutoSaveCaptures}
                 capturing={getByKey(device, "device:useRpmLogging") === true}

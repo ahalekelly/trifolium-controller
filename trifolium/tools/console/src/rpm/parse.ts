@@ -5,8 +5,8 @@
 // "Motor N,TargetRPM N,Throttle N,value N," repeated per enabled motor, then one row per captured
 // control-loop tick in the same column order.
 //
-// The log arrives interleaved with ordinary device chatter, so it has to be found inside a larger
-// blob of text rather than parsed from a clean file.
+// A pasted or dropped capture may come with the device chatter around it, so it has to be found
+// inside a larger blob of text rather than parsed from a clean file.
 
 export interface MotorSeries {
   index: number;
@@ -23,17 +23,6 @@ export interface RpmLog {
   current: number[];
 }
 
-/**
- * How many device lines the console's log must keep for a capture to remain readable.
- *
- * Sized here rather than in the log view, because it is this parser that imposes it: a capture is
- * one header line plus one row per sample, extractRpmCsv() finds the block by its *header*, and the
- * firmware's ceiling is 2000 samples. A smaller buffer keeps only the tail of a default-length
- * capture, the header having been evicted, so the RPM Log tab never finds it - which is exactly
- * how it failed on the bench. Keep this above the largest rpmLogLength the firmware allows.
- */
-export const LOG_LINE_CAP = 4000;
-
 // The Voltage_mv prefix is optional so older logs still parse.
 const HEADER_RE = /^(?:Voltage_mv,(?:Current_mv,)?)?(?:Motor \d+,TargetRPM \d+,Throttle \d+,value \d+,?)+$/;
 const DATA_ROW_RE = /^[\d.\-,]+$/;
@@ -44,13 +33,13 @@ export const isCaptureHeader = (line: string): boolean => HEADER_RE.test(line);
 export const isCaptureRow = (line: string): boolean => DATA_ROW_RE.test(line);
 
 /**
- * Pulls the newest CSV block out of arbitrary log text, stripping the console's "(device) " prefix.
+ * Pulls the newest CSV block out of arbitrary log text.
  *
  * Returns null when there is no header, or a newest header with no rows - a header alone is not a
  * capture.
  */
 export function extractRpmCsv(rawText: string): string | null {
-  const lines = rawText.split(/\r?\n/).map((l) => l.replace(/^\s*\(device\)\s*/, "").trim());
+  const lines = rawText.split(/\r?\n/).map((l) => l.trim());
 
   let headerIdx = lines.length - 1;
   while (headerIdx >= 0 && !isCaptureHeader(lines[headerIdx])) headerIdx--;

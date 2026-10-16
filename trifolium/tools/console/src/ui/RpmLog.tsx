@@ -21,6 +21,7 @@ import {
   wholeRows,
 } from "../rpm/parse";
 import { getByKey } from "../schema/keyPath";
+import type { Capture } from "../serial/transport";
 import { walk, type Schema, type SchemaNode } from "../schema/types";
 import { DropLabel, dropOutlineSx, useFileDrop } from "./FileDrop";
 import { Field } from "./Field";
@@ -30,8 +31,8 @@ import { RpmChart, type Series } from "./RpmChart";
 // Charting an RPM capture.
 //
 // Not a live feature: the firmware records a fixed-length capture into RAM during a rev and dumps the
-// whole thing as CSV afterwards. So this reads the CSV out of whatever text is to hand - the newest
-// capture in the device log, a pasted block, or a dropped file - rather than streaming.
+// whole thing as CSV afterwards. So this charts whichever CSV is to hand - the newest capture the
+// blaster sent, a pasted block, or a dropped file - rather than streaming.
 //
 // `useRpmLogging` is the only switch a capture needs. RpmLogger::dumpIfReady writes the CSV to
 // Serial directly rather than through the logger, precisely so that the capture a user asked for
@@ -73,9 +74,8 @@ export interface RpmLogProps {
   schema: Schema;
   device: unknown;
   onEdit: (key: string, value: unknown) => void;
-  logText: string;
-  /** How many captures have finished this session. Each new one replaces whatever the box holds. */
-  captures: number;
+  /** The newest capture this session. Each new one replaces whatever the box holds. */
+  capture: Capture | null;
   /** Whether each finished capture downloads as a CSV file. */
   autoSave: boolean;
   onAutoSave: (on: boolean) => void;
@@ -89,16 +89,14 @@ export function RpmLog({
   schema,
   device,
   onEdit,
-  logText,
-  captures,
+  capture,
   autoSave,
   onAutoSave,
   capturing,
   switches,
 }: RpmLogProps) {
-  // The extracted block, not the whole log. The box is also what you read, edit and save - and a
-  // capture buried in a few thousand lines of boot chatter is not something you can check by eye.
-  const [text, setText] = React.useState(() => extractRpmCsv(logText) ?? "");
+  // The box is what you read, edit and save.
+  const [text, setText] = React.useState(capture?.csv ?? "");
   const [trim, setTrim] = React.useState(true);
   const [showThrottle, setShowThrottle] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -187,16 +185,12 @@ export function RpmLog({
   const crossings = React.useMemo(() => (parsed ? targetCrossings(parsed) : []), [parsed]);
 
   // A capture that finishes while the tab is open replaces the box, a loaded file or an edit
-  // included. The count moves on the report that follows the dump's rows, so the log holds it whole.
-  const shownCaptures = React.useRef(captures);
+  // included.
   React.useEffect(() => {
-    if (captures === shownCaptures.current) return;
-    shownCaptures.current = captures;
-    const csv = extractRpmCsv(logText);
-    if (!csv) return;
-    setText(csv);
+    if (!capture) return;
+    setText(capture.csv);
     setError(null);
-  }, [captures, logText]);
+  }, [capture]);
 
   /** Picked or dropped, a file lands in the box the same way. */
   const readFile = async (file: File) => {

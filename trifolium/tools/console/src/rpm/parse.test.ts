@@ -4,26 +4,24 @@ import {
   findTrailingFlatStart,
   niceStep,
   parseRpmCsv,
-  LOG_LINE_CAP,
   targetCrossings,
   wholeRows,
 } from "./parse";
 
-// A capture as it actually arrives: buried in device chatter, prefixed by the console's "(device) ",
-// and followed by more chatter.
+// A capture as a serial terminal shows it: buried in device chatter.
 const noise = [
-  "(device) Rev switch pressed",
-  "(device) activeProfileIndex: 0",
-  "(device) Voltage_mv,Motor 2,TargetRPM 2,Throttle 2,value 2,Motor 4,TargetRPM 4,Throttle 4,value 4,",
-  "(device) 16210,1000,32000,120,0,1010,32000,118,0",
-  "(device) 16180,5200,32000,900,3,5300,32000,890,4",
-  "(device) 16150,31900,32000,640,7,31950,32000,631,8",
-  "(device) Battery low, shutting down! 15990mv",
-  "(device) Select button pressed, firingMode 1",
+  "Rev switch pressed",
+  "activeProfileIndex: 0",
+  "Voltage_mv,Motor 2,TargetRPM 2,Throttle 2,value 2,Motor 4,TargetRPM 4,Throttle 4,value 4,",
+  "16210,1000,32000,120,0,1010,32000,118,0",
+  "16180,5200,32000,900,3,5300,32000,890,4",
+  "16150,31900,32000,640,7,31950,32000,631,8",
+  "Battery low, shutting down! 15990mv",
+  "Select button pressed, firingMode 1",
 ].join("\n");
 
 describe("extractRpmCsv", () => {
-  it("finds the block inside surrounding chatter and strips the prefix", () => {
+  it("finds the block inside surrounding chatter", () => {
     const csv = extractRpmCsv(noise);
     expect(csv).not.toBeNull();
     const lines = csv!.split("\n");
@@ -42,7 +40,7 @@ describe("extractRpmCsv", () => {
     const two = [
       "Motor 1,TargetRPM 1,Throttle 1,value 1,",
       "100,200,300,1",
-      "(device) Rev switch pressed",
+      "Rev switch pressed",
       "Motor 1,TargetRPM 1,Throttle 1,value 1,",
       "900,800,700,6",
     ].join("\n");
@@ -54,7 +52,7 @@ describe("extractRpmCsv", () => {
   });
 
   it("returns null when there is no header at all", () => {
-    expect(extractRpmCsv("(device) Rev switch pressed\n(device) 1,2,3,4")).toBeNull();
+    expect(extractRpmCsv("Rev switch pressed\n1,2,3,4")).toBeNull();
   });
 });
 
@@ -157,38 +155,6 @@ describe("niceStep", () => {
     expect(niceStep(47360, 5)).toBe(10000);
     expect(niceStep(9, 5)).toBe(2);
     expect(niceStep(0, 5)).toBe(1);
-  });
-});
-
-describe("a full-length capture survives the console's log buffer", () => {
-  /** One header plus `rows` data lines, the shape RpmLogger::dumpIfReady() writes. */
-  const capture = (rows: number): string[] => {
-    const lines = ["Voltage_mv,Motor 0,TargetRPM 0,Throttle 0,value 0,"];
-    for (let i = 0; i < rows; i++) lines.push(`7400,${30000 + i},30000,500,1.00,`);
-    return lines;
-  };
-
-  // MAX_RPM_LOG_LENGTH, and the default rpmLogLength - so this is the ordinary case, not the edge.
-  const FULL = 2000;
-
-  it("parses once the cap keeps the whole thing", () => {
-    const kept = capture(FULL).slice(-LOG_LINE_CAP);
-    const csv = extractRpmCsv(kept.join("\n"));
-    expect(csv).not.toBeNull();
-    expect(parseRpmCsv(csv!).motors[0].rpm).toHaveLength(FULL);
-  });
-
-  /**
-   * The bug this cap exists for. extractRpmCsv() finds the block by its header, so a buffer that
-   * holds only the tail of a capture yields nothing at all - the RPM Log tab reported no capture
-   * on a device that had just dumped one perfectly.
-   */
-  it("finds nothing when the header has been evicted", () => {
-    expect(extractRpmCsv(capture(FULL).slice(-500).join("\n"))).toBeNull();
-  });
-
-  it("is sized above the firmware's ceiling, with room for surrounding chatter", () => {
-    expect(LOG_LINE_CAP).toBeGreaterThan(FULL + 1);
   });
 });
 

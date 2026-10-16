@@ -10,6 +10,7 @@ import {
   isReply,
   repliesTo,
   serialApi,
+  type Capture,
 } from "./transport";
 import { serial as usbSerial } from "../vendor/web-serial-polyfill/dist/serial.js";
 import deviceJson from "../fixtures/device.json";
@@ -88,22 +89,27 @@ describe("captureReport", () => {
 
 describe("CaptureAssembler", () => {
   it("hands over a capture's rows once its report arrives, past the chatter around them", () => {
-    const captures = new CaptureAssembler();
+    const got: Capture[] = [];
+    const captures = new CaptureAssembler((capture) => got.push(capture));
+    const report = '{"evt":"rpmCapture","readyMs":178,"slowestMotor":1,"timedOut":false}';
     const lines = [
       "[info] revving",
       "Voltage_mv,Motor 1,TargetRPM 1,Throttle 1,value 1,",
       "16390,0,30000,1115,0.00,",
       "[warn] from the other core",
       "16380,812,30000,1999,0.00,",
+      report,
+      report,
     ];
-    expect(lines.map((line) => captures.push(line))).toEqual([null, null, null, null, null]);
-    expect(captures.push('{"evt":"rpmCapture","readyMs":178,"slowestMotor":1,"timedOut":false}'))
-      .toEqual({
+    expect(lines.map((line) => captures.take(line))).toEqual([
+      false, true, true, false, true, true, false,
+    ]);
+    expect(got).toEqual([
+      {
         csv: [lines[1], lines[2], lines[4]].join("\n"),
         report: { readyMs: 178, slowestMotor: 1, timedOut: false },
-      });
-    expect(captures.push('{"evt":"rpmCapture","readyMs":178,"slowestMotor":1,"timedOut":false}'))
-      .toBe(null);
+      },
+    ]);
   });
 });
 
