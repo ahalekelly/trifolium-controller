@@ -51,7 +51,7 @@ export const SETTING_HELP: Record<string, string> = {
   "device:speedPotReversed":
     "On if the pot reads lower as it is turned up, so turning it up still means faster.",
   "device:rampupTimeout_ms":
-    "If the flywheels are not at speed this long after a rev starts, the rev gives up and drops back to idle. Plasma is exempt.",
+    "If the flywheels are not at speed this long after a rev starts, they spin down until you release rev and the trigger. Plasma is exempt.",
   "device:variableFPS":
     "With a switch or encoder select fire, the selector's position at power-on picks the profile, so one switch sets the FPS.",
   "device:defaultProfileIndex":
