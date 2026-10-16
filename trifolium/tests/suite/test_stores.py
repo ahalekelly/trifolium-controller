@@ -249,6 +249,17 @@ def test_an_upload_of_another_schema_version_is_refused_and_nothing_changes(blas
     assert b.command("DUMP_DEVICE")["blasterName"] == "example"
 
 
+def test_a_refused_load_profile_names_its_slot(blaster):
+    """The console matches a slot-addressed reply by its index, so a refusal without one would read
+    as no reply at all."""
+    b = armed_v12(blaster, display=False, settle_ms=100)
+    reply = b.command("LOAD_PROFILE 2\n" + json.dumps({"schemaVersion": 1}))
+    assert reply == {"cmd": "LOAD_PROFILE", "ok": False, "index": 2, "err": "schemaVersion 1 != 2",
+                     "applied": False}
+    assert b.command("LOAD_PROFILE 2\n{,}") == {"cmd": "LOAD_PROFILE", "ok": False, "index": 2,
+                                                 "err": "invalid JSON"}
+
+
 def test_a_v2_device_file_comes_up_unwired_even_if_it_names_a_board(blaster):
     b = blaster
     b.flash_device({"schemaVersion": 2, "boardId": "trifolium_v1_2", "triggerSwitchPin": 21})

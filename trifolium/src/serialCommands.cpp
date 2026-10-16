@@ -40,6 +40,11 @@ extern uint32_t dartWaitSince_ms;
 bool idleHoldWanted();
 bool menuIsOpen();
 bool revControlAllowed();
+bool driveTrainStopped();
+extern volatile bool directMotorControlActive;
+// menuMotors.cpp, shared with the menu's motor actions.
+void spinOneMotor(int motorIndex);
+void writeEscDirection(int motorIndex, bool reversed);
 
 volatile bool serialCommandSeen = false;
 
@@ -51,12 +56,18 @@ void serialCommandsBegin()
     Serial.ignoreFlowControl(true);
 }
 
-// Every LOAD_* answers with one of these.
-static void ackError(const char* command, const char* reason)
+// Every LOAD_* answers with one of these. `index` is as in ackOk().
+static void ackError(const char* command, int index, const char* reason)
 {
     Serial.print("{\"cmd\":\"");
     Serial.print(command);
-    Serial.print("\",\"ok\":false,\"err\":\"");
+    Serial.print("\",\"ok\":false");
+    if (index >= 0)
+    {
+        Serial.print(",\"index\":");
+        Serial.print(index);
+    }
+    Serial.print(",\"err\":\"");
     Serial.print(reason);
     Serial.println("\"}");
 }
@@ -67,7 +78,7 @@ static const char* parseError(DeserializationError err)
     return err == DeserializationError::NoMemory ? "too large" : "invalid JSON";
 }
 
-// `index` is the profile slot, or -1 where the command has no slot.
+// `index` is the slot or motor the command names, or -1 if none. A host matches replies by it.
 static void ackOk(const char* command, int index, bool clamped, bool rebooting)
 {
     Serial.print("{\"cmd\":\"");
@@ -84,7 +95,7 @@ static void ackOk(const char* command, int index, bool clamped, bool rebooting)
 
 // Rejects a payload whose schema version isn't the one this build speaks, before it reaches
 // fromJson().
-static bool schemaVersionOk(const char* command, JsonDocument& doc, uint16_t expected)
+static bool schemaVersionOk(const char* command, int index, JsonDocument& doc, uint16_t expected)
 {
     uint16_t loaded = doc["schemaVersion"] | (uint16_t)0; // 0 = predates versioning
     if (loaded == expected)
@@ -92,12 +103,60 @@ static bool schemaVersionOk(const char* command, JsonDocument& doc, uint16_t exp
 
     Serial.print("{\"cmd\":\"");
     Serial.print(command);
-    Serial.print("\",\"ok\":false,\"err\":\"schemaVersion ");
+    Serial.print("\",\"ok\":false");
+    if (index >= 0)
+    {
+        Serial.print(",\"index\":");
+        Serial.print(index);
+    }
+    Serial.print(",\"err\":\"schemaVersion ");
     Serial.print(loaded);
     Serial.print(" != ");
     Serial.print(expected);
     Serial.println("\",\"applied\":false}");
     return false;
+}
+
+static void printOrNull(bool seen, double value, int digits)
+{
+    if (seen)
+        Serial.print(value, digits);
+    else
+        Serial.print("null");
+}
+
+// Takes the flywheels from core 0 for a motor action, or answers why not. The flag goes up before
+// the stopped check so a rev cannot start in between; fwControlLoop() leaves the motors alone while
+// it is up. Both checks matter outside the menu too: a menu action polls serial mid-spin.
+static bool takeMotor(const char* command, int motorIndex)
+{
+    if (motorIndex < 0 || motorIndex > 3)
+    {
+        ackError(command, -1, "needs a motor index 0-3");
+        return false;
+    }
+    // motorsEnabled[], not the config flag: boot clears it for a motor it could not attach, and
+    // sendThrottle() does not null-check. An unwired boot attaches nothing at all.
+    if (!wiringLive || !motorsEnabled[motorIndex])
+    {
+        ackError(command, motorIndex, "motor not attached this boot");
+        return false;
+    }
+    // Only when the blaster could rev: the menu's own actions run with the blaster in hand, and an
+    // open menu also rules out one of its spins being under way.
+    if (!revControlAllowed())
+    {
+        ackError(command, motorIndex, "blaster can't rev now");
+        return false;
+    }
+    directMotorControlActive = true;
+    if (!driveTrainStopped())
+    {
+        directMotorControlActive = false;
+        ackError(command, motorIndex, "flywheels are running");
+        return false;
+    }
+    return true;
 }
 
 void handleSerialCommands()
@@ -169,7 +228,7 @@ void handleSerialCommands()
         // unwired device never reaches the branch.
         if (!wiringLive)
         {
-            ackError("ESC_PASSTHROUGH", "no wiring configured");
+            ackError("ESC_PASSTHROUGH", -1, "no wiring configured");
             return;
         }
         // No switch ends this one: the host that asked closes the port instead.
@@ -197,12 +256,12 @@ void handleSerialCommands()
     {
         if (!hasIndex || explicitIndex < 0 || explicitIndex >= ProfileStore::MAX_PROFILE_COUNT)
         {
-            ackError("FACTORY_RESET_PROFILE", "needs a slot index");
+            ackError("FACTORY_RESET_PROFILE", -1, "needs a slot index");
             return;
         }
         if (!ProfileStore::resetProfile((uint8_t)explicitIndex))
         {
-            ackError("FACTORY_RESET_PROFILE", "could not write the slot");
+            ackError("FACTORY_RESET_PROFILE", explicitIndex, "could not write the slot");
             return;
         }
         // Reboots whichever slot it was: activeProfile is a RAM copy loaded at boot, so resetting
@@ -276,7 +335,7 @@ void handleSerialCommands()
     {
         if (hasIndex && (explicitIndex < 0 || explicitIndex >= ProfileStore::MAX_PROFILE_COUNT))
         {
-            ackError("LOAD_PROFILE", "index out of range");
+            ackError("LOAD_PROFILE", -1, "index out of range");
             return;
         }
         const uint8_t activeIndex = activeProfileIndex;
@@ -286,10 +345,10 @@ void handleSerialCommands()
         DeserializationError err = deserializeJson(doc, Serial);
         if (err)
         {
-            ackError("LOAD_PROFILE", parseError(err));
+            ackError("LOAD_PROFILE", targetIndex, parseError(err));
             return;
         }
-        if (!schemaVersionOk("LOAD_PROFILE", doc, ProfileStore::CURRENT_SCHEMA_VERSION))
+        if (!schemaVersionOk("LOAD_PROFILE", targetIndex, doc, ProfileStore::CURRENT_SCHEMA_VERSION))
             return;
 
         ShotProfile newSettings;
@@ -395,18 +454,46 @@ void handleSerialCommands()
             Serial.print(motorArr[i].PIDOutput);
             Serial.print(",\"erpmSeen\":");
             Serial.print(motorArr[i].telemetryErpmSeen ? "true" : "false");
-            // The EDT request goes out after arming, so these answer "did the request reach this
-            // ESC" - the failure mode is one motor silently lacking extended telemetry.
-            Serial.print(",\"edtSeen\":{\"v\":");
-            Serial.print(motorArr[i].telemetryVoltageSeen ? "true" : "false");
+            // The latest extended telemetry in volts, amps and degrees C, null for a kind this ESC
+            // has not sent. The EDT request goes out after arming, so a lasting null answers "did
+            // the request reach this ESC" - the failure mode is one motor silently lacking it.
+            Serial.print(",\"edt\":{\"v\":");
+            printOrNull(motorArr[i].telemetryVoltageSeen, motorArr[i].telemetryVoltageRaw / 4.0, 2);
             Serial.print(",\"i\":");
-            Serial.print(motorArr[i].telemetryCurrentSeen ? "true" : "false");
+            printOrNull(motorArr[i].telemetryCurrentSeen, motorArr[i].telemetryCurrentRaw, 0);
             Serial.print(",\"t\":");
-            Serial.print(motorArr[i].telemetryTempSeen ? "true" : "false");
+            printOrNull(motorArr[i].telemetryTempSeen, motorArr[i].telemetryTempRaw, 0);
             Serial.print("}");
             Serial.print('}');
         }
         Serial.println("]}");
+    }
+    else if (command == "TEST_MOTOR")
+    {
+        // The menu's Test This Motor: two seconds at low throttle, acked once it has stopped.
+        if (!takeMotor("TEST_MOTOR", explicitIndex))
+            return;
+        spinOneMotor(explicitIndex);
+        directMotorControlActive = false;
+        ackOk("TEST_MOTOR", explicitIndex, false, false);
+    }
+    else if (command == "ESC_DIRECTION")
+    {
+        // "ESC_DIRECTION <motor> normal|reversed": the menu's Change Direction, named, not toggled.
+        // The spin after it is the readback.
+        const int motorIndex = argument.indexOf(' ') == 1 ? argument[0] - '0' : -1;
+        const String direction = argument.substring(2);
+        if (direction != "normal" && direction != "reversed")
+        {
+            ackError("ESC_DIRECTION", motorIndex, "needs normal or reversed");
+            return;
+        }
+        if (!takeMotor("ESC_DIRECTION", motorIndex))
+            return;
+        writeEscDirection(motorIndex, direction == "reversed");
+        spinOneMotor(motorIndex);
+        directMotorControlActive = false;
+        ackOk("ESC_DIRECTION", motorIndex, false, false);
     }
     else if (command == "DUMP_DEVICE")
     {
@@ -425,10 +512,10 @@ void handleSerialCommands()
         DeserializationError err = deserializeJson(doc, Serial);
         if (err)
         {
-            ackError("LOAD_DEVICE", parseError(err));
+            ackError("LOAD_DEVICE", -1, parseError(err));
             return;
         }
-        if (!schemaVersionOk("LOAD_DEVICE", doc, DeviceStore::CURRENT_SCHEMA_VERSION))
+        if (!schemaVersionOk("LOAD_DEVICE", -1, doc, DeviceStore::CURRENT_SCHEMA_VERSION))
             return;
         DeviceSettings newSettings = deviceSettings;
         DeviceStore::fromJson(doc, newSettings);

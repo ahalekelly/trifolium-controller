@@ -22,7 +22,14 @@ import { diagramForBoardId } from "./schema/wiringDiagrams";
 import { buildPatch, getByKey, setByKey } from "./schema/keyPath";
 import { walk, type BootStatus, type Schema, type SchemaNode } from "./schema/types";
 import { resolveVisibility } from "./schema/visibility";
-import { configFrom, SerialTransport, TIMEOUT_SCHEMA_MS, type LogLine } from "./serial/transport";
+import {
+  configFrom,
+  SerialTransport,
+  TIMEOUT_MOTOR_MS,
+  TIMEOUT_SCHEMA_MS,
+  type CommandAck,
+  type LogLine,
+} from "./serial/transport";
 import { bundleFilename, buildBundle, checkBundle, diffKeys, downloadJson } from "./config/bundle";
 import { blasterLoads, schemaMismatch, type Blaster } from "./config/blasters";
 import { LOG_LINE_CAP } from "./rpm/parse";
@@ -32,6 +39,7 @@ import { DirtyKeys } from "./ui/dirty";
 import { PresetPicker } from "./ui/PresetPicker";
 import { BootFaults } from "./ui/BootFaults";
 import { EscSetup } from "./ui/EscSetup";
+import { MotorActions, type MotorsDump } from "./ui/MotorActions";
 import { FireModes } from "./ui/FireModes";
 import { FlashDialog } from "./ui/FlashDialog";
 import { DEVICE_LAYOUT, PROFILE_LAYOUT } from "./ui/layout";
@@ -118,6 +126,9 @@ const OFFLINE_DEVICE = {
 };
 
 type TabId = "profile" | "device" | "rpm" | "splash" | "wiring" | "raw";
+
+/** How often the motors panel asks for DUMP_MOTORS - the menu's ESC Dashboard redraws at 10 Hz. */
+const MOTOR_POLL_MS = 500;
 
 /** An edit not yet written: its mark as `dirty` holds it, and the value it stages. */
 interface Staged {
@@ -569,6 +580,42 @@ export function App() {
       setPendingReset(null);
     }
   };
+
+  /**
+   * Motor actions from the Motors & PID section, run in order until the device refuses one, which
+   * it says why.
+   */
+  const motorAction = async (command: string) => {
+    setBusy(true);
+    try {
+      const ack = await transport.request<CommandAck>(command, TIMEOUT_MOTOR_MS);
+      if (ack) note(ack.ok ? "ok" : "err", ack.ok ? `${command}: done` : `${command}: ${ack.err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * The motors panel's live telemetry, polled while the Device tab is on screen. Paused while busy:
+   * a motor action holds the device for seconds, and a write may be about to reboot it.
+   */
+  const [motorsDump, setMotorsDump] = React.useState<MotorsDump | null>(null);
+  React.useEffect(() => {
+    if (!live) setMotorsDump(null);
+    if (!live || tab !== "device" || busy) return;
+    let stopped = false;
+    void (async () => {
+      while (!stopped) {
+        const dump = await transport.poll<MotorsDump>("DUMP_MOTORS");
+        if (stopped) return;
+        if (dump) setMotorsDump(dump);
+        await new Promise((r) => setTimeout(r, MOTOR_POLL_MS));
+      }
+    })();
+    return () => {
+      stopped = true;
+    };
+  }, [live, tab, busy, transport]);
 
   const askReset = (kind: ResetKind) =>
     setPendingReset(
@@ -1240,6 +1287,16 @@ export function App() {
                           // there is nowhere else on the page they would be read next to.
                           <Stack spacing={1.25}>
                             <Section node={section} payloads={payloads} onEdit={onEdit} />
+                            {live && (
+                              <MotorActions
+                                motors={motorsDump?.motors ?? null}
+                                disabled={busy}
+                                onTest={(motor) => void motorAction(`TEST_MOTOR ${motor}`)}
+                                onDirection={(motor, direction) =>
+                                  void motorAction(`ESC_DIRECTION ${motor} ${direction}`)
+                                }
+                              />
+                            )}
                             <EscSetup device={device} />
                           </Stack>
                         ) : section.label === "RPM & Timing" ? (
