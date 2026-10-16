@@ -4228,14 +4228,6 @@
               "step": 500
             },
             {
-              "label": "Volt Avg Window",
-              "kind": "int",
-              "key": "device:voltageAveragingWindow",
-              "lo": 1,
-              "hi": 20,
-              "step": 1
-            },
-            {
               "label": "RPM Shot Counter",
               "kind": "bool",
               "key": "device:useRpmBaseShotCounter"

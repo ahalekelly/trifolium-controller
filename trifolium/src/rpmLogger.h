@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <new> // std::nothrow - startCapture() must not treat allocation failure as fatal
+#include "adcSampler.h"
 #include "flywheelMotor.h"
 #include "logging.h"
 #include "types.h" // PIN_NOT_USED
@@ -42,7 +43,7 @@ class RpmLogger
         voltageCache_[cacheIndex_] = batteryVoltage_mv;
         // The pin's own voltage, unscaled: amps per volt and the zero offset vary by ESC.
         if (currentCache_)
-            currentCache_[cacheIndex_] = (analogRead(currentAdcPin_) * 3300L) / 1023;
+            currentCache_[cacheIndex_] = AdcSampler::millivolts(currentAdcPin_);
         for (int i = 0; i < 4; i++)
         {
             if (motors[i])

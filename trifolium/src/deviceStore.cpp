@@ -228,7 +228,6 @@ void toJson(const DeviceSettings& settings, JsonDocument& doc)
     doc["dartWaitTimeout_ms"] = settings.dartWaitTimeout_ms;
     doc["minPushTime_ms"] = settings.minPushTime_ms;
     doc["revOnlyWithDart"] = settings.revOnlyWithDart;
-    doc["voltageAveragingWindow"] = settings.voltageAveragingWindow;
     doc["useRpmBaseShotCounter"] = settings.useRpmBaseShotCounter;
     doc["goodRpmShotReads"] = settings.goodRpmShotReads;
     doc["rpmDropThreshold"] = settings.rpmDropThreshold;
@@ -414,7 +413,6 @@ void fromJson(JsonDocument& doc, DeviceSettings& out, Source source)
     out.dartWaitTimeout_ms = doc["dartWaitTimeout_ms"] | out.dartWaitTimeout_ms;
     out.minPushTime_ms = doc["minPushTime_ms"] | out.minPushTime_ms;
     out.revOnlyWithDart = doc["revOnlyWithDart"] | out.revOnlyWithDart;
-    out.voltageAveragingWindow = doc["voltageAveragingWindow"] | out.voltageAveragingWindow;
     out.useRpmBaseShotCounter = doc["useRpmBaseShotCounter"] | out.useRpmBaseShotCounter;
     out.goodRpmShotReads = doc["goodRpmShotReads"] | out.goodRpmShotReads;
     out.rpmDropThreshold = doc["rpmDropThreshold"] | out.rpmDropThreshold;

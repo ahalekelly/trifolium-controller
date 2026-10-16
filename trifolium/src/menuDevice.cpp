@@ -267,8 +267,6 @@ static bool revPinWired()
 }
 static SecondsDisplayItem menuHoldTimeItem("Menu Hold Time", "device:menuButtonHoldTime_ms",
                                            &deviceSettings.menuButtonHoldTime_ms, 1000, 5000, 500);
-static NumericItem<int> voltageAvgWindowItem("Volt Avg Window", "device:voltageAveragingWindow",
-                                             &deviceSettings.voltageAveragingWindow, 1, 20, 1);
 static ToggleItem rpmShotCounterItem("RPM Shot Counter", "device:useRpmBaseShotCounter",
                                      &deviceSettings.useRpmBaseShotCounter);
 static NumericItem<uint16_t> goodRpmReadsItem("Good RPM Reads", "device:goodRpmShotReads",
@@ -665,9 +663,9 @@ static MenuItem* deviceItems[] = {
     &wiringSubmenu, &rebootSubmenu, &bootActionSubmenu, &displaySubmenu,
     &blasterNameItem, &ledWarningModeItem, &dualStageTriggerItem, &pusherDriveItem,
     &pusherEscChannelItem,
-    &debounceTimeItem, &menuHoldTimeItem, &voltageAvgWindowItem, &rpmShotCounterItem,
+    &debounceTimeItem, &menuHoldTimeItem, &rpmShotCounterItem,
     &goodRpmReadsItem, &rpmDropThresholdItem, &rpmLoggingSubmenu, &resetDeviceSubmenu,
     &aboutItem,
 };
 // Non-static: referenced by menu.cpp's Advanced submenu assembly.
-SubmenuItem deviceSubmenu("Device", deviceItems, 18);
+SubmenuItem deviceSubmenu("Device", deviceItems, 17);

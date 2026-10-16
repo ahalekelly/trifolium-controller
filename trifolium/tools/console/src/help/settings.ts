@@ -130,8 +130,6 @@ export const SETTING_HELP: Record<string, string> = {
     "The ESCs beep once the pack trips Low V Cutoff, and every 10 s until it is swapped or the blaster restarts. Only with the wheels stopped.",
   "device:voltageCalibrationFactor":
     "A correction for when the blaster's battery reading does not match a multimeter.",
-  "device:voltageAveragingWindow":
-    "How many battery readings are averaged. Higher steadies a jittery reading but reacts more slowly to a real drop.",
 
   // Wiring
   "device:boardId":

@@ -121,7 +121,6 @@ inline const DeviceSettings kDefaultDeviceSettings = {
     .dartWaitTimeout_ms = 1000,
     .minPushTime_ms = 8,
     .revOnlyWithDart = false,
-    .voltageAveragingWindow = 5,
     .useRpmBaseShotCounter = true,
     .goodRpmShotReads = 5,
     .rpmDropThreshold = 200,
