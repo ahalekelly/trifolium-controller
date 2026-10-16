@@ -407,7 +407,9 @@ def test_a_tune_run_on_noisy_wheels_drops_the_slow_and_the_overshooting_then_app
     assert served.settings()["motorConfig"][1]["ki"] == 0.5
     page.get_by_role("button", name="Apply PID kp 0.2 ki 1").click()
     expect(page.get_by_text("Applied PID kp 0.2 ki 1.")).to_be_visible(timeout=REBOOT_MS)
-    assert [m["ki"] for m in served.settings()["motorConfig"]][1::2] == [1, 1]
+    settings = served.settings()
+    assert settings["flywheelControl"] == "pid"
+    assert [(m["kp"], m["ki"]) for m in settings["motorConfig"]][1::2] == [(0.2, 1), (0.2, 1)]
 
 
 def test_a_tune_run_outlives_a_reload_paused_then_resumes_to_the_end_and_exports(page, serve):
