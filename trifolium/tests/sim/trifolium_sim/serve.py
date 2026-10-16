@@ -185,6 +185,8 @@ class Host:
     nothing is lost to a slow reader, and nothing waits on one."""
 
     ready = True
+    # The host closed the connection, after the stream fed so far.
+    closed = False
 
     def __init__(self, sock):
         self.sock = sock
@@ -237,7 +239,9 @@ class WebSocketHost(Host):
             if opcode in (0x1, 0x2):
                 stream += payload
             elif opcode == 0x8:
-                return None
+                # A page going away sends its last writes and the close together; the writes count.
+                self.closed = True
+                return stream
             elif opcode == 0x9:
                 self._queue_frame(0xA, payload)
 
@@ -500,11 +504,11 @@ class Server:
     def _from_host(self, sock):
         data = self._recv(sock)
         stream = None if data is None else self.host.feed(data)
-        if stream is None:
-            self._drop_host()
-            return
         if stream:
             self.b.send(stream)
+        if stream is None or self.host.closed:
+            self._drop_host()
+            return
         self._flush_host()  # a pong, if the browser pinged
 
     def _handshake(self, sock):
@@ -521,7 +525,10 @@ class Server:
             ws.hello(self.b.boot_count)
             if stream:
                 self.b.send(stream)
-            self._flush_host()
+            if ws.closed:
+                self._drop_host()
+            else:
+                self._flush_host()
 
     @staticmethod
     def _recv(sock):
