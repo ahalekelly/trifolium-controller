@@ -68,11 +68,6 @@ export class TuneRunner {
 
   getRun = () => this.run;
 
-  /** Whether a run is driving the blaster. */
-  get running() {
-    return this.looping;
-  }
-
   private set(run: Run | null) {
     this.run = run;
     saveRun(run);

@@ -222,6 +222,8 @@ export function App() {
     [],
   );
   const tuneRunner = React.useMemo(() => new TuneRunner(transport), [transport]);
+  const tuneRun = React.useSyncExternalStore(tuneRunner.subscribe, tuneRunner.getRun);
+  const tuning = tuneRun !== null && tuneRun !== "unreadable" && tuneRun.status === "running";
   const [tuneDraft, setTuneDraft] = React.useState(DEFAULT_DRAFT);
   React.useEffect(() => {
     if (live) tuneRunner.connected();
@@ -235,7 +237,6 @@ export function App() {
   // With Save CSV files on, every finished capture downloads as it arrives, whichever tab is open -
   // a tuning run's aside, which are hundreds.
   onCapture.current = (capture) => {
-    const tuning = tuneRunner.running;
     tuneRunner.capture(capture);
     setCapture(capture);
     if (tuning) return;
@@ -643,15 +644,18 @@ export function App() {
       note("err", `Let go of ${role}: ${why}.`);
       onLost();
     });
+  // A run takes Rev itself, and any other rev would land in its captures.
   const switchesBlocked = !live
     ? ""
-    : busy || motorsDump === null
-      ? "Waiting for the blaster."
-      : motorsDump.menuOpen
-        ? "The blaster's menu is open."
-        : motorsDump.burstMode === "safe"
-          ? "The blaster is in SAFE."
-          : null;
+    : tuning
+      ? "A tune run is driving the blaster."
+      : busy || motorsDump === null
+        ? "Waiting for the blaster."
+        : motorsDump.menuOpen
+          ? "The blaster's menu is open."
+          : motorsDump.burstMode === "safe"
+            ? "The blaster is in SAFE."
+            : null;
 
   /** The largest kp and ki the device takes, off its own schema rows. */
   const gainMax = React.useMemo(() => {
@@ -1353,7 +1357,7 @@ export function App() {
                             {live && (
                               <MotorActions
                                 motors={motorsDump?.motors ?? null}
-                                disabled={busy}
+                                disabled={busy || tuning}
                                 onTest={(motor) => void motorAction(`TEST_MOTOR ${motor}`)}
                                 onDirection={(motor, direction) =>
                                   void motorAction(`ESC_DIRECTION ${motor} ${direction}`)

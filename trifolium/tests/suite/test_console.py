@@ -421,6 +421,11 @@ def test_a_tune_run_outlives_a_reload_paused_then_resumes_to_the_end_and_exports
     page.get_by_label("Spin-ups per finalist").fill("2")
     page.get_by_label("Pause below V a cell").fill("3")
     page.get_by_role("button", name="Start").click()
+    # The run takes Rev itself.
+    page.get_by_role("tab", name="RPM Log").click()
+    expect(page.get_by_text("A tune run is driving the blaster.")).to_be_visible()
+    expect(page.get_by_role("button", name="Rev", exact=True)).to_be_disabled()
+    page.get_by_role("tab", name="Tune").click()
     expect(page.get_by_text(re.compile("^Running round 1 of 1. 1 of about 2"))).to_be_visible(
         timeout=30000)
 
