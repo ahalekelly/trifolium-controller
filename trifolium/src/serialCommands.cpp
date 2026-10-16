@@ -40,6 +40,9 @@ extern uint32_t dartWaitSince_ms;
 bool idleHoldWanted();
 bool menuIsOpen();
 bool revControlAllowed();
+bool driveTrainStopped();
+extern volatile bool directMotorControlActive;
+void spinOneMotor(int motorIndex); // menuMotors.cpp, shared with the menu's motor actions
 
 volatile bool serialCommandSeen = false;
 
@@ -73,7 +76,7 @@ static const char* parseError(DeserializationError err)
     return err == DeserializationError::NoMemory ? "too large" : "invalid JSON";
 }
 
-// `index` is the slot the command names, or -1 if none. A host matches replies by it.
+// `index` is the slot or motor the command names, or -1 if none. A host matches replies by it.
 static void ackOk(const char* command, int index, bool clamped, bool rebooting)
 {
     Serial.print("{\"cmd\":\"");
@@ -110,6 +113,38 @@ static bool schemaVersionOk(const char* command, int index, JsonDocument& doc, u
     Serial.print(expected);
     Serial.println("\",\"applied\":false}");
     return false;
+}
+
+// Takes the flywheels from core 0 for a motor action, or answers why not. The flag goes up before
+// the stopped check so a rev cannot start in between; fwControlLoop() leaves the motors alone while
+// it is up. Both checks matter outside the menu too: a menu action polls serial mid-spin.
+static bool takeMotor(const char* command, int motorIndex)
+{
+    if (motorIndex < 0 || motorIndex > 3)
+    {
+        ackError(command, -1, "needs a motor index 0-3");
+        return false;
+    }
+    // motorsEnabled[], not the config flag: boot clears it for a motor it could not attach, and
+    // sendThrottle() does not null-check. An unwired boot attaches nothing at all.
+    if (!wiringLive || !motorsEnabled[motorIndex])
+    {
+        ackError(command, motorIndex, "motor not attached this boot");
+        return false;
+    }
+    if (directMotorControlActive)
+    {
+        ackError(command, motorIndex, "a motor action is already running");
+        return false;
+    }
+    directMotorControlActive = true;
+    if (!driveTrainStopped())
+    {
+        directMotorControlActive = false;
+        ackError(command, motorIndex, "flywheels are running");
+        return false;
+    }
+    return true;
 }
 
 void handleSerialCommands()
@@ -419,6 +454,15 @@ void handleSerialCommands()
             Serial.print('}');
         }
         Serial.println("]}");
+    }
+    else if (command == "TEST_MOTOR")
+    {
+        // The menu's Test This Motor: two seconds at low throttle, acked once it has stopped.
+        if (!takeMotor("TEST_MOTOR", explicitIndex))
+            return;
+        spinOneMotor(explicitIndex);
+        directMotorControlActive = false;
+        ackOk("TEST_MOTOR", explicitIndex, false, false);
     }
     else if (command == "DUMP_DEVICE")
     {

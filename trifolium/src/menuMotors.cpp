@@ -7,6 +7,15 @@ static const int32_t FLYWHEEL_TEST_THROTTLE = 400; // modest throttle (~20% of m
                                                    // to visibly/audibly spin without excessive draw
 static const unsigned long FLYWHEEL_TEST_DURATION_MS = 2000;
 
+static void sendTestFrame(int motorIndex)
+{
+    for (int j = 0; j < 4; j++)
+    {
+        if (motorsEnabled[j]) // already excludes the pusher channel - boot cleared it
+            motorArr[j].sendThrottle(j == motorIndex ? FLYWHEEL_TEST_THROTTLE : 0);
+    }
+}
+
 static bool testOneMotor(int motorIndex)
 {
     display.clearDisplay();
@@ -24,11 +33,7 @@ static bool testOneMotor(int motorIndex)
     {
         handleSerialCommands();
         menuButton.update();
-        for (int j = 0; j < 4; j++)
-        {
-            if (motorsEnabled[j]) // already excludes the pusher channel - boot cleared it
-                motorArr[j].sendThrottle(j == motorIndex ? FLYWHEEL_TEST_THROTTLE : 0);
-        }
+        sendTestFrame(motorIndex);
         if (dismiss.poll())
             return true;
         delay(2);
@@ -53,6 +58,18 @@ static void holdAllMotorsStopped(int frames)
                 motorArr[j].sendThrottle(0);
         delay(2);
     }
+}
+
+// The console's Test This Motor: the menu's spin, without the screen or a press that cuts it short.
+// The caller holds directMotorControlActive.
+void spinOneMotor(int motorIndex)
+{
+    for (unsigned long start = millis(); millis() - start < FLYWHEEL_TEST_DURATION_MS;)
+    {
+        sendTestFrame(motorIndex);
+        delay(2);
+    }
+    holdAllMotorsStopped(1);
 }
 
 // Which value the next press writes. Never shown as the ESC's state: dir_reversed is not ground

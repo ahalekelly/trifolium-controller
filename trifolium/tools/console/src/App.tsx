@@ -22,7 +22,14 @@ import { diagramForBoardId } from "./schema/wiringDiagrams";
 import { buildPatch, getByKey, setByKey } from "./schema/keyPath";
 import { walk, type BootStatus, type Schema, type SchemaNode } from "./schema/types";
 import { resolveVisibility } from "./schema/visibility";
-import { configFrom, SerialTransport, TIMEOUT_SCHEMA_MS, type LogLine } from "./serial/transport";
+import {
+  configFrom,
+  SerialTransport,
+  TIMEOUT_MOTOR_MS,
+  TIMEOUT_SCHEMA_MS,
+  type CommandAck,
+  type LogLine,
+} from "./serial/transport";
 import { bundleFilename, buildBundle, checkBundle, diffKeys, downloadJson } from "./config/bundle";
 import { blasterLoads, schemaMismatch, type Blaster } from "./config/blasters";
 import { LOG_LINE_CAP } from "./rpm/parse";
@@ -32,6 +39,7 @@ import { DirtyKeys } from "./ui/dirty";
 import { PresetPicker } from "./ui/PresetPicker";
 import { BootFaults } from "./ui/BootFaults";
 import { EscSetup } from "./ui/EscSetup";
+import { MotorActions } from "./ui/MotorActions";
 import { FireModes } from "./ui/FireModes";
 import { FlashDialog } from "./ui/FlashDialog";
 import { DEVICE_LAYOUT, PROFILE_LAYOUT } from "./ui/layout";
@@ -567,6 +575,17 @@ export function App() {
     } finally {
       setBusy(false);
       setPendingReset(null);
+    }
+  };
+
+  /** A motor action from the Motors & PID section. The device says why when it refuses one. */
+  const motorAction = async (command: string) => {
+    setBusy(true);
+    try {
+      const ack = await transport.request<CommandAck>(command, TIMEOUT_MOTOR_MS);
+      if (ack) note(ack.ok ? "ok" : "err", ack.ok ? `${command}: done` : `${command}: ${ack.err}`);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -1240,6 +1259,13 @@ export function App() {
                           // there is nowhere else on the page they would be read next to.
                           <Stack spacing={1.25}>
                             <Section node={section} payloads={payloads} onEdit={onEdit} />
+                            {live && (
+                              <MotorActions
+                                device={device}
+                                disabled={busy}
+                                onTest={(motor) => void motorAction(`TEST_MOTOR ${motor}`)}
+                              />
+                            )}
                             <EscSetup device={device} />
                           </Stack>
                         ) : section.label === "RPM & Timing" ? (

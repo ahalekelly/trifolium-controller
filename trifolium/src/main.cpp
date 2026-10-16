@@ -2038,7 +2038,7 @@ static bool serviceMenuButton()
 
 static const uint32_t FIRING_MODE_SETTLE_MS = 2000;
 
-static bool driveTrainStopped()
+bool driveTrainStopped()
 {
     if (flywheelState != STATE_IDLE || shotsToFire != 0 || firing)
         return false;

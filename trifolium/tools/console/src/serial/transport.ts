@@ -91,6 +91,8 @@ export function blasterPorts(ports: Port[]): Port[] {
 /** Small replies land in well under a second; DUMP_SCHEMA is ~27KB on one line. */
 export const TIMEOUT_SHORT_MS = 3000;
 export const TIMEOUT_SCHEMA_MS = 15000;
+/** TEST_MOTOR answers once its two-second spin is over. */
+export const TIMEOUT_MOTOR_MS = 5000;
 
 interface Listener {
   predicate: (line: string) => boolean;
