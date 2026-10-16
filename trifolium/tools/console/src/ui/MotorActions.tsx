@@ -23,6 +23,9 @@ interface MotorStatus {
 
 export interface MotorsDump {
   motors: MotorStatus[];
+  menuOpen: boolean;
+  /** The effective fire mode's id - "safe" while the safety switch is held, too. */
+  burstMode: string;
 }
 
 /** DUMP_MOTORS' motorRPM and EDT values, in column order. */

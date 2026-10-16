@@ -126,8 +126,6 @@ export const SETTING_HELP: Record<string, string> = {
     "An earlier warning: LOW BATT blinks on the home screen and the ESCs beep once the flywheels stop, then every 15 seconds. You can still fire. Set it above the cutoff.",
   "device:voltageCalibrationFactor":
     "A correction for when the blaster's battery reading does not match a multimeter.",
-  "device:voltageAveragingWindow":
-    "How many battery readings are averaged. Higher steadies a jittery reading but reacts more slowly to a real drop.",
 
   // Wiring
   "device:boardId":
@@ -145,6 +143,8 @@ export const SETTING_HELP: Record<string, string> = {
     "On if the dart switch opens, rather than closes to ground, when a dart is in the breech.",
   "device:speedPotPin":
     "The analog pin, GPIO 26 to 29, that reads a speed pot's wiper. With one wired, the pot sets the rev RPM in place of the profile's own.",
+  "device:currentAdcPin":
+    "The analog pin, GPIO 26 to 29, that reads the ESC's current-sense output for RPM captures.",
   "device:escEnablePin":
     "A pin that switches the ESCs' power on once the blaster boots, and off if the battery drops below the cutoff. Only for boards with that circuit.",
   "device:pusherFetPin": "The pin that switches the solenoid's FET.",

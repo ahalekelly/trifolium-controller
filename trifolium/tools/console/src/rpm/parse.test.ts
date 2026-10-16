@@ -38,6 +38,17 @@ describe("extractRpmCsv", () => {
     expect(extractRpmCsv(old)).not.toBeNull();
   });
 
+  it("takes the newest of several captures", () => {
+    const two = [
+      "Motor 1,TargetRPM 1,Throttle 1,value 1,",
+      "100,200,300,1",
+      "(device) Rev switch pressed",
+      "Motor 1,TargetRPM 1,Throttle 1,value 1,",
+      "900,800,700,6",
+    ].join("\n");
+    expect(extractRpmCsv(two)).toBe("Motor 1,TargetRPM 1,Throttle 1,value 1,\n900,800,700,6");
+  });
+
   it("returns null for a header with no rows, which is not a capture", () => {
     expect(extractRpmCsv("Motor 1,TargetRPM 1,Throttle 1,value 1,")).toBeNull();
   });
@@ -61,7 +72,19 @@ describe("parseRpmCsv", () => {
   it("leaves voltage empty when the column is absent", () => {
     const log = parseRpmCsv("Motor 1,TargetRPM 1,Throttle 1,value 1,\n100,200,300,1");
     expect(log.voltage).toEqual([]);
+    expect(log.current).toEqual([]);
     expect(log.motors[0].rpm).toEqual([100]);
+  });
+
+  it("reads the ESC current column and the motors after it", () => {
+    const csv = extractRpmCsv(
+      "Voltage_mv,Current_mv,Motor 1,TargetRPM 1,Throttle 1,value 1,\n16200,412,100,200,300,1,",
+    )!;
+    const log = parseRpmCsv(csv);
+    expect(log.voltage).toEqual([16200]);
+    expect(log.current).toEqual([412]);
+    expect(log.motors[0].rpm).toEqual([100]);
+    expect(log.motors[0].targetRpm).toEqual([200]);
   });
 
   it("returns nothing for an unrecognisable header", () => {
@@ -157,8 +180,8 @@ describe("a full-length capture survives the console's log buffer", () => {
 
   /**
    * The bug this cap exists for. extractRpmCsv() finds the block by its header, so a buffer that
-   * holds only the tail of a capture yields nothing at all - "Take from device log" reported no
-   * capture on a device that had just dumped one perfectly.
+   * holds only the tail of a capture yields nothing at all - the RPM Log tab reported no capture
+   * on a device that had just dumped one perfectly.
    */
   it("finds nothing when the header has been evicted", () => {
     expect(extractRpmCsv(capture(FULL).slice(-500).join("\n"))).toBeNull();
@@ -173,6 +196,7 @@ describe("when each motor first reached its target", () => {
   const log = (rpm: number[], targetRpm: number[]) => ({
     motors: [{ index: 0, rpm, targetRpm, throttle: rpm.map(() => 0) }],
     voltage: [],
+    current: [],
   });
 
   it("finds the first sample at or above target", () => {

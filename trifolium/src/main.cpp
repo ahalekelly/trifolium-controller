@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <PIO_DShot.h>
 #include "../lib/Bounce2/src/Bounce2.h"
+#include "consoleSwitch.h"
 #include "fetDriver.h"
 #include "escDriver.h"
 #include "elapsedMillis.h"
@@ -19,6 +20,7 @@
 #include "profileStore.h"
 #include "deviceSettings.h"
 #include "deviceStore.h"
+#include "adcSampler.h"
 #include "batteryMonitor.h"
 #include "rpmLogger.h"
 #include "displayManager.h"
@@ -79,6 +81,7 @@ bool wiringLive = false;
 uint8_t ledDataPin = PIN_NOT_USED;
 uint8_t batteryAdcPin = PIN_NOT_USED;
 uint8_t speedPotPin = PIN_NOT_USED;
+uint8_t currentAdcPin = PIN_NOT_USED;
 uint8_t escEnablePin = PIN_NOT_USED;
 
 // Stage 1's rev RPM as the speed pot sets it, before updateSpeedPot()'s limits; 0 with none wired.
@@ -219,8 +222,8 @@ bool idleHoldWanted()
     return idleHoldActive && !spinDownForced() && !revAborted && !menuIsOpen();
 }
 
-Bounce2::Button revSwitch = Bounce2::Button();
-Bounce2::Button triggerSwitch = Bounce2::Button();
+ConsoleSwitch revSwitch;
+ConsoleSwitch triggerSwitch;
 Bounce2::Button cycleSwitch = Bounce2::Button();
 Bounce2::Button idleSwitch = Bounce2::Button();
 Bounce2::Button safetySwitch = Bounce2::Button();
@@ -674,7 +677,6 @@ static void runUnconfiguredBoot()
     // PIN_NOT_USED makes begin() skip the ADC and report a nominal cellCount * 3500 mV, so the paths
     // that dereference batteryMonitor stay safe and the DPS bounds aren't degenerate.
     batteryMonitor = new BatteryMonitor(PIN_NOT_USED, deviceSettings.voltageCalibrationFactor,
-                                        deviceSettings.voltageAveragingWindow,
                                         cellCount(deviceSettings.batteryType));
     batteryMonitor->begin();
     applySolenoidTimingCurve();
@@ -994,8 +996,8 @@ void setup()
         delay(2500);
     }
 
+    AdcSampler::begin({batteryAdcPin, currentAdcPin, speedPotPin});
     batteryMonitor = new BatteryMonitor(batteryAdcPin, deviceSettings.voltageCalibrationFactor,
-                                        deviceSettings.voltageAveragingWindow,
                                         cellCount(deviceSettings.batteryType));
     batteryMonitor->begin();
 
@@ -1051,11 +1053,7 @@ void setup()
             motorArr[i].attachEsc(new BidirDShotX1(escPin(i), dshotRate(deviceSettings.dshotMode)));
         }
     }
-    if (pinDefined(speedPotPin))
-    {
-        pinMode(speedPotPin, INPUT);
-        updateSpeedPot();
-    }
+    updateSpeedPot();
     dwellTime_ms = activeProfile.dwellTime_ms;
     idleTime_ms = activeProfile.idleTime_ms;
 
@@ -1201,29 +1199,24 @@ static void updateDartSwitch()
 
 void mainFiringLogic()
 {
-    if (pinDefined(revSwitchPin))
+    // Unwired ones too: the console can hold either (ConsoleSwitch).
+    revSwitch.update();
+    if (revSwitch.pressed())
     {
-        revSwitch.update();
-        if (revSwitch.pressed())
-        {
-            logger.info("Rev switch pressed");
-        }
-        else if (revSwitch.released())
-        {
-            logger.info("Rev switch released");
-        }
+        logger.info("Rev switch pressed");
     }
-    if (pinDefined(triggerSwitchPin))
+    else if (revSwitch.released())
     {
-        triggerSwitch.update();
-        if (triggerSwitch.pressed())
-        {
-            logger.info("Trigger switch pressed");
-        }
-        else if (triggerSwitch.released())
-        {
-            logger.info("Trigger switch released");
-        }
+        logger.info("Rev switch released");
+    }
+    triggerSwitch.update();
+    if (triggerSwitch.pressed())
+    {
+        logger.info("Trigger switch pressed");
+    }
+    else if (triggerSwitch.released())
+    {
+        logger.info("Trigger switch released");
     }
     if (pinDefined(idleSwitchPin))
     {
@@ -1292,6 +1285,7 @@ void mainFiringLogic()
         if (queueWasEmpty && shotsToFire > 0)
             pushWaitsForSpeed = true;
     }
+    AdcSampler::update();
     batteryMonitor->update();
     updateSpeedPot();
 }
@@ -1302,13 +1296,13 @@ void updateSpeedPot()
 {
     if (!pinDefined(speedPotPin))
         return;
-    static constexpr int kEndDeadband = 12;     // raw counts at each end that still read as the end
+    static constexpr int kEndDeadband_mv = 40;  // this close to either end reads as that end
     static constexpr float kHysteresis = 0.01f; // a share of the whole travel
     static float smoothed = -1.0f;
     static float travel = -1.0f;
-    const int raw = analogRead(speedPotPin);
-    smoothed = smoothed < 0 ? raw : smoothed + (raw - smoothed) / 8.0f;
-    float now = (smoothed - kEndDeadband) / (1023.0f - 2 * kEndDeadband);
+    const int mv = AdcSampler::millivolts(speedPotPin);
+    smoothed = smoothed < 0 ? mv : smoothed + (mv - smoothed) / 8.0f;
+    float now = (smoothed - kEndDeadband_mv) / (3300.0f - 2 * kEndDeadband_mv);
     now = now < 0 ? 0 : now > 1 ? 1 : now;
     if (travel < 0 || now == 0 || now == 1 || fabsf(now - travel) >= kHysteresis)
         travel = now;
@@ -1621,7 +1615,7 @@ bool fwControlLoop()
             resetFWControl();
             if (deviceSettings.useRpmLogging)
             {
-                if (!rpmLogger.startCapture(deviceSettings.rpmLogLength))
+                if (!rpmLogger.startCapture(deviceSettings.rpmLogLength, currentAdcPin))
                     logger.error(
                         "RPM logging: capture buffer allocation failed, skipping this rev");
             }

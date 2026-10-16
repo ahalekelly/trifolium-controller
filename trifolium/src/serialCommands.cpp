@@ -15,6 +15,7 @@
 #include "schemaDump.h"
 #include "gpioReport.h"
 #include "flywheelMotor.h"
+#include "consoleSwitch.h"
 #include "enumIds.h" // kBurstModeIds - DUMP_MOTORS names the live mode rather than numbering it
 
 // Owned by main.cpp - the live config these commands read and write.
@@ -42,6 +43,8 @@ bool menuIsOpen();
 bool revControlAllowed();
 bool driveTrainStopped();
 extern volatile bool directMotorControlActive;
+extern ConsoleSwitch revSwitch;
+extern ConsoleSwitch triggerSwitch;
 // menuMotors.cpp, shared with the menu's motor actions.
 void spinOneMotor(int motorIndex);
 void writeEscDirection(int motorIndex, bool reversed);
@@ -476,6 +479,24 @@ void handleSerialCommands()
         spinOneMotor(explicitIndex);
         directMotorControlActive = false;
         ackOk("TEST_MOTOR", explicitIndex, false, false);
+    }
+    else if (command == "HOLD" || command == "RELEASE")
+    {
+        // "HOLD rev|trigger", resent while the console's button is down, then "RELEASE". See
+        // ConsoleSwitch for why a hold lapses on its own.
+        ConsoleSwitch* const sw = argument == "rev"       ? &revSwitch
+                                  : argument == "trigger" ? &triggerSwitch
+                                                          : nullptr;
+        if (!sw)
+        {
+            ackError(command.c_str(), -1, "needs rev or trigger");
+            return;
+        }
+        if (command == "RELEASE")
+            sw->releaseFromConsole();
+        else
+            sw->holdFromConsole();
+        ackOk(command.c_str(), -1, false, false);
     }
     else if (command == "ESC_DIRECTION")
     {

@@ -1,8 +1,9 @@
 // Parsing the CSV that RpmLogger::dumpIfReady() writes (src/rpmLogger.h).
 //
 // Ported from tools/serial-config.html, which is proven against real captures. The shape is an
-// optional leading "Voltage_mv" column, then "Motor N,TargetRPM N,Throttle N,value N," repeated per
-// enabled motor, then one row per captured control-loop tick in the same column order.
+// optional leading "Voltage_mv" column, an optional "Current_mv" column after it, then
+// "Motor N,TargetRPM N,Throttle N,value N," repeated per enabled motor, then one row per captured
+// control-loop tick in the same column order.
 //
 // The log arrives interleaved with ordinary device chatter, so it has to be found inside a larger
 // blob of text rather than parsed from a clean file.
@@ -18,6 +19,8 @@ export interface RpmLog {
   motors: MotorSeries[];
   /** Empty for captures taken before the voltage column existed. */
   voltage: number[];
+  /** The ESC current-sense pin, in mV. Empty when no currentAdcPin was set. */
+  current: number[];
 }
 
 /**
@@ -26,24 +29,26 @@ export interface RpmLog {
  * Sized here rather than in the log view, because it is this parser that imposes it: a capture is
  * one header line plus one row per sample, extractRpmCsv() finds the block by its *header*, and the
  * firmware's ceiling is 2000 samples. A smaller buffer keeps only the tail of a default-length
- * capture, the header having been evicted, so "Take from device log" can never work - which is
- * exactly how it failed on the bench. Keep this above the largest rpmLogLength the firmware allows.
+ * capture, the header having been evicted, so the RPM Log tab never finds it - which is exactly
+ * how it failed on the bench. Keep this above the largest rpmLogLength the firmware allows.
  */
 export const LOG_LINE_CAP = 4000;
 
 // The Voltage_mv prefix is optional so older logs still parse.
-const HEADER_RE = /^(?:Voltage_mv,)?(?:Motor \d+,TargetRPM \d+,Throttle \d+,value \d+,?)+$/;
+const HEADER_RE = /^(?:Voltage_mv,(?:Current_mv,)?)?(?:Motor \d+,TargetRPM \d+,Throttle \d+,value \d+,?)+$/;
 const DATA_ROW_RE = /^[\d.\-,]+$/;
 
 /**
- * Pulls the CSV block out of arbitrary log text, stripping the console's "(device) " prefix.
+ * Pulls the newest CSV block out of arbitrary log text, stripping the console's "(device) " prefix.
  *
- * Returns null when there is no header, or a header with no rows - a header alone is not a capture.
+ * Returns null when there is no header, or a newest header with no rows - a header alone is not a
+ * capture.
  */
 export function extractRpmCsv(rawText: string): string | null {
   const lines = rawText.split(/\r?\n/).map((l) => l.replace(/^\s*\(device\)\s*/, "").trim());
 
-  const headerIdx = lines.findIndex((l) => HEADER_RE.test(l));
+  let headerIdx = lines.length - 1;
+  while (headerIdx >= 0 && !HEADER_RE.test(lines[headerIdx])) headerIdx--;
   if (headerIdx === -1) return null;
 
   const csv = [lines[headerIdx]];
@@ -81,14 +86,15 @@ export function parseRpmCsv(text: string): RpmLog {
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
-  if (!lines.length) return { motors: [], voltage: [] };
+  if (!lines.length) return { motors: [], voltage: [], current: [] };
 
   const headerCells = lines[0]
     .split(",")
     .map((c) => c.trim())
     .filter(Boolean);
   const hasVoltage = /^Voltage/i.test(headerCells[0] ?? "");
-  const base = hasVoltage ? 1 : 0;
+  const hasCurrent = hasVoltage && headerCells[1] === "Current_mv";
+  const base = hasVoltage ? (hasCurrent ? 2 : 1) : 0;
 
   const motors: MotorSeries[] = [];
   for (let i = base; i < headerCells.length; i += 4) {
@@ -96,9 +102,10 @@ export function parseRpmCsv(text: string): RpmLog {
     if (!m) continue;
     motors.push({ index: Number(m[1]), rpm: [], targetRpm: [], throttle: [] });
   }
-  if (!motors.length) return { motors: [], voltage: [] };
+  if (!motors.length) return { motors: [], voltage: [], current: [] };
 
   const voltage: number[] = [];
+  const current: number[] = [];
   const width = fieldsOf(lines[0]).length;
   for (let r = 1; r < lines.length; r++) {
     const cells = lines[r].split(",");
@@ -106,6 +113,10 @@ export function parseRpmCsv(text: string): RpmLog {
     if (hasVoltage) {
       const v = Number(cells[0]);
       if (Number.isFinite(v)) voltage.push(v);
+    }
+    if (hasCurrent) {
+      const c = Number(cells[1]);
+      if (Number.isFinite(c)) current.push(c);
     }
     motors.forEach((motor, i) => {
       const col = base + i * 4;
@@ -117,7 +128,7 @@ export function parseRpmCsv(text: string): RpmLog {
       if (Number.isFinite(throttle)) motor.throttle.push(throttle);
     });
   }
-  return { motors, voltage };
+  return { motors, voltage, current };
 }
 
 /**

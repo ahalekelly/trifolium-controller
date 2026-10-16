@@ -2945,6 +2945,17 @@
                   "step": 1
                 },
                 {
+                  "label": "Current ADC Pin",
+                  "kind": "int",
+                  "key": "device:currentAdcPin",
+                  "reboot": true,
+                  "onDevice": false,
+                  "display": "pin",
+                  "lo": 0,
+                  "hi": 255,
+                  "step": 1
+                },
+                {
                   "label": "ESC Enable Pin",
                   "kind": "int",
                   "key": "device:escEnablePin",
@@ -3595,14 +3606,6 @@
               "lo": 1000,
               "hi": 5000,
               "step": 500
-            },
-            {
-              "label": "Volt Avg Window",
-              "kind": "int",
-              "key": "device:voltageAveragingWindow",
-              "lo": 1,
-              "hi": 16,
-              "step": 1
             },
             {
               "label": "RPM Shot Counter",

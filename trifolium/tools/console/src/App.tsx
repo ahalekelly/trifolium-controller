@@ -32,7 +32,7 @@ import {
 } from "./serial/transport";
 import { bundleFilename, buildBundle, checkBundle, diffKeys, downloadJson } from "./config/bundle";
 import { blasterLoads, schemaMismatch, type Blaster } from "./config/blasters";
-import { LOG_LINE_CAP } from "./rpm/parse";
+import { extractRpmCsv, LOG_LINE_CAP, wholeRows } from "./rpm/parse";
 import { applyLayout } from "./ui/applyLayout";
 import { PresetApplyDialog } from "./ui/PresetApplyDialog";
 import { DirtyKeys } from "./ui/dirty";
@@ -40,6 +40,7 @@ import { PresetPicker } from "./ui/PresetPicker";
 import { BootFaults } from "./ui/BootFaults";
 import { EscSetup } from "./ui/EscSetup";
 import { MotorActions, type MotorsDump } from "./ui/MotorActions";
+import { ConsoleSwitches, type SwitchRole } from "./ui/ConsoleSwitches";
 import { FireModes } from "./ui/FireModes";
 import { FlashDialog } from "./ui/FlashDialog";
 import { DEVICE_LAYOUT, PROFILE_LAYOUT } from "./ui/layout";
@@ -50,7 +51,7 @@ import { ProfileBar } from "./ui/ProfileBar";
 import { ProfileCopyDialog } from "./ui/ProfileCopyDialog";
 import { RawJson } from "./ui/RawJson";
 import { ResetDialog, type ResetKind, type ResetPlan } from "./ui/ResetDialog";
-import { RpmLog } from "./ui/RpmLog";
+import { downloadCsv, RpmLog } from "./ui/RpmLog";
 import { RpmStages } from "./ui/RpmStages";
 import { EncoderSelector, SelectorSwitch } from "./ui/SelectorSwitch";
 import { WiringWarnings } from "./ui/WiringWarnings";
@@ -195,6 +196,9 @@ export function App() {
 
   // The transport is built once, so it reaches afterReboot() - rebuilt every render - through this.
   const onRebooting = React.useRef<(reason: string) => void>(() => {});
+  // RPM captures finished this session; each one's dump is in the log before its reboot is seen.
+  const [captures, setCaptures] = React.useState(0);
+  const [autoSaveCaptures, setAutoSaveCaptures] = React.useState(true);
   const transport = React.useMemo(
     () =>
       new SerialTransport({
@@ -223,6 +227,14 @@ export function App() {
         .join("\n"),
     [log],
   );
+
+  // With Save CSV files on, every finished capture downloads as it arrives, whichever tab is open.
+  React.useEffect(() => {
+    if (captures === 0 || !autoSaveCaptures) return;
+    const csv = extractRpmCsv(deviceLogText);
+    if (csv) downloadCsv(wholeRows(csv).csv);
+    // Keyed on the count alone: the log growing afterwards must not download the capture again.
+  }, [captures]);
 
   const store: Store = tab === "device" || tab === "wiring" ? "device" : "profile";
 
@@ -492,8 +504,10 @@ export function App() {
     }
     note("err", `${label}, but the device did not come back. Reconnect when it has restarted.`);
   };
-  onRebooting.current = (reason) =>
+  onRebooting.current = (reason) => {
+    if (reason === "rpmLog") setCaptures((n) => n + 1);
     void afterReboot(reason === "rpmLog" ? "RPM capture finished" : "The device restarted");
+  };
 
   /**
    * Only a plain reboot comes back to us. The other two hand the device to something else, and the
@@ -596,13 +610,14 @@ export function App() {
   };
 
   /**
-   * The motors panel's live telemetry, polled while the Device tab is on screen. Paused while busy:
-   * a motor action holds the device for seconds, and a write may be about to reboot it.
+   * DUMP_MOTORS, polled while the Device tab's motors panel or the RPM Log tab's Rev and Fire are
+   * on screen. Paused while busy: a motor action holds the device for seconds, and a write may be
+   * about to reboot it.
    */
   const [motorsDump, setMotorsDump] = React.useState<MotorsDump | null>(null);
   React.useEffect(() => {
     if (!live) setMotorsDump(null);
-    if (!live || tab !== "device" || busy) return;
+    if (!live || (tab !== "device" && tab !== "rpm") || busy) return;
     let stopped = false;
     void (async () => {
       while (!stopped) {
@@ -616,6 +631,20 @@ export function App() {
       stopped = true;
     };
   }, [live, tab, busy, transport]);
+
+  // Not awaited: the device lets go if a renewal is late, so the next one goes out on time
+  // whatever became of the last one's reply.
+  const holdSwitch = (role: SwitchRole, held: boolean) =>
+    void transport.poll(`${held ? "HOLD" : "RELEASE"} ${role}`);
+  const switchesBlocked = !live
+    ? ""
+    : busy || motorsDump === null
+      ? "Waiting for the blaster."
+      : motorsDump.menuOpen
+        ? "The blaster's menu is open."
+        : motorsDump.burstMode === "safe"
+          ? "The blaster is in SAFE."
+          : null;
 
   const askReset = (kind: ResetKind) =>
     setPendingReset(
@@ -1372,7 +1401,11 @@ export function App() {
                 device={device}
                 onEdit={onEdit}
                 logText={deviceLogText}
+                captures={captures}
+                autoSave={autoSaveCaptures}
+                onAutoSave={setAutoSaveCaptures}
                 capturing={getByKey(device, "device:useRpmLogging") === true}
+                switches={<ConsoleSwitches blocked={switchesBlocked} onHold={holdSwitch} />}
               />
             )}
 

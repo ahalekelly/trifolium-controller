@@ -31,7 +31,7 @@ import { RpmChart, type Series } from "./RpmChart";
 //
 // Not a live feature: the firmware records a fixed-length capture into RAM during a rev and dumps the
 // whole thing as CSV afterwards, then reboots. So this reads the CSV out of whatever text is to hand -
-// the device log, a pasted block, or a dropped file - rather than streaming.
+// the newest capture in the device log, a pasted block, or a dropped file - rather than streaming.
 //
 // `useRpmLogging` is the only switch a capture needs. RpmLogger::dumpIfReady writes the CSV to
 // Serial directly rather than through the logger, precisely so that the capture a user asked for
@@ -45,6 +45,8 @@ import { RpmChart, type Series } from "./RpmChart";
 const CSV_ACCEPT = [".csv", ".txt", ".log", "text/plain"] as const;
 
 const COLOURS = ["#4f9dff", "#ff9f40", "#4ad991", "#e57bd8"];
+// What a motor was told (target, throttle) in its colour at half strength; what it did at full.
+const faded = (colour: string) => `${colour}80`;
 
 /** Trim ends when a capture's tail is flat for this many samples, within this fractional jitter. */
 const MIN_FLAT_RUN = 200;
@@ -53,17 +55,50 @@ const FLAT_JITTER = 0.02;
 /** The two capture settings, in the order you use them: arm it, then say how long for. */
 const CAPTURE_KEYS = ["device:useRpmLogging", "device:rpmLogLength"];
 
+/** Saves a capture as rpm-capture-<local date and time to the second>.csv. */
+export function downloadCsv(csv: string) {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  const date = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  const time = `${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
+  const url = URL.createObjectURL(new Blob([`${csv}\n`], { type: "text/csv" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `rpm-capture-${date}_${time}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export interface RpmLogProps {
   schema: Schema;
   device: unknown;
   onEdit: (key: string, value: unknown) => void;
   logText: string;
+  /** How many captures have finished this session. Each new one replaces whatever the box holds. */
+  captures: number;
+  /** Whether each finished capture downloads as a CSV file. */
+  autoSave: boolean;
+  onAutoSave: (on: boolean) => void;
   /** device:useRpmLogging - whether the next rev records a capture at all. */
   capturing: boolean;
+  /** Rev and Fire, held from the browser to run a capture. */
+  switches: React.ReactNode;
 }
 
-export function RpmLog({ schema, device, onEdit, logText, capturing }: RpmLogProps) {
-  const [text, setText] = React.useState("");
+export function RpmLog({
+  schema,
+  device,
+  onEdit,
+  logText,
+  captures,
+  autoSave,
+  onAutoSave,
+  capturing,
+  switches,
+}: RpmLogProps) {
+  // The extracted block, not the whole log. The box is also what you read, edit and save - and a
+  // capture buried in a few thousand lines of boot chatter is not something you can check by eye.
+  const [text, setText] = React.useState(() => extractRpmCsv(logText) ?? "");
   const [trim, setTrim] = React.useState(true);
   const [showThrottle, setShowThrottle] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -71,7 +106,7 @@ export function RpmLog({ schema, device, onEdit, logText, capturing }: RpmLogPro
 
   // Read out of the schema rather than rebuilt here, so `rpmLogLength` keeps the ceiling the
   // firmware publishes (MAX_RPM_LOG_LENGTH) and both rows keep their reboot marks and dirty
-  // outlines. Absent on firmware predating them, in which case nothing renders.
+  // outlines. Absent on firmware predating them, which leaves Rev and Fire alone in the box.
   const captureNodes = React.useMemo(() => {
     const found = new Map<string, SchemaNode>();
     walk(schema.tree, (node) => {
@@ -89,67 +124,79 @@ export function RpmLog({ schema, device, onEdit, logText, capturing }: RpmLogPro
   }, [text]);
   const parsed = React.useMemo(() => (whole ? parseRpmCsv(whole.csv) : null), [whole]);
 
-  const series: Series[] = React.useMemo(() => {
-    if (!parsed?.motors.length) return [];
-
-    // Trim against the first motor's RPM: every column is sampled on the same tick, so one series
-    // decides the cut for all of them and the x-axis stays aligned.
-    const cut = trim
+  // Trim against the first motor's RPM: every column is sampled on the same tick, so one series
+  // decides the cut for both charts and their x-axes stay aligned.
+  const cut = React.useMemo(() => {
+    if (!parsed?.motors.length) return 0;
+    return trim
       ? findTrailingFlatStart(parsed.motors[0].rpm, MIN_FLAT_RUN, FLAT_JITTER)
       : parsed.motors[0].rpm.length;
+  }, [parsed, trim]);
 
+  const series: Series[] = React.useMemo(() => {
+    if (!parsed?.motors.length) return [];
     const out: Series[] = [];
     parsed.motors.forEach((m, i) => {
       const colour = COLOURS[i % COLOURS.length];
       out.push({ name: `M${m.index} rpm`, colour, values: m.rpm.slice(0, cut) });
       out.push({
         name: `M${m.index} target`,
-        colour,
+        colour: faded(colour),
         values: m.targetRpm.slice(0, cut),
-        dash: "4 3",
       });
-      if (showThrottle) {
-        out.push({
-          name: `M${m.index} throttle`,
-          colour,
-          values: m.throttle.slice(0, cut),
-          dash: "1 3",
-          axis: "right",
-        });
-      }
     });
     if (parsed.voltage.length) {
       out.push({
         name: "pack mV",
         colour: "#9aa0a6",
         values: parsed.voltage.slice(0, cut),
-        dash: "6 3",
         axis: "right",
       });
     }
     return out;
-  }, [parsed, trim, showThrottle]);
+  }, [parsed, cut]);
+
+  // What drives the wheels, under the speed it buys: throttle on the left, the current-sense pin's
+  // mV on the right.
+  const driveSeries: Series[] = React.useMemo(() => {
+    if (!parsed?.motors.length) return [];
+    const out: Series[] = [];
+    if (showThrottle) {
+      parsed.motors.forEach((m, i) => {
+        out.push({
+          name: `M${m.index} throttle`,
+          colour: faded(COLOURS[i % COLOURS.length]),
+          values: m.throttle.slice(0, cut),
+        });
+      });
+    }
+    if (parsed.current.length) {
+      out.push({
+        name: "current-sense mV",
+        colour: "#9aa0a6",
+        values: parsed.current.slice(0, cut),
+        // On the left when alone, else the chart draws an empty left axis.
+        axis: showThrottle ? "right" : "left",
+      });
+    }
+    return out;
+  }, [parsed, cut, showThrottle]);
 
   // Read off the samples rather than the picture: the differences worth seeing between motors are
   // tens of milliseconds, which is where the lines on the chart overlap.
   const crossings = React.useMemo(() => (parsed ? targetCrossings(parsed) : []), [parsed]);
 
-  const takeFromLog = () => {
-    setError(null);
+  // A capture that finishes while the tab is open replaces the box, a loaded file or an edit
+  // included. The count moves on the reboot that follows the dump, so the log already holds it whole.
+  const shownCaptures = React.useRef(captures);
+  React.useEffect(() => {
+    if (captures === shownCaptures.current) return;
+    shownCaptures.current = captures;
     const csv = extractRpmCsv(logText);
-    if (!csv) {
-      setError(
-        capturing
-          ? "No CSV capture in the device log yet. RPM Logging is on, so rev the blaster and wait - the device dumps the whole capture at once and reboots straight after."
-          : "No CSV capture found in the device log. RPM Logging is off: turn it on above, then rev the blaster.",
-      );
-      return;
-    }
-    // The extracted block, not the whole log. The parser finds the CSV either way, but the box is
-    // also what you read, edit and save - and a capture buried in a few thousand lines of boot
-    // chatter is not something you can check by eye or hand to anyone else.
+    if (!csv) return;
     setText(csv);
-  };
+    setError(null);
+  }, [captures, logText]);
 
   /** Picked or dropped, a file lands in the box the same way. */
   const readFile = async (file: File) => {
@@ -173,17 +220,6 @@ export function RpmLog({ schema, device, onEdit, logText, capturing }: RpmLogPro
   /** The CSV as it would be saved: the whole rows extracted, not the raw box contents. */
   const csvOut = whole?.csv ?? null;
 
-  const saveCsv = () => {
-    if (!csvOut) return;
-    const blob = new Blob([`${csvOut}\n`], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `rpm-capture-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   return (
     <Stack spacing={1} {...dropProps} sx={dropOutlineSx(over)}>
       <DropLabel over={over} label="Drop a .csv capture here" />
@@ -193,8 +229,9 @@ export function RpmLog({ schema, device, onEdit, logText, capturing }: RpmLogPro
         which meant arming a capture and looking at one were different places. DEVICE_LAYOUT claims
         both keys as RENDERED_ELSEWHERE so they do not also fall through into "Other settings".
       */}
-      {captureNodes.length > 0 && (
-        <Fieldset label="Capture">
+      {/* Rev and Fire beside them, so arming a capture and running one is a single flow. */}
+      <Fieldset label="Capture">
+        <Stack spacing={1}>
           <Stack direction="row" spacing={2} sx={{ alignItems: "flex-start", flexWrap: "wrap" }}>
             {captureNodes.map((node) => (
               <Box key={node.key} sx={{ minWidth: 150 }}>
@@ -206,22 +243,33 @@ export function RpmLog({ schema, device, onEdit, logText, capturing }: RpmLogPro
               </Box>
             ))}
           </Stack>
-        </Fieldset>
-      )}
+          {switches}
+        </Stack>
+      </Fieldset>
 
       <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }}>
-        <Button size="small" variant="outlined" onClick={takeFromLog}>
-          Take from device log
-        </Button>
         <Button size="small" variant="outlined" onClick={() => fileRef.current?.click()}>
           Open CSV file
-        </Button>
-        <Button size="small" variant="outlined" onClick={saveCsv} disabled={!csvOut}>
-          Save CSV file
         </Button>
         <Button size="small" variant="outlined" onClick={clear} disabled={!text && !error}>
           Clear
         </Button>
+        <FormControlLabel
+          control={
+            <Checkbox
+              size="small"
+              checked={autoSave}
+              onChange={(e) => {
+                onAutoSave(e.target.checked);
+                // Turning it on saves what is already shown; later captures save as they arrive.
+                if (e.target.checked && csvOut) downloadCsv(csvOut);
+              }}
+            />
+          }
+          disableTypography
+          label={<Typography variant="caption">Save CSV files</Typography>}
+          sx={{ m: 0, gap: 0.5 }}
+        />
         <input
           ref={fileRef}
           type="file"
@@ -264,6 +312,14 @@ export function RpmLog({ schema, device, onEdit, logText, capturing }: RpmLogPro
         )}
       </Stack>
 
+      {!text && (
+        <Typography variant="caption" color="text.secondary">
+          {capturing
+            ? "Rev the blaster to capture. It reboots after each capture."
+            : "Turn on RPM Logging to capture."}
+        </Typography>
+      )}
+
       {error && (
         <Alert severity="info" sx={{ py: 0 }}>
           {error}
@@ -280,6 +336,7 @@ export function RpmLog({ schema, device, onEdit, logText, capturing }: RpmLogPro
       {series.length > 0 ? (
         <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 1 }}>
           <RpmChart series={series} />
+          {driveSeries.length > 0 && <RpmChart series={driveSeries} height={180} />}
           {crossings.length > 0 && (
             <Box sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: "divider" }}>
               <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.5 }}>
@@ -353,7 +410,7 @@ export function RpmLog({ schema, device, onEdit, logText, capturing }: RpmLogPro
         minRows={4}
         maxRows={10}
         size="small"
-        placeholder="Paste a capture here, drop a .csv file anywhere on this tab, or use the buttons above."
+        placeholder="Paste a capture here, drop a .csv file anywhere on this tab, or open one above."
         value={text}
         onChange={(e) => setText(e.target.value)}
         slotProps={{ htmlInput: { style: { fontSize: 11, fontFamily: "ui-monospace, monospace" } } }}

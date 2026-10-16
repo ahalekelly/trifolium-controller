@@ -103,18 +103,29 @@ def test_a_menu_button_that_collides_with_a_higher_priority_input_is_lost_and_sa
 
 def test_an_rpm_log_captures_the_rev_then_prints_it_and_reboots(blaster):
     b = armed_v12(blaster, {"useRpmLogging": True, "rpmLogLength": 150}, display=False)
+    b.analog(26, 310)  # the ESC's current-sense output at 1000 mV
     mark = len(b.transcript)
     b.press("rev")
     assert b.run_until_stopped(3000)
     assert b.last_stop == "reboot"
 
     log = b.transcript[mark:]
-    header = log.find("Voltage_mv,Motor 1,TargetRPM 1,Throttle 1,value 1,Motor 3,")
+    header = log.find("Voltage_mv,Current_mv,Motor 1,TargetRPM 1,Throttle 1,value 1,Motor 3,")
     assert header >= 0
-    rows = log[log.find("\n", header) + 1:].splitlines()[:150]
-    rpms = [int(row.split(",")[1]) for row in rows]
+    rows = [row.split(",") for row in log[log.find("\n", header) + 1:].splitlines()[:150]]
+    rpms = [int(row[2]) for row in rows]
     assert len(rpms) == 150
     assert rpms[-1] > rpms[0] + 10000  # 150 ms of a spin-up
+    assert {row[1] for row in rows} == {"1000"}
+
+
+def test_an_rpm_log_leaves_out_the_current_column_when_no_pin_reads_it(blaster):
+    b = armed_v12(blaster, {"useRpmLogging": True, "rpmLogLength": 150, "currentAdcPin": 255},
+                  display=False)
+    mark = len(b.transcript)
+    b.press("rev")
+    assert b.run_until_stopped(3000)
+    assert "Voltage_mv,Motor 1,TargetRPM 1," in b.transcript[mark:]
 
 
 def test_plasma_through_the_real_loop_the_wheels_follow_the_charge_and_release_fires_the_slots(blaster):

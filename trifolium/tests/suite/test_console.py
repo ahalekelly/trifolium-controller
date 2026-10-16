@@ -26,7 +26,7 @@ pytest.importorskip("playwright")
 from helpers import SIM, differences, start_server  # noqa: E402
 from playwright.sync_api import expect  # noqa: E402
 
-from trifolium_sim import PROJECT  # noqa: E402
+from trifolium_sim import FULLSPEED, IDLE, PROJECT  # noqa: E402
 
 sys.path.insert(0, str(PROJECT / "tools"))
 import build_site  # noqa: E402 - the site's own list entries, so the console is held to their format
@@ -333,21 +333,37 @@ def test_choose_device_asks_even_when_a_blaster_is_already_allowed(page, serve):
     expect(page.get_by_text(re.compile("Connect failed: No port selected"))).to_be_visible()
 
 
-def test_an_rpm_capture_from_a_rev_charts_every_motor_at_the_length_the_device_published(page, serve):
+def test_an_rpm_capture_from_a_rev_downloads_and_charts_itself_with_every_motor(
+        page, serve):
     served = serve(device={"useRpmLogging": True})
     connect(open_console(page, served))
     served.wait_armed()
-    served.bench("press", role="rev")
-    served.run_for(1500)
-    served.bench("release", role="rev")
+    page.get_by_role("tab", name="RPM Log").click()
+    expect(page.get_by_text(re.compile("^Rev the blaster"))).to_be_visible()
+    save = page.get_by_label("Save CSV files")
+    with page.expect_download(timeout=REBOOT_MS) as download:
+        served.bench("press", role="rev")
+        served.run_for(1500)
+        served.bench("release", role="rev")
+    # Named to the second, so captures a minute apart never collide.
+    stamped = re.compile(r"rpm-capture-\d{4}(-\d\d){2}_\d\d(-\d\d){2}\.csv")
+    assert stamped.fullmatch(download.value.suggested_filename)
     expect(page.get_by_text("RPM capture finished - device is back.")).to_be_visible(
         timeout=REBOOT_MS)
     expect(page.get_by_text(re.compile(r"Connected · fw \d"))).to_be_visible()
 
+    summary = re.compile(rf"^2 motors, {served.settings()['rpmLogLength']} samples")
+    expect(page.get_by_text(summary)).to_be_visible()
+    # Coming back to the tab finds the capture in the log again.
+    page.get_by_role("tab", name="Device").click()
     page.get_by_role("tab", name="RPM Log").click()
-    page.get_by_role("button", name="Take from device log").click()
-    length = served.settings()["rpmLogLength"]
-    expect(page.get_by_text(re.compile(rf"^2 motors, {length} samples"))).to_be_visible()
+    expect(page.get_by_text(summary)).to_be_visible()
+
+    # Turning saving on saves the capture already shown.
+    save.uncheck()
+    with page.expect_download() as download:
+        save.check()
+    assert stamped.fullmatch(download.value.suggested_filename)
 
 
 def test_a_direction_set_from_motors_and_pid_is_written_then_spun_and_a_refusal_says_why(page, serve):
@@ -380,6 +396,26 @@ def test_the_motors_panel_lists_the_attached_motors_with_live_telemetry(page, se
         rpm = row.get_by_role("cell").nth(1)
         expect(rpm).to_have_text(re.compile(r"^[1-9]\d{3,}$"), timeout=5000)
     served.bench("release", role="rev")
+
+
+def test_rev_held_on_the_rpm_log_tab_revs_until_let_go_and_safe_disables_it(page, serve):
+    served = serve(device={"safetySwitchPin": 11})
+    connect(open_console(page, served))
+    served.wait_armed()
+    page.get_by_role("tab", name="RPM Log").click()
+    rev = page.get_by_role("button", name="Rev", exact=True)
+    expect(rev).to_be_enabled()
+    state = lambda: served.bench("peek", names=["flywheelState"])["values"]["flywheelState"]
+
+    rev.hover()
+    page.mouse.down()
+    served.until(lambda: state() == FULLSPEED)
+    page.mouse.up()
+    served.until(lambda: state() == IDLE)
+
+    served.bench("press", role="safety")
+    expect(page.get_by_text("The blaster is in SAFE.")).to_be_visible()
+    expect(rev).to_be_disabled()
 
 
 def test_a_setting_that_governs_others_shows_and_hides_them_as_it_is_edited(page, serve):
