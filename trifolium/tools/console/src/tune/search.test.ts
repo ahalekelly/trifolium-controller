@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   plan,
-  plannedSets,
+  planned,
   ranking,
   roundTargets,
   secondWorst,
@@ -17,11 +17,19 @@ const set = (ms: number, overshootPct = 0, timedOut = false): SetScore => ({
 });
 
 /** Runs a search to its end against `trial`, the way the runner does, counting sets as it goes. */
-function runSearch(ids: string[], n: number, limitPct: number, trial: (id: string) => SetScore) {
+function runSearch(
+  ids: string[],
+  n: number,
+  limitPct: number,
+  trial: (id: string) => SetScore,
+  blocks = false,
+) {
   let search: Search = startSearch(ids, n);
   const scores: Record<string, SetScore[]> = {};
+  let last: string | null = null;
   for (;;) {
-    const step = plan(search, scores, limitPct);
+    const step = plan(search, scores, limitPct, blocks ? last : null);
+    last = step.next;
     search = step.search;
     if (step.next === null) return { search, scores };
     (scores[step.next] ??= []).push(trial(step.next));
@@ -48,10 +56,10 @@ describe("roundTargets", () => {
     expect(roundTargets(1, 20)).toEqual([20]);
   });
 
-  it("plans the sets those rounds take", () => {
-    // 32 x 3, then 8 more x 2, 4 x 5, 2 x 10.
-    expect(plannedSets(32, 20)).toBe(96 + 16 + 20 + 20);
-    expect(plannedSets(1, 20)).toBe(20);
+  it("plans the sets those rounds take, and a block per candidate per round with sets", () => {
+    // 32 x 3, then 8 more x 2, 4 x 5, 2 x 10; the second round adds no sets, only a halving.
+    expect(planned(32, 20)).toEqual({ sets: 96 + 16 + 20 + 20, blocks: 32 + 8 + 4 + 2 });
+    expect(planned(1, 20)).toEqual({ sets: 20, blocks: 1 });
   });
 });
 
@@ -73,6 +81,19 @@ describe("a search", () => {
     expect(order.slice(0, 6)).toEqual(["a", "b", "c", "a", "b", "c"]);
   });
 
+  it("runs each candidate's sets for a round as one block when told to stay", () => {
+    const order: string[] = [];
+    const ms: Record<string, number> = { a: 100, b: 300, c: 400, d: 200 };
+    runSearch(Object.keys(ms), 4, 3, (id) => {
+      order.push(id);
+      return set(ms[id]);
+    }, true);
+    // Rounds end on 3 and 4 sets. d ends the first and is in the second, so it goes on first.
+    const blocks = order.filter((id, i) => id !== order[i - 1]);
+    expect(blocks).toEqual(["a", "b", "c", "d", "a"]);
+    expect(order).toHaveLength(planned(4, 4).sets);
+  });
+
   it("drops the slower half on noisy spin-ups and gives each finalist exactly n", () => {
     // Each candidate's true spin-up, under +-40 ms of noise - more than separates neighbours.
     const truth: Record<string, number> = {};
@@ -86,7 +107,7 @@ describe("a search", () => {
     expect(search.alive.every((id) => scores[id].length === 20)).toBe(true);
     // Most of the spin-ups went where the decision was close.
     const spent = Object.values(scores).reduce((sum, s) => sum + s.length, 0);
-    expect(spent).toBe(plannedSets(16, 20));
+    expect(spent).toBe(planned(16, 20).sets);
     expect(spent).toBeLessThan(16 * 20 / 3);
     // The winner is among the truly fast: noise can swap neighbours, never the field.
     const best = ranking(search, scores, 3)[0].id;

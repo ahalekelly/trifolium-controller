@@ -50,17 +50,24 @@ export function startSearch(ids: string[], n: number): Search {
   return { rounds: roundTargets(ids.length, n), round: 0, alive: [...ids], dropped: {} };
 }
 
-/** How many sets a search of `count` candidates runs, baseline sets aside. */
-export function plannedSets(count: number, n: number): number {
+/**
+ * How many sets a search of `count` candidates runs, baseline sets aside, and in how many blocks: a
+ * block is one candidate's sets for one round.
+ */
+export function planned(count: number, n: number): { sets: number; blocks: number } {
   let alive = count;
   let done = 0;
-  let total = 0;
+  let sets = 0;
+  let blocks = 0;
   for (const target of roundTargets(count, n)) {
-    total += alive * (target - done);
+    if (target > done) {
+      sets += alive * (target - done);
+      blocks += alive;
+    }
     done = target;
     if (alive > FINALISTS) alive = Math.max(FINALISTS, Math.ceil(alive / 2));
   }
-  return total;
+  return { sets, blocks };
 }
 
 export const finished = (search: Search): boolean => search.round >= search.rounds.length;
@@ -118,18 +125,24 @@ export const compareStandings = (a: Standing, b: Standing): number =>
 
 /**
  * The candidate to run a set of next, closing whichever rounds its candidates have finished; null
- * once the search is over. The one with the fewest sets goes first, so a round runs its candidates
- * in turn rather than one after another, and drift over the run spreads across all of them.
+ * once the search is over. `stay` goes again while it is still in and short of the round's sets, so
+ * a search whose candidates are costly to switch between runs each one's sets for a round as one
+ * block - and a candidate that ends one round and is first into the next keeps going. Otherwise the
+ * one with the fewest sets goes first, so a round runs its candidates in turn rather than one after
+ * another, and drift over the run spreads across all of them.
  */
 export function plan(
   search: Search,
   scores: Record<string, SetScore[]>,
   limitPct: number,
+  stay: string | null,
 ): { search: Search; next: string | null } {
   let current = search;
   while (!finished(current)) {
     const target = current.rounds[current.round];
     const counts = current.alive.map((id) => scores[id]?.length ?? 0);
+    const stays = stay === null ? -1 : current.alive.indexOf(stay);
+    if (stays >= 0 && counts[stays] < target) return { search: current, next: stay };
     const fewest = Math.min(...counts);
     if (fewest < target) return { search: current, next: current.alive[counts.indexOf(fewest)] };
     current = closeRound(current, scores, limitPct);
