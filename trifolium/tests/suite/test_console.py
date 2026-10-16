@@ -343,16 +343,21 @@ def test_choose_device_asks_even_when_a_blaster_is_already_allowed(page, serve):
     expect(page.get_by_text(re.compile("Connect failed: No port selected"))).to_be_visible()
 
 
-def test_an_rpm_capture_from_a_rev_charts_itself_with_every_motor_at_the_published_length(
+def test_an_rpm_capture_from_a_rev_downloads_and_charts_itself_with_every_motor(
         page, serve):
     served = serve(device={"useRpmLogging": True})
     connect(open_console(page, served))
     served.wait_armed()
     page.get_by_role("tab", name="RPM Log").click()
     expect(page.get_by_text(re.compile("^Rev the blaster"))).to_be_visible()
-    served.bench("press", role="rev")
-    served.run_for(1500)
-    served.bench("release", role="rev")
+    save = page.get_by_label("Save CSV files")
+    with page.expect_download(timeout=REBOOT_MS) as download:
+        served.bench("press", role="rev")
+        served.run_for(1500)
+        served.bench("release", role="rev")
+    # Named to the second, so captures a minute apart never collide.
+    stamped = re.compile(r"rpm-capture-\d{4}(-\d\d){2}_\d\d(-\d\d){2}\.csv")
+    assert stamped.fullmatch(download.value.suggested_filename)
     expect(page.get_by_text("RPM capture finished - device is back.")).to_be_visible(
         timeout=REBOOT_MS)
     expect(page.get_by_text(re.compile(r"Connected · fw \d"))).to_be_visible()
@@ -363,6 +368,12 @@ def test_an_rpm_capture_from_a_rev_charts_itself_with_every_motor_at_the_publish
     page.get_by_role("tab", name="Device").click()
     page.get_by_role("tab", name="RPM Log").click()
     expect(page.get_by_text(summary)).to_be_visible()
+
+    # Turning saving on saves the capture already shown.
+    save.uncheck()
+    with page.expect_download() as download:
+        save.check()
+    assert stamped.fullmatch(download.value.suggested_filename)
 
 
 def test_a_direction_set_from_motors_and_pid_is_written_then_spun_and_a_refusal_says_why(page, serve):

@@ -55,6 +55,20 @@ const FLAT_JITTER = 0.02;
 /** The two capture settings, in the order you use them: arm it, then say how long for. */
 const CAPTURE_KEYS = ["device:useRpmLogging", "device:rpmLogLength"];
 
+/** Saves a capture as rpm-capture-<local date and time to the second>.csv. */
+export function downloadCsv(csv: string) {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  const date = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  const time = `${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
+  const url = URL.createObjectURL(new Blob([`${csv}\n`], { type: "text/csv" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `rpm-capture-${date}_${time}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export interface RpmLogProps {
   schema: Schema;
   device: unknown;
@@ -62,6 +76,9 @@ export interface RpmLogProps {
   logText: string;
   /** How many captures have finished this session. Each new one replaces whatever the box holds. */
   captures: number;
+  /** Whether each finished capture downloads as a CSV file. */
+  autoSave: boolean;
+  onAutoSave: (on: boolean) => void;
   /** device:useRpmLogging - whether the next rev records a capture at all. */
   capturing: boolean;
   /** Rev and Fire, held from the browser to run a capture. */
@@ -74,6 +91,8 @@ export function RpmLog({
   onEdit,
   logText,
   captures,
+  autoSave,
+  onAutoSave,
   capturing,
   switches,
 }: RpmLogProps) {
@@ -201,17 +220,6 @@ export function RpmLog({
   /** The CSV as it would be saved: the whole rows extracted, not the raw box contents. */
   const csvOut = whole?.csv ?? null;
 
-  const saveCsv = () => {
-    if (!csvOut) return;
-    const blob = new Blob([`${csvOut}\n`], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `rpm-capture-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   return (
     <Stack spacing={1} {...dropProps} sx={dropOutlineSx(over)}>
       <DropLabel over={over} label="Drop a .csv capture here" />
@@ -243,12 +251,25 @@ export function RpmLog({
         <Button size="small" variant="outlined" onClick={() => fileRef.current?.click()}>
           Open CSV file
         </Button>
-        <Button size="small" variant="outlined" onClick={saveCsv} disabled={!csvOut}>
-          Save CSV file
-        </Button>
         <Button size="small" variant="outlined" onClick={clear} disabled={!text && !error}>
           Clear
         </Button>
+        <FormControlLabel
+          control={
+            <Checkbox
+              size="small"
+              checked={autoSave}
+              onChange={(e) => {
+                onAutoSave(e.target.checked);
+                // Turning it on saves what is already shown; later captures save as they arrive.
+                if (e.target.checked && csvOut) downloadCsv(csvOut);
+              }}
+            />
+          }
+          disableTypography
+          label={<Typography variant="caption">Save CSV files</Typography>}
+          sx={{ m: 0, gap: 0.5 }}
+        />
         <input
           ref={fileRef}
           type="file"

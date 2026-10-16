@@ -32,7 +32,7 @@ import {
 } from "./serial/transport";
 import { bundleFilename, buildBundle, checkBundle, diffKeys, downloadJson } from "./config/bundle";
 import { blasterLoads, schemaMismatch, type Blaster } from "./config/blasters";
-import { LOG_LINE_CAP } from "./rpm/parse";
+import { extractRpmCsv, LOG_LINE_CAP, wholeRows } from "./rpm/parse";
 import { applyLayout } from "./ui/applyLayout";
 import { PresetApplyDialog } from "./ui/PresetApplyDialog";
 import { DirtyKeys } from "./ui/dirty";
@@ -51,7 +51,7 @@ import { ProfileBar } from "./ui/ProfileBar";
 import { ProfileCopyDialog } from "./ui/ProfileCopyDialog";
 import { RawJson } from "./ui/RawJson";
 import { ResetDialog, type ResetKind, type ResetPlan } from "./ui/ResetDialog";
-import { RpmLog } from "./ui/RpmLog";
+import { downloadCsv, RpmLog } from "./ui/RpmLog";
 import { RpmStages } from "./ui/RpmStages";
 import { EncoderSelector, SelectorSwitch } from "./ui/SelectorSwitch";
 import { WiringWarnings } from "./ui/WiringWarnings";
@@ -198,6 +198,7 @@ export function App() {
   const onRebooting = React.useRef<(reason: string) => void>(() => {});
   // RPM captures finished this session; each one's dump is in the log before its reboot is seen.
   const [captures, setCaptures] = React.useState(0);
+  const [autoSaveCaptures, setAutoSaveCaptures] = React.useState(true);
   const transport = React.useMemo(
     () =>
       new SerialTransport({
@@ -226,6 +227,14 @@ export function App() {
         .join("\n"),
     [log],
   );
+
+  // With Save CSV files on, every finished capture downloads as it arrives, whichever tab is open.
+  React.useEffect(() => {
+    if (captures === 0 || !autoSaveCaptures) return;
+    const csv = extractRpmCsv(deviceLogText);
+    if (csv) downloadCsv(wholeRows(csv).csv);
+    // Keyed on the count alone: the log growing afterwards must not download the capture again.
+  }, [captures]);
 
   const store: Store = tab === "device" || tab === "wiring" ? "device" : "profile";
 
@@ -1393,6 +1402,8 @@ export function App() {
                 onEdit={onEdit}
                 logText={deviceLogText}
                 captures={captures}
+                autoSave={autoSaveCaptures}
+                onAutoSave={setAutoSaveCaptures}
                 capturing={getByKey(device, "device:useRpmLogging") === true}
                 switches={<ConsoleSwitches blocked={switchesBlocked} onHold={holdSwitch} />}
               />
