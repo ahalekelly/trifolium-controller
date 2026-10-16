@@ -25,13 +25,14 @@ extern uint8_t selectPins[3];
 extern uint8_t ledDataPin;
 extern uint8_t batteryAdcPin;
 extern uint8_t speedPotPin;
+extern uint8_t currentAdcPin;
 extern uint8_t escEnablePin;
 extern bool displayAllowed;
 extern bool wiringLive;
 
 namespace
 {
-// 10 switch pins + 4 motors + the pusher + 2 I2C + 2 ADC + the LED + ESC enable is 21, and every
+// 10 switch pins + 4 motors + the pusher + 2 I2C + 3 ADC + the LED + ESC enable is 22, and every
 // one of those can also carry a warning; nothing reaches the cap in practice.
 const uint8_t kMaxEntries = 40;
 PinConflicts::Entry entries_[kMaxEntries];
@@ -76,7 +77,7 @@ struct Claim
     const char* name;
 };
 
-// 4 ESC channels + the pusher + ESC enable + 2 ADC + 2 I2C + the LED is 11.
+// 4 ESC channels + the pusher + ESC enable + 3 ADC + 2 I2C + the LED is 12.
 const uint8_t kMaxClaims = 20;
 
 const char* const kEscNames[4] = {"esc1", "esc2", "esc3", "esc4"};
@@ -93,27 +94,32 @@ const Claim* heldBy(const Claim* claims, uint8_t n, uint8_t pin)
 }
 
 // What this configuration asks the chip to do that the chip cannot. Runs before anything is
-// claimed, because two of the three answers change what there is to claim. TwoWire::setSDA/setSCL
+// claimed, because its answers change what there is to claim. TwoWire::setSDA/setSCL
 // panic() on an illegal pin, so the I2C pair is settled here rather than at the point of use.
 void resolveCapabilities()
 {
-    if (pinDefined(batteryAdcPin) && !adcPinUsable(batteryAdcPin))
+    struct Reading
     {
-        const uint8_t pin = batteryAdcPin;
-        batteryAdcPin = PIN_NOT_USED;
-        PinConflicts::record("batteryAdcPin", pin, "notAnAdcPin", PinConflicts::Action::PinCleared);
-        logger.error("GPIO ", (int)pin, " has no ADC channel - only ", (int)ADC_FIRST_PIN, "-",
-                     (int)ADC_LAST_PIN, " do. Battery monitoring is off; a reading from any other "
-                     "pin would be noise the low-voltage cutoff acted on.");
-    }
-    if (pinDefined(speedPotPin) && !adcPinUsable(speedPotPin))
+        uint8_t* live;
+        const char* field;
+        const char* lost;
+    };
+    const Reading readings[] = {
+        {&batteryAdcPin, "batteryAdcPin",
+         "Battery monitoring is off; a reading from any other pin would be noise the low-voltage "
+         "cutoff acted on."},
+        {&speedPotPin, "speedPotPin",
+         "The speed pot is off, so the flywheels run at the profile's RPM."},
+        {&currentAdcPin, "currentAdcPin", "RPM captures leave out the ESC current."}};
+    for (const Reading& r : readings)
     {
-        const uint8_t pin = speedPotPin;
-        speedPotPin = PIN_NOT_USED;
-        PinConflicts::record("speedPotPin", pin, "notAnAdcPin", PinConflicts::Action::PinCleared);
+        if (!pinDefined(*r.live) || adcPinUsable(*r.live))
+            continue;
+        const uint8_t pin = *r.live;
+        *r.live = PIN_NOT_USED;
+        PinConflicts::record(r.field, pin, "notAnAdcPin", PinConflicts::Action::PinCleared);
         logger.error("GPIO ", (int)pin, " has no ADC channel - only ", (int)ADC_FIRST_PIN, "-",
-                     (int)ADC_LAST_PIN, " do. The speed pot is off, so the flywheels run at the "
-                     "profile's RPM.");
+                     (int)ADC_LAST_PIN, " do. ", r.lost);
     }
 
     const bool anyI2cPin =
@@ -177,8 +183,8 @@ void resolveDrivenOutputs(Claim* claims, uint8_t& n)
         }
     }
 
-    // Three pins and a bus, each of which simply detaches: losing the ESC power gate, the battery
-    // reading, the speed pot or the panel costs a capability rather than the blaster.
+    // Four pins and a bus, each of which simply detaches: losing the ESC power gate, the battery
+    // or current reading, the speed pot or the panel costs a capability rather than the blaster.
     struct Output
     {
         uint8_t* live;
@@ -186,7 +192,8 @@ void resolveDrivenOutputs(Claim* claims, uint8_t& n)
     };
     const Output outputs[] = {{&escEnablePin, "escEnablePin"},
                               {&batteryAdcPin, "batteryAdcPin"},
-                              {&speedPotPin, "speedPotPin"}};
+                              {&speedPotPin, "speedPotPin"},
+                              {&currentAdcPin, "currentAdcPin"}};
     for (const Output& out : outputs)
     {
         if (!pinDefined(*out.live))
@@ -300,13 +307,14 @@ void resolve()
     ledDataPin = deviceSettings.ledDataPin;
     batteryAdcPin = deviceSettings.batteryAdcPin;
     speedPotPin = deviceSettings.speedPotPin;
+    currentAdcPin = deviceSettings.currentAdcPin;
     escEnablePin = deviceSettings.escEnablePin;
     displayAllowed = deviceSettings.hasDisplay;
 
     if (!wiringLive)
         return; // nothing is driven, so nothing can be contested
 
-    // Before the claims, because two of its three answers change what there is to claim.
+    // Before the claims, because its answers change what there is to claim.
     resolveCapabilities();
 
     Claim claims[kMaxClaims];

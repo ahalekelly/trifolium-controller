@@ -9,8 +9,7 @@
     "A spare GPIO17 pad sits just below the BOOT button, with a GND pad above it. Nothing is assigned to it."
   ],
   "unread": {
-    "telem": 255,
-    "escADC": 255
+    "telem": 255
   },
   "schemaVersion": 3,
   "boardId": "diana_v1_1",
@@ -24,6 +23,7 @@
   "i2cSdaPin": 14,
   "i2cSclPin": 15,
   "batteryAdcPin": 28,
+  "currentAdcPin": 255,
   "escEnablePin": 255,
   "menuButtonPin": 255,
   "triggerSwitchPin": 6,

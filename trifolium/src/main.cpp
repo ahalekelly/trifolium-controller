@@ -79,6 +79,7 @@ bool wiringLive = false;
 uint8_t ledDataPin = PIN_NOT_USED;
 uint8_t batteryAdcPin = PIN_NOT_USED;
 uint8_t speedPotPin = PIN_NOT_USED;
+uint8_t currentAdcPin = PIN_NOT_USED;
 uint8_t escEnablePin = PIN_NOT_USED;
 
 // Stage 1's rev RPM as the speed pot sets it, before updateSpeedPot()'s limits; 0 with none wired.
@@ -1850,7 +1851,7 @@ bool fwControlLoop()
             resetFWControl();
             if (deviceSettings.useRpmLogging)
             {
-                if (!rpmLogger.startCapture(deviceSettings.rpmLogLength))
+                if (!rpmLogger.startCapture(deviceSettings.rpmLogLength, currentAdcPin))
                     logger.error(
                         "RPM logging: capture buffer allocation failed, skipping this rev");
             }

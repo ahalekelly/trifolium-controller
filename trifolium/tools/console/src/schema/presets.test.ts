@@ -93,11 +93,11 @@ describe("the presets this console ships", () => {
     expect(presetById("trifolium_v1_2")!.diagram).toBeUndefined();
   });
 
-  it("keeps telem and escADC out of the wiring - nothing reads either", () => {
+  it("keeps telem out of the wiring - nothing reads it", () => {
     expect(trifoliumV12.unread.telem).toBe(4);
     const preset = presetById("trifolium_v1_2")!;
     expect(preset.wiring).not.toHaveProperty("telem");
-    expect(preset.wiring).not.toHaveProperty("escADC");
+    expect(preset.wiring.currentAdcPin).toBe(26);
   });
 
   /**

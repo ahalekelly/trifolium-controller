@@ -557,6 +557,8 @@ static AdcPinItem batteryAdcPinItem("Battery ADC Pin", "device:batteryAdcPin",
                                     &deviceSettings.batteryAdcPin);
 static AdcPinItem speedPotPinItem("Speed Pot Pin", "device:speedPotPin",
                                   &deviceSettings.speedPotPin);
+static AdcPinItem currentAdcPinItem("Current ADC Pin", "device:currentAdcPin",
+                                    &deviceSettings.currentAdcPin);
 
 // Driven LOW at boot and again by the low-voltage cutoff, to cut power to the ESCs and the pusher.
 static PinItem escEnablePinItem("ESC Enable Pin", "device:escEnablePin",
@@ -632,17 +634,17 @@ static MenuItem* wiringItems[] = {&boardIdItem,            &wiringConfiguredItem
                                   &esc3PinItem,            &esc4PinItem,
                                   &i2cSdaPinItem,          &i2cSclPinItem,
                                   &batteryAdcPinItem,      &speedPotPinItem,
-                                  &escEnablePinItem,       &pusherFetPinItem,
-                                  &ledDataPinItem,         &safetyPinItem,
-                                  &triggerPinItem,         &revPinItem,
-                                  &menuButtonPinItem,      &cyclePinItem,
-                                  &dartPinItem,            &idlePinItem,
-                                  &select0PinItem,         &select1PinItem,
-                                  &select2PinItem,         &triggerPolarityItem,
-                                  &revPolarityItem,        &menuButtonPolarityItem,
-                                  &cyclePolarityItem,      &dartPolarityItem,
-                                  &idlePolarityItem,       &safetyPolarityItem,
-                                  &speedPotReversedItem};
+                                  &currentAdcPinItem,      &escEnablePinItem,
+                                  &pusherFetPinItem,       &ledDataPinItem,
+                                  &safetyPinItem,          &triggerPinItem,
+                                  &revPinItem,             &menuButtonPinItem,
+                                  &cyclePinItem,           &dartPinItem,
+                                  &idlePinItem,            &select0PinItem,
+                                  &select1PinItem,         &select2PinItem,
+                                  &triggerPolarityItem,    &revPolarityItem,
+                                  &menuButtonPolarityItem, &cyclePolarityItem,
+                                  &dartPolarityItem,       &idlePolarityItem,
+                                  &safetyPolarityItem,     &speedPotReversedItem};
 static SubmenuItem wiringSubmenu("Wiring", wiringItems,
                                  sizeof(wiringItems) / sizeof(wiringItems[0]));
 struct WiringSubmenuInit

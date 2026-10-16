@@ -77,6 +77,16 @@ describe("parseRpmCsv", () => {
     expect(log.motors[0].rpm).toEqual([100]);
   });
 
+  it("reads past the ESC current column to the motors", () => {
+    const csv = extractRpmCsv(
+      "Voltage_mv,Current_mv,Motor 1,TargetRPM 1,Throttle 1,value 1,\n16200,412,100,200,300,1,",
+    )!;
+    const log = parseRpmCsv(csv);
+    expect(log.voltage).toEqual([16200]);
+    expect(log.motors[0].rpm).toEqual([100]);
+    expect(log.motors[0].targetRpm).toEqual([200]);
+  });
+
   it("returns nothing for an unrecognisable header", () => {
     expect(parseRpmCsv("a,b,c\n1,2,3").motors).toEqual([]);
   });
@@ -149,18 +159,18 @@ describe("trailingFlatCut", () => {
   // A held rev from the console can leave the first motor out. Its flat-from-the-start trace once
   // set the cut to 0 and charted nothing at all.
   it("is not decided by a motor that was never driven", () => {
-    expect(trailingFlatCut({ motors: [motor(1, still), motor(2, spun)], voltage: [] }, 200, 0.02))
+    expect(trailingFlatCut({ motors: [motor(1, still), motor(2, spun)], voltage: [], current: [] }, 200, 0.02))
       .toBe(50);
   });
 
   it("cuts at the latest point any motor is still changing", () => {
     const later = [...Array(80).keys()].map((i) => i * 50).concat(Array(270).fill(4800));
-    expect(trailingFlatCut({ motors: [motor(1, spun), motor(2, later)], voltage: [] }, 200, 0.02))
+    expect(trailingFlatCut({ motors: [motor(1, spun), motor(2, later)], voltage: [], current: [] }, 200, 0.02))
       .toBe(80);
   });
 
   it("keeps a capture where every motor is flat whole", () => {
-    expect(trailingFlatCut({ motors: [motor(1, still), motor(2, still)], voltage: [] }, 200, 0.02))
+    expect(trailingFlatCut({ motors: [motor(1, still), motor(2, still)], voltage: [], current: [] }, 200, 0.02))
       .toBe(350);
   });
 });
