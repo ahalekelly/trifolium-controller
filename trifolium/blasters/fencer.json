@@ -122,6 +122,7 @@
     "i2cSdaPin": 14,
     "i2cSclPin": 15,
     "batteryAdcPin": 28,
+    "currentAdcPin": 26,
     "escEnablePin": 255
   },
   "profiles": [

@@ -22,6 +22,7 @@
     "i2cSdaPin": 255,
     "i2cSclPin": 255,
     "batteryAdcPin": 255,
+    "currentAdcPin": 255,
     "escEnablePin": 255,
     "speedPotPin": 29,
     "speedPotReversed": false,

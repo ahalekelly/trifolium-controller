@@ -26,6 +26,7 @@ void clearWiring(DeviceSettings& s)
     s.i2cSdaPin = PIN_NOT_USED;
     s.i2cSclPin = PIN_NOT_USED;
     s.batteryAdcPin = PIN_NOT_USED;
+    s.currentAdcPin = PIN_NOT_USED;
     s.escEnablePin = PIN_NOT_USED;
     s.speedPotPin = PIN_NOT_USED;
     s.menuButtonPin = PIN_NOT_USED;
@@ -81,6 +82,7 @@ DeviceSettings factoryResetSettings()
     s.i2cSdaPin = deviceSettings.i2cSdaPin;
     s.i2cSclPin = deviceSettings.i2cSclPin;
     s.batteryAdcPin = deviceSettings.batteryAdcPin;
+    s.currentAdcPin = deviceSettings.currentAdcPin;
     s.escEnablePin = deviceSettings.escEnablePin;
     s.speedPotPin = deviceSettings.speedPotPin;
     s.speedPotReversed = deviceSettings.speedPotReversed;
@@ -140,6 +142,7 @@ void toJson(const DeviceSettings& settings, JsonDocument& doc)
     doc["i2cSdaPin"] = settings.i2cSdaPin;
     doc["i2cSclPin"] = settings.i2cSclPin;
     doc["batteryAdcPin"] = settings.batteryAdcPin;
+    doc["currentAdcPin"] = settings.currentAdcPin;
     doc["escEnablePin"] = settings.escEnablePin;
     doc["speedPotPin"] = settings.speedPotPin;
     doc["speedPotReversed"] = settings.speedPotReversed;
@@ -294,6 +297,7 @@ void fromJson(JsonDocument& doc, DeviceSettings& out, Source source)
     out.batteryAdcPin = doc["batteryAdcPin"] | out.batteryAdcPin;
     out.speedPotPin = doc["speedPotPin"] | out.speedPotPin;
     out.speedPotReversed = doc["speedPotReversed"] | out.speedPotReversed;
+    out.currentAdcPin = doc["currentAdcPin"] | out.currentAdcPin;
     out.escEnablePin = doc["escEnablePin"] | out.escEnablePin;
 
     out.hasDisplay = doc["hasDisplay"] | out.hasDisplay;

@@ -2945,6 +2945,17 @@
                   "step": 1
                 },
                 {
+                  "label": "Current ADC Pin",
+                  "kind": "int",
+                  "key": "device:currentAdcPin",
+                  "reboot": true,
+                  "onDevice": false,
+                  "display": "pin",
+                  "lo": 0,
+                  "hi": 255,
+                  "step": 1
+                },
+                {
                   "label": "ESC Enable Pin",
                   "kind": "int",
                   "key": "device:escEnablePin",

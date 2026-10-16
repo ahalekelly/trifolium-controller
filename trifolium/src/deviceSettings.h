@@ -31,6 +31,7 @@ struct DeviceSettings
     uint8_t i2cSdaPin;     // the display bus. The pair's block is derived, not stored - a GPIO's
     uint8_t i2cSclPin;     // I2C role is fixed by pin % 4, so storing it would be a second answer.
     uint8_t batteryAdcPin; // GPIO 26-29 only; anything else folds to unused
+    uint8_t currentAdcPin; // ESC current-sense output, logged with RPM captures; 26-29 only
     uint8_t escEnablePin;  // driven LOW at boot and by the low-voltage cutoff, to kill ESC power
     uint8_t speedPotPin;   // GPIO 26-29 only; sets the rev RPM in place of the profile's own
     bool speedPotReversed; // wired so that turning it up reads lower
