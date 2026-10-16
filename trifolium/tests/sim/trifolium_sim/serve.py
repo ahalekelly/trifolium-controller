@@ -43,7 +43,7 @@ ENUMERATION_S = 0.8  # after a reboot, how long before the port can be opened ag
 # What the firmware prints as it goes to reboot. A blaster is off the bus within milliseconds of
 # saying so, where the simulator, paced to the wall clock on a busy machine, can take longer than a
 # host's first retry - which would then find the old boot still answering.
-REBOOT_ANNOUNCED = re.compile(r'"rebooting":true|"evt":"rebooting"')
+REBOOT_ANNOUNCED = re.compile(r'"rebooting":true')
 ANNOUNCED_REBOOT_MS = 2000  # how far to run ahead for it, in simulated time
 
 WS_GUID = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -144,6 +144,9 @@ def control(b, req):
                 else {req["names"][0]: b.peek(req["names"][0])}}
     if op == "wheels":
         return {"wheels": b.wheels()}
+    if op == "wheel":
+        b.wheel(req["index"], **{k: v for k, v in req.items() if k not in ("op", "index")})
+        return {}
     if op == "extends":
         return {"at_us": b.extends()}
     if op == "wiring":
@@ -172,8 +175,8 @@ def control(b, req):
     raise ValueError(f"unknown op {op!r}")
 
 
-CONTROL = ("press release tap pack pot magazine reload panel peek wheels extends wiring power_cycle "
-           "power_on state flash snapshot speed").split()
+CONTROL = ("press release tap pack pot magazine reload panel peek wheels wheel extends wiring "
+           "power_cycle power_on state flash snapshot speed").split()
 
 
 class Host:

@@ -69,7 +69,7 @@ def test_a_preset_arms_an_unwired_board(blaster):
   wiring gives it; the pack is read on every other ADC pin), `analog(pin, raw)`,
   `magazine(capacity=, load_rate=, leave_ms=)` and `reload()` (a magazine feeding the breech, which
   the dart switch reads; it stays in across reboots), `magazine_state()`,
-  `wheel(i, kv=, loaded=, tauUp=, replies=, replyEvery=)`,
+  `wheel(i, kv=, loaded=, tauUp=, startDelaySpread=, replies=, replyEvery=)`,
   `esc_startup(ms=, restart_ms=)`, `darts(loaded=, loss_rpm=)`, `passthrough_session(ms, restore_fails=)`, `set_noinit(...)`. A switch
   can be held through power-on, too.
 - **Running:** `boot(settle_ms)`, `power_on()`, `run_ms()`, `run_until(pred, limit_ms)`,
@@ -121,15 +121,12 @@ python -m trifolium_sim.serve --preset trifolium_v1_2 --display
 This keeps a blaster running in wall-clock time. Its USB serial is `socket://127.0.0.1:5333`, which
 pyserial opens with `serial.serial_for_url()`; `ws://127.0.0.1:5335` is the same serial for a browser.
 One host at a time. A reboot drops it, as re-enumeration drops the COM port, and for a moment after
-nothing can connect. Port 5334 takes one JSON request per line for the bench: `press`, `release`, `tap`,
-`pack` (with `riseMs` for a divider still charging), `pot` (a `fraction` of its travel), `panel`,
-`peek`, `wheels`, `extends`, `wiring`,
-`power_cycle`, `power_on` (with `source` `battery` or `usb`), `state`, and `flash`, which reads a file
-off the blaster's flash. Its ESCs start up as the measured blaster's do; `--instant-escs` makes them
+nothing can connect. Port 5334 takes one JSON request per line for the bench: `press`, `release`,
+`tap`, `pack` (with `riseMs` for a divider still charging), `pot` (a `fraction` of its travel),
+`panel`, `peek`, `wheels`, `wheel` (the model's parameters, as `Blaster.wheel()` takes them),
+`extends`, `wiring`, `power_cycle`, `power_on` (with `source` `battery` or `usb`), `state`, and
+`flash`, which reads a file off the blaster's flash. Its ESCs start up as the measured blaster's do; `--instant-escs` makes them
 answer at once, which is how the suite's own `serve.py` tests run it.
-
-pyserial's `socket://` `read()` discards the bytes it has gathered when the connection closes during
-the call, and a capture dump always ends in a reboot. Read one with a plain socket.
 
 ## The simulator panel
 
@@ -226,7 +223,8 @@ The fake board:
   reads it, as TinyUSB does, up to its 256 bytes before the host's write waits.
 - How any other blaster's motors respond. `SimFlywheel` is fitted to one v1.2 blaster's captures
   (`bench/capture_rpm.py`: two 3200 kV motors on 4S, PID control). It models the ESC's start delay
-  from rest (a fixed 80 ms here, 40-150 ms there), spin-up at the ESC's current limit (325 RPM/ms),
-  the braking spin-down, and each dart's loss (1700 RPM). It does not hunt around its target as the
-  real PID does, by 300-500 RPM at 32k, and it has none of the telemetry spikes at start-up.
+  from rest (80 ms here, or varied by `startDelaySpread` from one start to the next; 40-150 ms
+  there), spin-up at the ESC's current limit (325 RPM/ms), the braking spin-down, and each dart's
+  loss (1700 RPM). It does not hunt around its target as the real PID does, by 300-500 RPM at 32k,
+  and it has none of the telemetry spikes at start-up.
 - Integer division by zero: the PC traps where the RP2040 returns a saturated quotient.

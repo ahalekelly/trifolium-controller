@@ -200,8 +200,8 @@ class Blaster:
         self._set_world(("passthrough",), "passthrough", ticks=ticks, restoreFails=restore_fails)
 
     def wheel(self, index, **params):
-        """The flywheel model on escPins[index]: kv, loaded, startDelay, maxAccel, tauUp, tauDown,
-        poles, replyEvery, replies. Its ESC's start-up is esc_startup()."""
+        """The flywheel model on escPins[index]: kv, loaded, startDelay, startDelaySpread, maxAccel,
+        tauUp, tauDown, poles, replyEvery, replies. Its ESC's start-up is esc_startup()."""
         key = ("wheel", index)
         merged = dict(self._world.get(key, ("wheel", {"index": index}))[1], **params)
         self._set_world(key, "wheel", **merged)

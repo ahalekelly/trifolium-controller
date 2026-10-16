@@ -609,6 +609,8 @@ class Host
         w.tauUp_s = req["tauUp"] | w.tauUp_s;
         w.tauDown_s = req["tauDown"] | w.tauDown_s;
         w.startDelay_s = req["startDelay"] | w.startDelay_s;
+        w.startDelaySpread_s = req["startDelaySpread"] | w.startDelaySpread_s;
+        w.seedSpread((int)req["index"] + 1);
         w.maxAccel_rpmPerS = req["maxAccel"] | w.maxAccel_rpmPerS;
         w.polePairs = req["poles"] | w.polePairs;
         w.replyEvery = req["replyEvery"] | w.replyEvery;
@@ -993,6 +995,8 @@ class Host
                 JsonObject o = v.add<JsonObject>();
                 o["enabled"] = motorsEnabled[i];
                 o["revRPM"] = m.revRPM;
+                o["kp"] = m.m_config->m_pGain;
+                o["ki"] = m.m_config->m_iGain;
                 o["targetRPM"] = m.targetRPM;
                 o["motorRPM"] = m.motorRPM;
                 o["PIDOutput"] = m.PIDOutput;
