@@ -88,3 +88,47 @@ describe("EscSettingsPanel", () => {
     host.remove();
   });
 });
+
+describe("EscSettingsPanel's staged edits", () => {
+  /** Types into the edit box of the row labelled `label`, as React sees a keystroke. */
+  const type = (host: HTMLElement, label: string, text: string) => {
+    const row = [...host.querySelectorAll("tr")].find((r) =>
+      r.firstElementChild?.textContent?.startsWith(label),
+    )!;
+    const input = row.querySelector("input")!;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const writeButton = (host: HTMLElement) =>
+    [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Write"))!;
+
+  it("are dropped with the settings they were typed against", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const render = (escs: EscSettings[] | null) =>
+      act(async () =>
+        root.render(
+          <EscSettingsPanel
+            escs={escs}
+            motors={[2, 4]}
+            disabled={false}
+            onRead={() => {}}
+            onWrite={() => {}}
+          />,
+        ),
+      );
+    await render(twoEscs());
+    await act(async () => type(host, "Startup power", "120"));
+    expect(writeButton(host).textContent).toContain("Write 1 change");
+
+    // A failed write clears the table; the edit must go with it rather than outlive its row.
+    await render(null);
+    expect(writeButton(host).disabled).toBe(true);
+    await render(twoEscs());
+    expect(writeButton(host).textContent).not.toContain("1 change");
+
+    await act(async () => root.unmount());
+    host.remove();
+  });
+});

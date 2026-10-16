@@ -82,21 +82,22 @@ export function EscSettingsPanel({
   onRead: () => void;
   onWrite: (values: Record<string, number>) => void;
 }) {
-  const [edits, setEdits] = React.useState<Record<string, string>>({});
-  // Edits are against the ESCs on screen: a write's own result, or a fresh read, starts over.
-  React.useEffect(() => setEdits({}), [escs]);
+  // Edits belong to the settings they were typed against, so a new read, a write's result or a
+  // failure that clears the table drops them in the same render rather than one later.
+  const [staged, setStaged] = React.useState({ escs, edits: {} as Record<string, string> });
+  const edits = staged.escs === escs ? staged.edits : {};
+  const setEdits = (next: Record<string, string>) => setStaged({ escs, edits: next });
   const rows = React.useMemo(() => (escs ? escRows(escs) : []), [escs]);
   const { values, errors } = editedValues(rows, edits);
   const editCount = Object.keys(edits).length;
   const valid = editCount > 0 && Object.keys(errors).length === 0;
 
-  const edit = (name: string, text: string | null) =>
-    setEdits((prev) => {
-      const next = { ...prev };
-      if (text === null) delete next[name];
-      else next[name] = text;
-      return next;
-    });
+  const edit = (name: string, text: string | null) => {
+    const next = { ...edits };
+    if (text === null) delete next[name];
+    else next[name] = text;
+    setEdits(next);
+  };
 
   return (
     <Stack spacing={1}>
