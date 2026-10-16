@@ -34,3 +34,33 @@ open: each step names the lines to look for. Darts out, muzzle clear.
 9. **Put it back.** Write the step 1 Beep volume.
 
 Report any failure with the console log, saved from the log panel.
+
+## ESC tuning run
+
+The Tune tab's ESC runs (`tools/console/src/tune/`) are tested against fake ESCs. This walk checks
+what only real ESCs show: each write restarts the blaster and spin-ups resume on the written
+settings, and the ESCs' own settings come back after every stop.
+
+Needs the walk above passing, plus RPM Logging on with Capture Samples at least the rampup timeout
+plus 500 ms (the Tune tab says if not). Put a current-limited bench supply in parallel with the pack
+so the voltage holds.
+
+1. **Note the start.** Read ESCs on the ESCs tab and note Startup power and PWM frequency.
+2. **Plan.** On the Tune tab pick ESC settings, type two PWM frequencies (say `24, 48`), set
+   Spin-ups per finalist to 4 and one target RPM. Expect `2 candidates, about 8 spin-ups and at most
+   3 ESC writes`.
+3. **Start.** Expect `Reading the ESCs' settings.`, three baseline spin-ups with no write, then
+   `Writing PWM frequency 24 kHz to the ESCs.`: the blaster restarts, the log shows `ESC n written
+   and verified.` per ESC, and that candidate's spin-ups run back to back. Every spin-up reaches
+   speed.
+4. **Pause mid-block.** Pause during a candidate's spin-ups. Expect `Writing the original settings
+   to the ESCs.` and the run paused with no warning. Read ESCs: step 1's values.
+5. **Resume.** The candidate is written again before its next spin-up.
+6. **Reload mid-block.** Reload the page during a candidate's spin-ups. The Tune tab shows the run
+   paused and warns that the ESCs may still hold a candidate's settings. Connect: expect `Writing
+   the original settings to the ESCs.` and the warning gone. Resume: the candidate is written again
+   before measuring.
+7. **Finish.** Expect Done after a closing baseline block, with no write after it, and an ESC write
+   count no higher than planned plus two per pause. Read ESCs: step 1's values.
+8. **Apply.** Apply the winner. Expect `Applied … to the ESCs.` and Read ESCs showing it. Discard
+   the run: no write. Write step 1's values back on the ESCs tab.
