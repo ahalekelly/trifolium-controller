@@ -10,6 +10,11 @@
 // is one erase. So a write reads every ESC first, changes only the named fields, and skips an ESC
 // whose block would come out byte-identical. The values written are the same on every ESC; every
 // byte not named keeps each ESC's own value (its direction, above all).
+//
+// A block that does not verify is not left to boot: a damaged byte can reverse a motor, and AM32's
+// bootloader will not start the app at all unless byte 0 is 1. So a failed write puts the ESC's
+// original block back and verifies that, and an ESC whose original will not go back either is left
+// in its bootloader, where nothing it holds is run.
 
 import { getByKey } from "../schema/keyPath";
 import type { SerialTransport } from "../serial/transport";
@@ -58,11 +63,44 @@ export async function readEscs(fourway: Fourway, escs: number[]): Promise<EscSet
 }
 
 /**
+ * Writes `block` to one ESC and reads it back. Null when it verified, otherwise what went wrong -
+ * a mismatch or the protocol's own error, since either leaves the block in doubt.
+ */
+async function writeVerified(
+  fourway: Fourway,
+  esc: number,
+  address: number,
+  block: Uint8Array,
+): Promise<string | null> {
+  try {
+    // Connected again: the ESCs share the one bootloader channel the last connect() pointed at.
+    await fourway.connect(esc);
+    await fourway.write(address, block);
+    const back = await fourway.read(address, BLOCK_SIZE);
+    const wrong = back.findIndex((b, i) => b !== block[i]);
+    return wrong === -1 ? null : `byte ${wrong} reads back ${back[wrong]}, ${block[wrong]} was written`;
+  } catch (e) {
+    return (e as Error).message;
+  }
+}
+
+/** A write that left ESCs holding blocks not known to be good. The session leaves them unstarted. */
+export class EscsNotRestored extends Error {
+  constructor(
+    readonly escs: number[],
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/**
  * Writes `values` (raw, by AM32 field name) to every ESC and returns what each holds after.
  *
  * Every ESC is read and every new block worked out before the first write, so a name or value one
- * ESC's layout refuses stops the write with none of them changed. Each write is read back; a block
- * that does not match is a loud error, with that ESC's write the last one attempted.
+ * ESC's layout refuses stops the write with none of them changed. Each write is read back. One that
+ * does not verify stops the write there: its ESC gets its original block back, verified, and the
+ * error says so - or, when that fails too, is an EscsNotRestored naming it.
  */
 export async function writeEscs(
   fourway: Fourway,
@@ -85,27 +123,38 @@ export async function writeEscs(
       out.push(settings);
       continue;
     }
-    // Connected again: the ESCs share the one bootloader channel the last connect() pointed at.
-    await fourway.connect(settings.esc);
-    await fourway.write(address, next);
-    const back = await fourway.read(address, BLOCK_SIZE);
-    const wrong = back.findIndex((b, i) => b !== next[i]);
-    if (wrong !== -1) {
-      throw new Error(
-        `ESC ${settings.esc} settings did not verify: byte ${wrong} reads back ${back[wrong]}, ` +
-          `${next[wrong]} was written. Read the ESCs again before trusting their settings.`,
+    const esc = settings.esc;
+    const failed = await writeVerified(fourway, esc, address, next);
+    if (failed !== null) {
+      const already = out.filter((e, i) => e.block !== planned[i].settings.block).map((e) => e.esc);
+      const others = already.length > 0 ? ` ESC ${already.join(", ")} took the new values.` : "";
+      const notRestored = await writeVerified(fourway, esc, address, settings.block);
+      if (notRestored === null) {
+        throw new Error(
+          `ESC ${esc} did not take its new settings (${failed}); its original settings are back ` +
+            `and verified.${others}`,
+        );
+      }
+      throw new EscsNotRestored(
+        [esc],
+        `ESC ${esc} did not take its new settings (${failed}), and putting its original settings ` +
+          `back failed too (${notRestored}). It is left in its bootloader rather than started on ` +
+          "settings that may be damaged. Before unplugging the battery, Read ESCs and write the " +
+          "settings again; if that fails, write them with am32.ca through Reboot > ESC " +
+          `Passthrough.${others}`,
       );
     }
-    log(`ESC ${settings.esc} written and verified.`);
-    out.push({ esc: settings.esc, layout: settings.layout, block: back });
+    log(`ESC ${esc} written and verified.`);
+    out.push({ esc, layout: settings.layout, block: next });
   }
   return out;
 }
 
 /**
  * Runs `work` inside an ESC passthrough session, and always ends it: every ESC connected is
- * restarted into its app, the port is closed, and the blaster is waited for in normal mode. An error
- * from `work` wins over one from the cleanup, which is still logged.
+ * restarted into its app - except any an EscsNotRestored names - the port is closed, and the blaster
+ * is waited for in normal mode. An error from `work` wins over one from the cleanup, which is still
+ * logged.
  */
 async function inPassthrough<T>(
   transport: SerialTransport,
@@ -137,7 +186,10 @@ async function inPassthrough<T>(
   }
 
   // Each step on its own, so one ESC that does not answer still leaves the rest restarted.
-  const steps = [...fourway.connected].map((esc) => () => fourway.reset(esc));
+  const held = failure instanceof EscsNotRestored ? failure.escs : [];
+  const steps = [...fourway.connected]
+    .filter((esc) => !held.includes(esc))
+    .map((esc) => () => fourway.reset(esc));
   for (const step of [...steps, () => fourway.exit()]) {
     try {
       await step();
