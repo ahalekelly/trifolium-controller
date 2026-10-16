@@ -21,6 +21,11 @@ struct SimFlywheel
     float packVoltage = 16.8f;
     float loadedFraction = 0.975f; // of Kv * V * duty the wheel actually reaches under drag
     float startDelay_s = 0.08f;
+    // Each start from rest takes startDelay_s give or take up to this, drawn afresh from a fixed
+    // sequence, so a run still repeats exactly. Off by default.
+    float startDelaySpread_s = 0.0f;
+    // Which sequence: one per wheel, so their starts vary independently.
+    void seedSpread(uint32_t seed) { spreadState_ = 0x9E3779B9u * seed; }
     float maxAccel_rpmPerS = 325000.0f;
     float tauUp_s = 0.04f;
     float tauDown_s = 0.07f;
@@ -106,6 +111,7 @@ struct SimFlywheel
     uint64_t lastUs_ = 0;
     uint64_t startAt_us_ = 0; // when a start from rest gets the wheel turning; 0 when not starting
     uint64_t frames_ = 0;
+    uint32_t spreadState_ = 0x9E3779B9u;
     bool signalSeen_ = false;
     uint64_t signalAt_us_ = 0;
     uint64_t hitAt_us_ = 0;
@@ -113,6 +119,15 @@ struct SimFlywheel
     Override override_ = Override::None;
     uint32_t overrideValue_ = 0;
     BidirDshotTelemetryType overrideType_ = BidirDshotTelemetryType::TEMPERATURE;
+
+    // Uniform in [-1, 1], from an xorshift sequence.
+    float spread()
+    {
+        spreadState_ ^= spreadState_ << 13;
+        spreadState_ ^= spreadState_ >> 17;
+        spreadState_ ^= spreadState_ << 5;
+        return spreadState_ / 2147483647.5f - 1.0f;
+    }
 
     void onFrame(BidirDShotX1& esc)
     {
@@ -125,7 +140,10 @@ struct SimFlywheel
             if (throttle == 0)
                 startAt_us_ = 0;
             else if (startAt_us_ == 0)
-                startAt_us_ = now + (uint64_t)(startDelay_s * 1e6f);
+            {
+                const float delay_s = std::max(0.0f, startDelay_s + startDelaySpread_s * spread());
+                startAt_us_ = now + (uint64_t)(delay_s * 1e6f);
+            }
         }
         const float target = steadyRpm(throttle);
         if (dt > 0 && now >= startAt_us_)
