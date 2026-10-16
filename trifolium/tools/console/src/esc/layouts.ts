@@ -32,9 +32,14 @@ export interface EscField {
   /** AM32's eeprom.h name, nested ones dotted, and the key a write is addressed by. */
   name: string;
   label: string;
-  /** The raw byte values AM32 accepts. */
+  /** The raw byte values AM32 acts on as numbers. */
   min: number;
   max: number;
+  /**
+   * For a setting AM32 turns off with a value outside min..max: the value written for Off. Every
+   * raw value outside the range reads as Off, as AM32 treats it.
+   */
+  off: { raw: number; label: string } | null;
   /** Shown as raw * scale + shift, in `unit`. */
   scale: number;
   shift: number;
@@ -53,8 +58,11 @@ interface Shown {
   scale?: number;
   shift?: number;
   unit?: string;
+  off?: { raw: number; label: string };
   searchable?: boolean;
 }
+
+const OFF = (raw: number) => ({ raw, label: "Off" });
 
 const num = (
   offset: number,
@@ -62,8 +70,20 @@ const num = (
   label: string,
   min: number,
   max: number,
-  { scale = 1, shift = 0, unit = "", searchable = false }: Shown = {},
-): EscField => ({ offset, name, label, min, max, scale, shift, unit, options: null, searchable });
+  { scale = 1, shift = 0, unit = "", off, searchable = false }: Shown = {},
+): EscField => ({
+  offset,
+  name,
+  label,
+  min,
+  max,
+  off: off ?? null,
+  scale,
+  shift,
+  unit,
+  options: null,
+  searchable,
+});
 
 const choice = (
   offset: number,
@@ -77,6 +97,7 @@ const choice = (
   label,
   min: 0,
   max: options.length - 1,
+  off: null,
   scale: 1,
   shift: 0,
   unit: "",
@@ -120,9 +141,16 @@ const V4: EscField[] = [
   choice(29, "stall_protection", "Stall protection", OFF_ON, true),
   num(6, "minimum_duty_cycle", "Minimum duty cycle", 0, 50, { scale: 0.5, unit: "%" }),
 
-  // The motor fitted. AM32 derives its low-RPM throttle limit from Kv, so these must be the truth.
+  // The motor fitted. Kv and poles set the RPM range of AM32's low-RPM power protection, which
+  // limits duty while the motor turns slowly; Kv 20 (raw 0) turns that protection off instead.
+  // Trifolium's own Kv and poles are its device settings, not these.
   num(27, "motor_poles", "Motor poles", 2, 36),
-  num(26, "motor_kv", "Motor Kv", 0, 255, { scale: 40, shift: 20, unit: "Kv" }),
+  num(26, "motor_kv", "Motor Kv", 1, 255, {
+    scale: 40,
+    shift: 20,
+    unit: "Kv",
+    off: { raw: 0, label: "Off (low-RPM power protection disabled)" },
+  }),
 
   // Braking.
   choice(28, "brake_on_stop", "Brake on stop", ["Off", "Brake on stop", "Active brake"]),
@@ -134,7 +162,7 @@ const V4: EscField[] = [
   ]),
   num(12, "active_brake_power", "Active brake power", 0, 5, { unit: "%" }),
   num(41, "drag_brake_strength", "Brake strength", 1, 10),
-  num(42, "driving_brake_strength", "Running brake level", 1, 10),
+  num(42, "driving_brake_strength", "Running brake level", 1, 9, { off: OFF(10) }),
 
   // Protections.
   choice(36, "low_voltage_cut_off", "Low voltage cutoff", ["Off", "Cell based", "Absolute"]),
@@ -144,9 +172,9 @@ const V4: EscField[] = [
     unit: "V/cell",
   }),
   num(8, "absolute_voltage_cutoff", "Absolute cutoff voltage", 1, 100, { scale: 0.5, unit: "V" }),
-  // Above 140 °C (and above 100, so 202 A) means no limit.
-  num(43, "limits.temperature", "Temperature limit", 70, 141, { unit: "°C" }),
-  num(44, "limits.current", "Current limit", 0, 101, { scale: 2, unit: "A" }),
+  // AM32 rewrites a temperature outside 70-140 as 255, its own Off.
+  num(43, "limits.temperature", "Temperature limit", 70, 140, { unit: "°C", off: OFF(255) }),
+  num(44, "limits.current", "Current limit", 1, 100, { scale: 2, unit: "A", off: OFF(0) }),
   num(9, "current_P", "Current P", 0, 255),
   num(10, "current_I", "Current I", 0, 255),
   num(11, "current_D", "Current D", 0, 255),
@@ -155,12 +183,19 @@ const V4: EscField[] = [
 ];
 
 /**
- * Every layout this console reads and writes, by eeprom_version. 3 (AM32 2.19 and 2.20) is 4
- * without zero-throttle braking, whose byte 13 it reserved. Earlier versions kept the firmware's
- * name in bytes 5-16 and had no fields there.
+ * Layout 3, AM32 2.19 and 2.20: 4 without zero-throttle braking, whose byte 13 it reserved, and
+ * with a current limit that is on only below 100 (200 A).
+ */
+const V3: EscField[] = V4.filter((f) => f.name !== "brake_on_zero_throttle").map((f) =>
+  f.name === "limits.current" ? { ...f, max: 99 } : f,
+);
+
+/**
+ * Every layout this console reads and writes, by eeprom_version. Earlier versions kept the
+ * firmware's name in bytes 5-16 and had no fields there.
  */
 export const LAYOUTS: Record<number, EscLayout> = {
-  3: { version: 3, fields: V4.filter((f) => f.name !== "brake_on_zero_throttle") },
+  3: { version: 3, fields: V3 },
   4: { version: 4, fields: V4 },
 };
 
@@ -187,6 +222,7 @@ export const firmwareOf = (block: Uint8Array): string =>
 /** A raw value as shown. Rounded so 0.1-step scales do not show as 0.30000000000000004. */
 export function shown(field: EscField, raw: number): string {
   if (field.options) return field.options[raw - field.min] ?? `${raw} (unknown)`;
+  if (field.off && (raw < field.min || raw > field.max)) return field.off.label;
   const value = Number((raw * field.scale + field.shift).toFixed(4));
   return field.unit ? `${value} ${field.unit}` : String(value);
 }
@@ -205,9 +241,11 @@ export function withValues(block: Uint8Array, values: Record<string, number>): U
   for (const [name, value] of Object.entries(values)) {
     const field = layout.fields.find((f) => f.name === name);
     if (!field) throw new Error(`ESC settings layout ${layout.version} has no field ${name}`);
-    if (!Number.isInteger(value) || value < field.min || value > field.max) {
+    const inRange = Number.isInteger(value) && value >= field.min && value <= field.max;
+    if (!inRange && value !== field.off?.raw) {
+      const off = field.off ? `, or ${field.off.raw} for Off` : "";
       throw new Error(
-        `${name} must be a whole number from ${field.min} to ${field.max}, not ${value}`,
+        `${name} must be a whole number from ${field.min} to ${field.max}${off}, not ${value}`,
       );
     }
     out[field.offset] = value;

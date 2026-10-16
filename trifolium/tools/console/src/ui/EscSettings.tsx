@@ -40,14 +40,16 @@ export function escRows(escs: EscSettings[]): EscRow[] {
       const own = layout.fields.find((f) => f.name === field.name);
       return own ? block[own.offset] : null;
     });
-    const present = raws.filter((r): r is number => r !== null);
+    // Compared as shown, so two raw values that both mean Off agree.
+    const present = raws.filter((r): r is number => r !== null).map((r) => shown(field, r));
     return { field, raws, disagree: new Set(present).size > 1 };
   });
 }
 
 /**
  * Typed edits as the raw values a write takes, or why one cannot be written. A number is typed as
- * shown (with its scale and shift) and goes to the nearest raw step, which must be in range.
+ * shown (with its scale and shift) and goes to the nearest raw step, which must be in range; "off"
+ * is Off where the field has one.
  */
 export function editedValues(
   rows: EscRow[],
@@ -57,9 +59,14 @@ export function editedValues(
   const errors: Record<string, string> = {};
   for (const [name, text] of Object.entries(edits)) {
     const field = rows.find((r) => r.field.name === name)!.field;
+    if (field.off && text.trim().toLowerCase() === "off") {
+      values[name] = field.off.raw;
+      continue;
+    }
     const raw = field.options ? Number(text) : rawFrom(field, Number(text));
     if (!Number.isInteger(raw) || raw < field.min || raw > field.max) {
-      errors[name] = `${shown(field, field.min)} to ${shown(field, field.max)}`;
+      const range = `${shown(field, field.min)} to ${shown(field, field.max)}`;
+      errors[name] = field.off ? `${range}, or Off` : range;
     } else {
       values[name] = raw;
     }
@@ -181,7 +188,7 @@ export function EscSettingsPanel({
                     variant="standard"
                     fullWidth
                     value={edits[field.name] ?? ""}
-                    placeholder={field.unit}
+                    placeholder={field.off ? `${field.unit} or Off`.trim() : field.unit}
                     error={field.name in errors}
                     helperText={errors[field.name]}
                     onChange={(e) => edit(field.name, e.target.value === "" ? null : e.target.value)}
