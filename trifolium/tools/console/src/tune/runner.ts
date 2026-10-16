@@ -9,6 +9,7 @@
 // when a dropped link stopped it, the next connection does.
 
 import { getByKey } from "../schema/keyPath";
+import { sleep } from "../serial/sleep";
 import type { Capture, CommandAck, SerialTransport } from "../serial/transport";
 import type { MotorsDump } from "../ui/MotorActions";
 import {
@@ -34,8 +35,6 @@ const STOP_TIMEOUT_MS = 30000;
 const STOP_POLL_MS = 250;
 /** DUMP_MOTORS' flywheelState for flywheelState_t's STATE_IDLE. */
 const STATE_IDLE = 0;
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** What a run needs from the device config, or why it will not do. */
 export function runSettings(
@@ -189,20 +188,28 @@ export class TuneRunner {
     if (!ack.ok) throw new Error(`The blaster refused TUNE: ${ack.err}.`);
 
     const capture = new Promise<Capture | null>((resolve) => {
-      const timer = setTimeout(() => resolve(null), captureMs + 5000);
-      this.captureWaiter = (c) => {
-        clearTimeout(timer);
-        resolve(c);
-      };
+      this.captureWaiter = resolve;
+      void sleep(captureMs + 5000).then(() => resolve(null));
     });
-    let refused: string | null = null;
-    const release = this.transport.hold("rev", (err) => (refused = err));
-    await sleep(holdMs);
-    release();
+    // Held for holdMs, or until the hold is lost, which leaves no capture worth waiting for.
+    let lost: string | null = null;
+    await new Promise<void>((resolve) => {
+      const release = this.transport.hold("rev", (why) => {
+        lost = why;
+        resolve();
+      });
+      void sleep(holdMs).then(() => {
+        release();
+        resolve();
+      });
+    });
+    if (lost) {
+      this.captureWaiter = null;
+      throw new Error(`The console let go of Rev: ${lost}.`);
+    }
     const got = await capture;
     this.captureWaiter = null;
 
-    if (refused) throw new Error(`The blaster refused Rev: ${refused}.`);
     if (!got) {
       throw new Error(
         "No RPM capture came back. Is the blaster still connected, and does its fire mode rev on " +

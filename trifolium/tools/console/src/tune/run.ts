@@ -171,10 +171,14 @@ export function nextSet(run: Run): { search: Search; next: string | null } {
   return { search, next };
 }
 
+/** A stopped motor's telemetry reads 0; a capture that starts above this did not start from rest. */
+const REST_RPM = 500;
+
 /**
  * Reads a spin-up off its capture: the firmware's own fire-ready time, and how far the worst motor
  * went past `rpm` once it first got there, as % of `rpm`. `traceMs` is how much of the slowest
- * motor's RPM to keep for the chart.
+ * motor's RPM to keep for the chart. A capture that did not start from rest at `rpm` is some other
+ * rev's - the trigger, the Rev switch, a hold that lapsed and came back - and is refused.
  */
 export function measure(
   capture: Capture,
@@ -184,6 +188,15 @@ export function measure(
   const log = parseRpmCsv(wholeRows(capture.csv).csv);
   if (!log.motors.length || !log.voltage.length) {
     throw new Error("The capture has no motor or pack voltage columns.");
+  }
+  for (const motor of log.motors) {
+    if (motor.rpm[0] > REST_RPM || motor.targetRpm[0] !== rpm) {
+      throw new Error(
+        `The capture started with motor ${motor.index} at ${motor.rpm[0]} RPM aiming for ` +
+          `${motor.targetRpm[0]}, not from rest aiming for ${rpm}: something else revved the ` +
+          "blaster.",
+      );
+    }
   }
   let overshootPct = 0;
   for (const motor of log.motors) {

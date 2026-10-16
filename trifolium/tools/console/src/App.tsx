@@ -639,8 +639,8 @@ export function App() {
   }, [live, tab, busy, transport]);
 
   const holdSwitch = (role: SwitchRole, onLost: () => void) =>
-    transport.hold(role, (err) => {
-      note("err", `HOLD ${role}: ${err}`);
+    transport.hold(role, (why) => {
+      note("err", `Let go of ${role}: ${why}.`);
       onLost();
     });
   const switchesBlocked = !live

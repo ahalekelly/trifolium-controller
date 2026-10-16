@@ -21,7 +21,7 @@ export function ConsoleSwitches({
   blocked: string | null;
   /**
    * Holds the switch until the returned function lets go. onLost: the hold ended without being let
-   * go here - the blaster refused it.
+   * go here - a refusal, or renewals falling behind.
    */
   onHold: (role: SwitchRole, onLost: () => void) => () => void;
 }) {

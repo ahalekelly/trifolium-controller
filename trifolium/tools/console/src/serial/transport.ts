@@ -11,6 +11,7 @@
 
 import { serial as usbSerial } from "../vendor/web-serial-polyfill/dist/serial.js";
 import { isCaptureHeader, isCaptureRow } from "../rpm/parse";
+import { sleep } from "./sleep";
 
 export type LogKind = "out" | "in" | "ok" | "err";
 
@@ -197,6 +198,11 @@ export type SwitchRole = "rev" | "trigger";
 
 /** How often a held switch renews its hold - well inside the device's 300 ms lapse. */
 const HOLD_RENEW_MS = 100;
+/**
+ * A renewal this long after the last lets go. The device would soon have let go itself, and the next
+ * late renewal would rev it again - from speed, not from rest.
+ */
+const HOLD_LATE_MS = 200;
 
 const WHOLE_ATTEMPTS = 3;
 
@@ -617,26 +623,36 @@ export class SerialTransport {
   /**
    * Holds the rev or trigger switch until the returned function lets go: HOLD now and every
    * HOLD_RENEW_MS, then RELEASE. A hold the device stops hearing lapses on its own, so a closed tab or
-   * a dropped link lets go too. A refusal ends the hold and is passed to `onRefused`.
+   * a dropped link lets go too. A refusal, or renewals falling behind, ends the hold and `onLost`
+   * hears why.
    */
-  hold(role: SwitchRole, onRefused: (err: string) => void): () => void {
+  hold(role: SwitchRole, onLost: (why: string) => void): () => void {
     let held = true;
-    // Not awaited: the device lets go if a renewal is late, so the next one goes out on time
-    // whatever became of the last one's reply.
-    const renew = () =>
-      void this.poll<CommandAck>(`HOLD ${role}`).then((ack) => {
-        if (!ack || ack.ok || !held) return;
-        release();
-        onRefused(ack.err ?? "refused");
-      });
-    const timer = setInterval(renew, HOLD_RENEW_MS);
     const release = () => {
       if (!held) return;
       held = false;
-      clearInterval(timer);
       void this.poll(`RELEASE ${role}`);
     };
-    renew();
+    const lose = (why: string) => {
+      if (!held) return;
+      release();
+      onLost(why);
+    };
+    void (async () => {
+      await sleep(0); // starts the timer worker the first time, outside the gaps measured
+      let last = performance.now();
+      while (held) {
+        // Not awaited: the device lets go if a renewal is late, so the next one goes out on time
+        // whatever became of the last one's reply.
+        void this.poll<CommandAck>(`HOLD ${role}`).then((ack) => {
+          if (ack && !ack.ok) lose(`the blaster refused it (${ack.err})`);
+        });
+        await sleep(HOLD_RENEW_MS);
+        const now = performance.now();
+        if (now - last > HOLD_LATE_MS) lose(`renewals fell ${Math.round(now - last)} ms apart`);
+        last = now;
+      }
+    })();
     return release;
   }
 

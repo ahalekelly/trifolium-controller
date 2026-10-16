@@ -100,4 +100,11 @@ describe("measure", () => {
     expect(s).toEqual({ rpm: 30000, readyMs: 3, overshootPct: 2, packMv: 16400 });
     expect(trace).toEqual([0, 28000, 29900]);
   });
+
+  it("refuses a capture that did not start from rest at the RPM asked for", () => {
+    const report = { readyMs: 3, slowestMotor: 3, timedOut: false };
+    const spinning = csv.replace("16400,0,30000", "16400,12000,30000");
+    expect(() => measure({ csv: spinning, report }, 30000, 3)).toThrow(/motor 1 at 12000 RPM/);
+    expect(() => measure({ csv, report }, 25000, 3)).toThrow(/aiming for 30000/);
+  });
 });
