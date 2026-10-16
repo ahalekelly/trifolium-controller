@@ -4,7 +4,14 @@
 import { describe, expect, it } from "vitest";
 import { FakeBlaster } from "./fakeBlaster";
 import { CMD, Fourway } from "./fourway";
-import { escTargets, readEscs, writeEscs } from "./session";
+import type { SerialTransport } from "../serial/transport";
+import {
+  EscsNotRestored,
+  escTargets,
+  readEscs,
+  writeEscSettings,
+  writeEscs,
+} from "./session";
 import { V4_DEFAULT } from "./testdata";
 
 const quiet = () => {};
@@ -81,12 +88,28 @@ describe("writeEscs", () => {
     expect(blaster.writes).toEqual([]);
   });
 
-  it("fails loudly when a block does not read back as written", async () => {
+  it("puts back an ESC's original block when its write does not verify", async () => {
     const blaster = twoEscs();
-    blaster.escs[1].corruptByte = 25;
+    const original = blaster.escs[1].block.slice();
+    blaster.escs[1].corrupt = { byte: 25, writes: 1 };
     await expect(
       writeEscs(new Fourway(blaster), [0, 1], { advance_level: 30 }, quiet),
-    ).rejects.toThrow(/ESC 1 settings did not verify: byte 25/);
+    ).rejects.toThrow(
+      /ESC 1 did not take its new settings \(byte 25 .*\); its original settings are back and verified. ESC 0 took the new values/,
+    );
+    expect(blaster.escs[1].block).toEqual(original);
+    expect(blaster.writes).toEqual([0, 1, 1]);
+  });
+
+  it("names an ESC whose original block will not go back either", async () => {
+    const blaster = twoEscs();
+    blaster.escs[0].corrupt = { byte: 0, writes: 2 };
+    const failure = await writeEscs(new Fourway(blaster), [0, 1], { advance_level: 30 }, quiet)
+      .then(() => null, (e: unknown) => e);
+    expect(failure).toBeInstanceOf(EscsNotRestored);
+    expect((failure as EscsNotRestored).escs).toEqual([0]);
+    expect((failure as Error).message).toMatch(/left in its bootloader/);
+    expect(blaster.writes).toEqual([0, 0]); // ESC 1 never written
   });
 
   it("refuses an ESC whose layout has no table, writing nothing", async () => {
@@ -94,5 +117,53 @@ describe("writeEscs", () => {
     blaster.escs[0].block[1] = 2;
     await expect(writeEscs(new Fourway(blaster), [0, 1], {}, quiet)).rejects.toThrow(/layout 2/);
     expect(blaster.writes).toEqual([]);
+  });
+});
+
+/**
+ * The transport side of a passthrough session, around a fake blaster: the ack, the reboots and the
+ * reconnects all succeed, so what is left to see is what the session sends the ESCs.
+ */
+const sessionOver = (blaster: FakeBlaster) => {
+  const said: string[] = [];
+  const transport = {
+    command: async () => ({ cmd: "ESC_PASSTHROUGH", ok: true, rebooting: true }),
+    reopenAfterReboot: async () => true,
+    waitReady: async () => true,
+    disconnect: async () => {},
+    binaryLink: () => blaster,
+    log: (_kind: string, text: string) => said.push(text),
+  } as unknown as SerialTransport;
+  return { transport, said };
+};
+
+describe("writeEscSettings", () => {
+  const targets = { motors: [1, 2], pusherEsc: false };
+  const resets = (blaster: FakeBlaster) =>
+    blaster.log.filter(([command]) => command === CMD.DeviceReset).map(([, esc]) => esc);
+
+  it("restarts every ESC it reached and leaves 4-way", async () => {
+    const blaster = twoEscs();
+    await writeEscSettings(sessionOver(blaster).transport, targets, { advance_level: 30 });
+    expect(resets(blaster)).toEqual([0, 1]);
+    expect(blaster.log[blaster.log.length - 1][0]).toBe(CMD.InterfaceExit);
+  });
+
+  it("restarts an ESC whose original block went back", async () => {
+    const blaster = twoEscs();
+    blaster.escs[1].corrupt = { byte: 25, writes: 1 };
+    await expect(
+      writeEscSettings(sessionOver(blaster).transport, targets, { advance_level: 30 }),
+    ).rejects.toThrow(/original settings are back/);
+    expect(resets(blaster)).toEqual([0, 1]);
+  });
+
+  it("leaves an ESC that could not be restored in its bootloader", async () => {
+    const blaster = twoEscs();
+    blaster.escs[1].corrupt = { byte: 0, writes: 2 };
+    await expect(
+      writeEscSettings(sessionOver(blaster).transport, targets, { advance_level: 30 }),
+    ).rejects.toBeInstanceOf(EscsNotRestored);
+    expect(resets(blaster)).toEqual([0]);
   });
 });
