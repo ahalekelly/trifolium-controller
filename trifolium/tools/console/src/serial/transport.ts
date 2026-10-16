@@ -647,7 +647,13 @@ export class SerialTransport {
     };
   }
 
-  /** Resolves with the next matching line, or null on timeout. */
+  /**
+   * Resolves with the next matching line, or null on timeout.
+   *
+   * Always registered before the command it waits for is written: the reader hands a line to
+   * whoever is waiting the moment it arrives, and a reply that lands first is logged as chatter
+   * and lost to its request.
+   */
   private waitForLine(predicate: (line: string) => boolean, timeoutMs: number) {
     return new Promise<string | null>((resolve) => {
       const entry: Listener = { predicate, resolve: () => {} };
@@ -735,10 +741,11 @@ export class SerialTransport {
     timeoutMs = TIMEOUT_SHORT_MS,
     { quiet = false }: { quiet?: boolean } = {},
   ): Promise<T | null> {
+    const pending = this.waitForLine(repliesTo(command), timeoutMs);
     // A poll asked every second leaves no trace either way: its reply is claimed, so not logged.
     if (quiet) await this.write(`${command}\n`);
     else await this.sendLine(command);
-    const line = await this.waitForLine(repliesTo(command), timeoutMs);
+    const line = await pending;
     if (line === null) {
       this.log("err", `No reply to ${command} within ${timeoutMs} ms.`);
       return null;
@@ -802,8 +809,9 @@ export class SerialTransport {
   async requestWhole<T>(command: string, timeoutMs = TIMEOUT_SHORT_MS): Promise<T | null> {
     return askUntilWhole<T>(
       async () => {
+        const pending = this.waitForLine(repliesTo(command), timeoutMs);
         await this.sendLine(command);
-        const line = await this.waitForLine(repliesTo(command), timeoutMs);
+        const line = await pending;
         if (line === null) this.log("err", `No reply to ${command} within ${timeoutMs} ms.`);
         return line;
       },
@@ -845,8 +853,9 @@ export class SerialTransport {
    */
   async waitReady(attempts = 10, timeoutMs = 1500): Promise<boolean> {
     for (let i = 0; i < attempts; i++) {
+      const pending = this.waitForLine(repliesTo("DUMP_BOOT"), timeoutMs);
       await this.write("DUMP_BOOT\n");
-      const line = await this.waitForLine(repliesTo("DUMP_BOOT"), timeoutMs);
+      const line = await pending;
       if (line !== null) return true;
     }
     // Not "reconnected": connect() calls this too, and on a USB-only board that is the common
