@@ -3,7 +3,7 @@ motor, held in RAM alone. A v1.2 drives motors 2 and 4."""
 
 import json
 
-from helpers import armed_v12
+from helpers import armed_v12, close_menu, open_menu
 
 PID = {"revRPM": 25000, "control": "pid", "kp": 0.6, "ki": 1.5}
 
@@ -56,6 +56,18 @@ def test_a_bare_tune_puts_the_blasters_own_settings_back_once_the_wheels_stop(bl
     b.run_ms(3000)
     m = b.peek("motors")[1]
     assert (m["revRPM"], round(m["kp"], 3)) == (30000, kp)
+
+
+def test_opening_the_menu_puts_the_blasters_own_settings_back_for_it_to_edit(blaster):
+    b = armed_v12(blaster)
+    kp = b.command("DUMP_DEVICE")["motorConfig"][1]["kp"]
+    assert tune(b)["ok"]
+    open_menu(b)
+    m = b.peek("motors")[1]
+    assert (m["revRPM"], round(m["kp"], 3)) == (30000, kp)
+    assert tune(b)["err"] == "menu is open"
+    close_menu(b)
+    assert round(b.peek("motors")[1]["kp"], 3) == kp
 
 
 def test_tune_is_refused_while_the_wheels_turn_and_for_anything_out_of_range(blaster):

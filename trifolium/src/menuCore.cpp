@@ -9,6 +9,7 @@ static const char kEditHint[] = "short=set long=cancel";
 // Reboot-elimination apply*() functions - defined in main.cpp, called from runMenu()'s
 // post-save hook below so these settings apply immediately rather than requiring a reboot.
 void applyMotorConfig();
+void clearTune();
 void applyEmaFilterConstant();
 void applySolenoidTimingCurve();
 void applyMaxAchievableDps();
@@ -336,6 +337,8 @@ void runMenu()
 {
     menuOpenFlag = true;
     logger.info("Menu opened");
+    // The menu edits the stored settings, which a console TUNE trial would otherwise stand over.
+    clearTune();
 
     menuDepth = 0;
     pushLevel("MENU", rootItems, rootItemsCount);

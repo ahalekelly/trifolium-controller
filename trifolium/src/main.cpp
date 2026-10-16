@@ -255,7 +255,7 @@ RpmLogger rpmLogger;
 
 // The console's TUNE (serialCommands.cpp): one control mode and pair of gains for every motor, and
 // with them a rev RPM, written straight into motorArr[].revRPM. RAM alone - the stored settings never
-// see it, so no save carries it to flash. A bare TUNE or a reboot drops it.
+// see it, so no save carries it to flash. A bare TUNE, the menu opening or a reboot drops it.
 static struct
 {
     bool active = false;
@@ -263,7 +263,7 @@ static struct
     float kp = 0;
     float ki = 0;
 } tune;
-// Set by a bare TUNE on core 1; core 0 drops the override once the drive train is stopped.
+// Set on core 1; core 0 drops the override once the drive train is stopped.
 static volatile bool tuneClearWanted = false;
 
 static flywheelControlType_t flywheelControl()
@@ -412,6 +412,8 @@ const char* applyTune(uint32_t revRPM, flywheelControlType_t control, float kp, 
             ((int32_t)revRPM < motorRpmFloor(i) || (int32_t)revRPM > motorRpmCeiling(i)))
             return "revRPM out of range";
     }
+    if (menuIsOpen())
+        return "menu is open"; // it is editing the settings TUNE would stand over
     if (directMotorControlActive)
         return "a motor action is running";
     directMotorControlActive = true;
@@ -432,8 +434,8 @@ const char* applyTune(uint32_t revRPM, flywheelControlType_t control, float kp, 
     return nullptr;
 }
 
-// A bare TUNE: the blaster's own settings come back once the wheels are stopped, so a console that
-// stops a run mid-spin-up, or closes, can ask at once.
+// A bare TUNE, or the menu opening: the blaster's own settings come back once the wheels are
+// stopped, so a console that stops a run mid-spin-up, or closes, can ask at once.
 void clearTune()
 {
     if (tune.active)
