@@ -480,6 +480,7 @@ void handleSerialCommands()
     else if (command == "ESC_DIRECTION")
     {
         // "ESC_DIRECTION <motor> normal|reversed": the menu's Change Direction, named, not toggled.
+        // The spin after it is the readback.
         const int motorIndex = argument.indexOf(' ') == 1 ? argument[0] - '0' : -1;
         const String direction = argument.substring(2);
         if (direction != "normal" && direction != "reversed")
@@ -490,6 +491,7 @@ void handleSerialCommands()
         if (!takeMotor("ESC_DIRECTION", motorIndex))
             return;
         writeEscDirection(motorIndex, direction == "reversed");
+        spinOneMotor(motorIndex);
         directMotorControlActive = false;
         ackOk("ESC_DIRECTION", motorIndex, false, false);
     }
