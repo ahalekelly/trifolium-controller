@@ -1531,6 +1531,11 @@ static bool ledOn = true;
 static const uint32_t kFlatPackHold_ms = 1000;
 // Under this a cell, the divider has no pack on it: the board is running on USB alone.
 static const int32_t kNoPackPerCell_mv = 1000;
+// Some boards' dividers climb from near zero for tens of seconds whenever a pack goes in, with a
+// time constant of up to about 25 s. Climbing toward a pack over the cutoff, the reading rises faster
+// than (cutoff - reading) / time constant, so it gains a step of BatteryMonitor's 10-bit reading
+// within this / (cutoff - reading) ms. 40 s leaves margin over 25.
+static const int64_t kClimbStep_mvms = 40000 * (3300 * 11 / 1023);
 
 static const uint8_t kLowBattBeacon = DSHOT_CMD_BEACON3;
 static const uint32_t kLowBattBeepEvery_ms = 10000;
@@ -1580,38 +1585,42 @@ void checkLowVoltageCutoff()
     {
         uint8_t cells = cellCount(deviceSettings.batteryType);
         const int32_t pack_mv = batteryMonitor->getVoltage_mv();
-        bool belowCutoff = pack_mv < deviceSettings.lowVoltageCutoffPerCell_mv * cells;
+        const int32_t cutoff_mv = deviceSettings.lowVoltageCutoffPerCell_mv * cells;
+        bool belowCutoff = pack_mv < cutoff_mv;
+        bool packIn = pack_mv >= kNoPackPerCell_mv * cells;
 
-        // Not until the pack has first read at or over the line: some dividers climb from near
-        // zero for tens of seconds after power-on, and USB power alone reads nothing. A pack
-        // plugged in already flat is not caught; the LED and LOW BATT still show it.
-        static bool cutoffArmed = false;
-        cutoffArmed = cutoffArmed || !belowCutoff;
+        // A reading under the line may be a divider still climbing toward a good pack. It is flat
+        // only once it has gone longer without rising than such a climb can - see kClimbStep_mvms.
+        static int32_t high_mv = 0; // the highest reading since the pack went in
+        static uint32_t rose_ms = 0;
+        if (pack_mv > high_mv || !packIn)
+        {
+            high_mv = pack_mv;
+            rose_ms = time_ms;
+        }
+        bool climbing = (int64_t)(time_ms - rose_ms) * (cutoff_mv - pack_mv) < kClimbStep_mvms;
         static uint32_t flatSince_ms = 0; // 0 while the unloaded reading is at or over the line
 
         // A pack taken out with USB still in reads as nothing rather than as flat, and whatever is
-        // plugged in next is a fresh pack, as it would be after a power-on.
+        // plugged in next is a fresh pack.
         static uint32_t noPackSince_ms = 0;
-        if (pack_mv >= kNoPackPerCell_mv * cells)
+        if (packIn)
             noPackSince_ms = 0;
         else if (noPackSince_ms == 0)
             noPackSince_ms = time_ms;
-        else if (time_ms - noPackSince_ms >= kFlatPackHold_ms && (cutoffArmed || batteryFlat))
+        else if (time_ms - noPackSince_ms >= kFlatPackHold_ms && batteryFlat)
         {
-            if (batteryFlat)
-                logger.info("Battery removed - the next pack is judged afresh");
+            logger.info("Battery removed - the next pack is judged afresh");
             batteryFlat = false;
-            cutoffArmed = false;
-            flatSince_ms = 0;
             if (pinDefined(escEnablePin))
                 digitalWrite(escEnablePin, HIGH);
         }
 
-        if (!cutoffArmed || batteryFlat || !belowCutoff || !wheelsUnloaded())
+        if (batteryFlat || !belowCutoff || !packIn || !wheelsUnloaded())
             flatSince_ms = 0;
         else if (flatSince_ms == 0)
             flatSince_ms = time_ms;
-        else if (time_ms - flatSince_ms >= kFlatPackHold_ms)
+        else if (time_ms - flatSince_ms >= kFlatPackHold_ms && !climbing)
         {
             batteryFlat = true;
             lastRevTime_ms = 0; // ends a post-rev idle window along with the other idle sources

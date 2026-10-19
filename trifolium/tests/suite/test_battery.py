@@ -1,5 +1,5 @@
 """The pack as the firmware reads it, through a divider that reads far below it for tens of seconds
-after power-on. Measured once, on a v1.2: 3.3 V at 7.1 s against a real 13.2 V. RISE_MS is the
+after the pack arrives. Measured once, on a v1.2: 3.3 V at 7.1 s against a real 13.2 V. RISE_MS is the
 first-order time constant that one reading fits; the wheels have the whole pack from the start."""
 
 import pytest
@@ -75,18 +75,75 @@ def test_with_nothing_reading_the_pack_it_is_taken_as_3_5_v_a_cell_and_never_cut
     assert len(b.edges(20, armed_at)) <= 1  # the LED came on, at most, and never blinked
 
 
-def test_a_divider_still_rising_at_boot_does_not_cut_the_escs_for_the_session(blaster):
-    b = blaster
-    b.esc_startup()
-    b.set_pack(PACK_MV, rise_ms=QUICK_RISE_MS)
-    armed_v12(b, {"escEnablePin": 22}, display=False)
-    b.run_ms(15000)
-    assert b.peek("battery")["mv"] > CUTOFF_MV
+FLAT_MV = 12400  # 3.1 V a cell, under the 3.3 V cutoff
+RESTED_MV = 13600  # what a flat pack reads back at with the load off
+JUST_OVER_MV = 13300  # 3.325 V a cell, three ADC steps over the cutoff
+
+
+def plug_in(b, mv, usb, rise_ms, overrides=None):
+    """A pack plugged in at power-on, or after a boot on USB alone."""
+    b.set_pack(0 if usb else mv, rise_ms=rise_ms)
+    armed_v12(b, overrides, display=False, settle_ms=0)
+    if usb:
+        b.run_ms(3000)
+        b.set_pack(mv, rise_ms=rise_ms)
+    return b
+
+
+def reading(b):
+    return b.peek("battery")["mv"]
+
+
+@pytest.mark.parametrize("usb", [False, True], ids=["power_on", "usb"])
+@pytest.mark.parametrize("mv", [PACK_MV, JUST_OVER_MV], ids=["full", "just_over"])
+def test_a_divider_climbing_to_a_good_pack_never_trips_the_cutoff(blaster, mv, usb):
+    """Climbing to a pack just over the line, it reads under it for over a minute."""
+    b = plug_in(blaster, mv, usb, RISE_MS, {"escEnablePin": 22})
+    assert b.run_until(lambda: reading(b) >= CUTOFF_MV or b.peek("batteryFlat"), 200000,
+                       step_ms=100)
+    b.run_ms(2000)
+    assert b.peek("batteryFlat") is False
     assert b.pin(22)["outputLevel"] is True
 
 
-FLAT_MV = 12400  # 3.1 V a cell, under the 3.3 V cutoff
-RESTED_MV = 13600  # what a flat pack reads back at with the load off
+@pytest.mark.parametrize("usb", [False, True], ids=["power_on", "usb"])
+def test_a_pack_plugged_in_flat_trips_within_a_couple_of_seconds(blaster, usb):
+    """Its reading has to hold still long enough to rule out a divider climbing past the line - the
+    closer to the line, the longer: 1.7 s here, 800 mV under it. Judging starts 2 s after power-on."""
+    b = plug_in(blaster, FLAT_MV, usb, 0, {"escEnablePin": 22})
+    assert b.run_until_peek("batteryFlat", True, limit_ms=4000)
+    b.run_ms(10)
+    assert b.pin(22)["outputLevel"] is False
+
+
+@pytest.mark.parametrize("usb", [False, True], ids=["power_on", "usb"])
+def test_a_divider_climbing_to_a_flat_pack_trips_once_it_has_nearly_settled(blaster, usb):
+    b = plug_in(blaster, FLAT_MV, usb, QUICK_RISE_MS)
+    assert b.run_until(lambda: b.peek("batteryFlat"), 60000, step_ms=100)
+    assert reading(b) > FLAT_MV * 0.95
+
+
+def test_usb_alone_never_trips_the_cutoff(blaster):
+    b = plug_in(blaster, 0, True, 0, {"escEnablePin": 22})
+    b.run_ms(5000)
+    assert b.peek("batteryFlat") is False
+    assert b.pin(22)["outputLevel"] is True
+
+
+def test_on_usb_a_flat_pack_swapped_for_a_good_one_on_a_climbing_divider_is_not_flat(blaster):
+    b = plug_in(blaster, FLAT_MV, True, 0, {"escEnablePin": 22})
+    assert b.run_until_peek("batteryFlat", True, limit_ms=4000)
+    b.set_pack(0)
+    b.run_ms(1200)
+    assert b.peek("batteryFlat") is False
+    b.set_pack(PACK_MV, rise_ms=RISE_MS)
+    assert reading(b) < CUTOFF_MV
+    assert b.run_until(lambda: reading(b) >= CUTOFF_MV or b.peek("batteryFlat"), 60000,
+                       step_ms=100)
+    assert b.peek("batteryFlat") is False
+    assert b.pin(22)["outputLevel"] is True
+    b.press("rev")
+    assert b.run_until_peek("flywheelState", FULLSPEED, limit_ms=600)
 
 
 def wheels_stopped(b):
