@@ -53,8 +53,9 @@ def test_a_motor_action_waits_for_the_blaster_to_be_at_rest(blaster):
     b = armed_v12(blaster, display=False)
     b.press("rev")
     assert b.run_until_peek("flywheelState", FULLSPEED, limit_ms=1500)
-    reply = b.command("MOTOR_TEST 1")
-    assert reply["ok"] is False and reply["err"] == "blaster busy"
+    # Named by its motor, which the console matches the reply on.
+    assert b.command("MOTOR_TEST 1") == {"cmd": "MOTOR_TEST", "ok": False, "index": 1,
+                                         "err": "blaster busy"}
 
 
 @pytest.mark.parametrize("line", ["MOTOR_TEST 0", "MOTOR_TEST 4", "MOTOR_TEST", "MOTOR_NORMAL 2"])
