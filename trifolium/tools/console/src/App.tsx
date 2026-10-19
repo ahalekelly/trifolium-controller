@@ -21,7 +21,7 @@ import { resolveVisibility } from "./schema/visibility";
 import { configFrom, SerialTransport, TIMEOUT_SCHEMA_MS, type LogLine } from "./serial/transport";
 import { bundleFilename, buildBundle, checkBundle, diffKeys, downloadJson } from "./config/bundle";
 import { blasterLoads, schemaMismatch, type Blaster } from "./config/blasters";
-import { LOG_LINE_CAP, extractRpmCsv } from "./rpm/parse";
+import { LOG_LINE_CAP, extractRpmCsv, wholeRows } from "./rpm/parse";
 import { compareVersions } from "./firmware/releases";
 import { applyLayout } from "./ui/applyLayout";
 import { listChanges, marksToRevert, sectionSummary, splitMark, type Change } from "./ui/changes";
@@ -40,7 +40,7 @@ import { ProfileBar } from "./ui/ProfileBar";
 import { ProfileCopyDialog } from "./ui/ProfileCopyDialog";
 import { RawJson } from "./ui/RawJson";
 import { ResetDialog, type ResetKind, type ResetPlan } from "./ui/ResetDialog";
-import { RpmLog } from "./ui/RpmLog";
+import { RpmLog, downloadCsv } from "./ui/RpmLog";
 import { FW_CONSOLE_CONTROLS, RevHold, type MotorsStatus, type RevHoldApi } from "./ui/RevHold";
 import { motorActionRows, useMotorActions, type Ack } from "./ui/MotorActions";
 import { RpmStages } from "./ui/RpmStages";
@@ -228,6 +228,8 @@ export function App() {
   logRef.current = log;
   /** The RPM capture page's box: held here so a finished capture lands in it from any page. */
   const [rpmText, setRpmText] = React.useState("");
+  /** Save CSV files: every finished capture downloads as it arrives, whichever page is open. */
+  const [autoSaveCaptures, setAutoSaveCaptures] = React.useState(true);
   // Open by default where there is room for five lines; folded on a phone.
   const [logOpen, setLogOpen] = React.useState<boolean>(
     () => remembered(LOG_KEY, onPhone() ? "folded" : "open") === "open",
@@ -597,6 +599,7 @@ export function App() {
     );
     if (!csv) return;
     setRpmText(csv);
+    if (autoSaveCaptures) downloadCsv(wholeRows(csv).csv);
     note("ok", "The capture is on the RPM capture page.");
   };
 
@@ -1879,6 +1882,8 @@ export function App() {
                   capturing={getByKey(device, "device:useRpmLogging") === true}
                   text={rpmText}
                   onText={setRpmText}
+                  autoSave={autoSaveCaptures}
+                  onAutoSave={setAutoSaveCaptures}
                   revHold={consoleControls ? <RevHold api={revHoldApi} live={live} /> : null}
                 />
               </Box>
