@@ -152,6 +152,14 @@ static void runMotorAction(const char* command, int index, bool test, bool rever
     motorActionRunning = false;
 }
 
+static void printOrNull(bool seen, double value, int digits)
+{
+    if (seen)
+        Serial.print(value, digits);
+    else
+        Serial.print("null");
+}
+
 // Rejects a payload whose schema version isn't the one this build speaks, before it reaches
 // fromJson().
 static bool schemaVersionOk(const char* command, JsonDocument& doc, uint16_t expected)
@@ -522,14 +530,15 @@ void handleSerialCommands()
             Serial.print(motorArr[i].PIDOutput);
             Serial.print(",\"erpmSeen\":");
             Serial.print(motorArr[i].telemetryErpmSeen ? "true" : "false");
-            // The EDT request goes out after arming, so these answer "did the request reach this
-            // ESC" - the failure mode is one motor silently lacking extended telemetry.
-            Serial.print(",\"edtSeen\":{\"v\":");
-            Serial.print(motorArr[i].telemetryVoltageSeen ? "true" : "false");
+            // The latest extended telemetry in volts, amps and degrees C, null for a kind this ESC
+            // has not sent. The EDT request goes out after arming, so a lasting null answers "did
+            // the request reach this ESC" - the failure mode is one motor silently lacking it.
+            Serial.print(",\"edt\":{\"v\":");
+            printOrNull(motorArr[i].telemetryVoltageSeen, motorArr[i].telemetryVoltageRaw / 4.0, 2);
             Serial.print(",\"i\":");
-            Serial.print(motorArr[i].telemetryCurrentSeen ? "true" : "false");
+            printOrNull(motorArr[i].telemetryCurrentSeen, motorArr[i].telemetryCurrentRaw, 0);
             Serial.print(",\"t\":");
-            Serial.print(motorArr[i].telemetryTempSeen ? "true" : "false");
+            printOrNull(motorArr[i].telemetryTempSeen, motorArr[i].telemetryTempRaw, 0);
             Serial.print("}");
             Serial.print('}');
         }
