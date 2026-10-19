@@ -104,8 +104,6 @@ static void ackOk(const char* command, int index, bool clamped, bool rebooting)
     Serial.println(rebooting ? ",\"rebooting\":true}" : ",\"rebooting\":false}");
 }
 
-// Why a motor action from the console cannot run now, or nullptr. These spin a wheel, so they wait
-// for the blaster to be at rest, the same as the menu that offers them.
 static void printBase64(const uint8_t* data, size_t len)
 {
     static const char kAlphabet[] =
@@ -123,6 +121,8 @@ static void printBase64(const uint8_t* data, size_t len)
 
 static bool motorActionRunning = false; // the test loop answers serial while it spins
 
+// Why a motor action from the console cannot run now, or nullptr. These spin a wheel, so they wait
+// for the blaster to be at rest and able to rev, the same as the menu that offers them.
 static const char* motorActionRefusal(int index)
 {
     if (motorActionRunning)
@@ -133,8 +133,10 @@ static const char* motorActionRefusal(int index)
         return "no such motor enabled";
     if (menuIsOpen())
         return "menu open";
-    if (safetyEngaged)
-        return "safety engaged";
+    if (!revControlAllowed())
+        return safetyEngaged ? "safety engaged" : "SAFE";
+    if (batteryFlat)
+        return "battery flat";
     if (flywheelState != STATE_IDLE || shotsToFire > 0)
         return "blaster busy";
     for (int i = 0; i < 4; i++)
