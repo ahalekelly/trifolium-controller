@@ -183,6 +183,7 @@ struct Flash
     uint32_t writes = 0;
     uint32_t cutPowerBeforeWrite = 0;
     bool powerCut = false; // write N was cut; nothing lands until the next power on
+    bool full = false;     // out of space: a file write stores nothing and returns 0
 
     void clear()
     {
@@ -193,6 +194,7 @@ struct Flash
         writes = 0;
         cutPowerBeforeWrite = 0;
         powerCut = false;
+        full = false;
     }
 };
 Flash& flash();
