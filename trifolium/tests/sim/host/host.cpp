@@ -227,7 +227,7 @@ class Host
         {
             setPack(req["mv"]);
             hal::setAnalogRise((uint64_t)(req["riseMs"] | 0) * 1000,
-                               (uint64_t)(req["chargedMs"] | 0) * 1000);
+                               (int64_t)(req["chargedMs"] | 0) * 1000);
         }
         else if (op == "i2c.device")
             hal::setI2cDevice(req["address"], req["present"] | true);
