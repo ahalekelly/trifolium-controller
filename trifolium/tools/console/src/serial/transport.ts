@@ -645,9 +645,9 @@ export class SerialTransport {
   async load(command: string, body: unknown): Promise<CommandAck | null> {
     const text = JSON.stringify(body);
     this.log("out", `> ${command}  (${text.length} bytes)`);
-    await this.write(`${command}\n`);
     const pending = this.waitForLine(repliesTo(command), TIMEOUT_SHORT_MS);
-    await this.write(text);
+    // One write, so a poll cannot land between the command and its body.
+    await this.write(`${command}\n${text}`);
 
     return this.settleAck(command, await pending);
   }

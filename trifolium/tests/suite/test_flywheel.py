@@ -159,7 +159,7 @@ def test_an_extended_telemetry_frame_fills_the_esc_dashboard_and_leaves_rpm_alon
     assert after["tempSeen"] and after["tempRaw"] == 47
     assert after["voltageSeen"] and after["voltageRaw"] == 66
     assert after["motorRPM"] == pytest.approx(before["motorRPM"], abs=300)
-    assert b.command("DUMP_MOTORS")["motors"][1]["edtSeen"] == {"v": True, "i": False, "t": True}
+    assert b.command("DUMP_MOTORS")["motors"][1]["edt"] == {"v": 16.5, "i": None, "t": 47}
 
 
 def test_an_esc_that_answers_shows_erpm_seen_and_one_that_never_does_does_not(blaster):
