@@ -375,14 +375,18 @@ def test_choose_device_asks_even_when_a_blaster_is_already_allowed(page, serve):
     expect(page.get_by_text(re.compile("Connect failed: No port selected"))).to_be_visible()
 
 
-def test_an_rpm_capture_from_a_rev_charts_by_itself_at_the_length_the_device_published(page, serve):
+def test_an_rpm_capture_from_a_rev_saves_and_charts_by_itself_at_the_published_length(page, serve):
     """No button to press: the capture is taken from the log as the console reconnects."""
     served = serve(device={"useRpmLogging": True})
     connect(open_console(page, served))
     served.wait_armed()
-    served.bench("press", role="rev")
-    served.run_for(1500)
-    served.bench("release", role="rev")
+    with page.expect_download(timeout=REBOOT_MS) as download:
+        served.bench("press", role="rev")
+        served.run_for(1500)
+        served.bench("release", role="rev")
+    # Named to the second, so captures a minute apart never collide.
+    stamped = re.compile(r"rpm-capture-\d{4}(-\d\d){2}_\d\d(-\d\d){2}\.csv")
+    assert stamped.fullmatch(download.value.suggested_filename)
     expect(page.get_by_text("RPM capture finished - device is back.")).to_be_visible(
         timeout=REBOOT_MS)
     expect(page.get_by_text(re.compile(r"Connected · fw \d"))).to_be_visible()
@@ -390,6 +394,13 @@ def test_an_rpm_capture_from_a_rev_charts_by_itself_at_the_length_the_device_pub
     go(page, "RPM capture")
     length = served.settings()["rpmLogLength"]
     expect(page.get_by_text(re.compile(rf"^2 motors, {length} samples"))).to_be_visible()
+
+    # Turning saving on saves the capture already shown.
+    save = page.get_by_label("Save CSV files")
+    save.uncheck()
+    with page.expect_download() as download:
+        save.check()
+    assert stamped.fullmatch(download.value.suggested_filename)
 
 
 def test_holding_rev_in_the_console_takes_a_capture(page, serve):
