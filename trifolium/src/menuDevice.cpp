@@ -3,6 +3,7 @@
 #include "profileStore.h"
 #include "deviceStore.h"
 #include "hwDiag.h"
+#include "usageStats.h"
 #include "enumIds.h"
 #include "CONFIGURATION.h" // MAX_RPM_LOG_LENGTH - the same ceiling startCapture() allocates against
 
@@ -60,6 +61,17 @@ static void aboutFired()
     }
 }
 static ActionItem aboutItem("About", aboutFired);
+
+static void usageStatsFired()
+{
+    const UsageStats::Records r = UsageStats::records();
+    // 0 is no reading yet: no current-sense pin, or no ESC has reported a temperature.
+    const String current = r.maxCurrent_mv ? String(r.maxCurrent_mv) + "mV" : String("--");
+    const String temp = r.maxEscTemp_C ? String(r.maxEscTemp_C) + "C" : String("--");
+    showTrapdoor("Usage Stats\nDarts fired: " + String(r.shotsFired) + "\nPeak current: " +
+                 current + "\nHottest ESC: " + temp + "\nany press = back");
+}
+static ActionItem usageStatsItem("Usage Stats", usageStatsFired);
 
 static void rebootNow()
 {
@@ -665,7 +677,7 @@ static MenuItem* deviceItems[] = {
     &pusherEscChannelItem,
     &debounceTimeItem, &menuHoldTimeItem, &rpmShotCounterItem,
     &goodRpmReadsItem, &rpmDropThresholdItem, &rpmLoggingSubmenu, &resetDeviceSubmenu,
-    &aboutItem,
+    &usageStatsItem, &aboutItem,
 };
 // Non-static: referenced by menu.cpp's Advanced submenu assembly.
-SubmenuItem deviceSubmenu("Device", deviceItems, 17);
+SubmenuItem deviceSubmenu("Device", deviceItems, 18);

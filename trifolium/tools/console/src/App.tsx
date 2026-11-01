@@ -16,7 +16,13 @@ import {
 import { needsPresetPicker } from "./schema/wiring";
 import { diagramForBoardId } from "./schema/wiringDiagrams";
 import { buildPatch, getByKey, setByKey } from "./schema/keyPath";
-import { walk, type BootStatus, type Schema, type SchemaNode } from "./schema/types";
+import {
+  walk,
+  type BootStatus,
+  type Schema,
+  type SchemaNode,
+  type UsageStats,
+} from "./schema/types";
 import { resolveVisibility } from "./schema/visibility";
 import { configFrom, SerialTransport, TIMEOUT_SCHEMA_MS, type LogLine } from "./serial/transport";
 import { bundleFilename, buildBundle, checkBundle, diffKeys, downloadJson } from "./config/bundle";
@@ -263,6 +269,8 @@ export function App() {
   const [settingUp, setSettingUp] = React.useState<Blaster | null>(null);
   /** The connected device's DUMP_BOOT, for the faults it recorded. Null while offline. */
   const [boot, setBoot] = React.useState<BootStatus | null>(null);
+  /** The connected device's DUMP_STATS. Null while offline, or from firmware without it. */
+  const [stats, setStats] = React.useState<UsageStats | null>(null);
   /** A reset the user picked, held until they type its word. Null when no dialog is open. */
   const [pendingReset, setPendingReset] = React.useState<ResetPlan | null>(null);
   /** The PICOBOOT flasher. Openable offline, for a board already sitting in its bootloader. */
@@ -284,6 +292,7 @@ export function App() {
           setWiringByHand(false); // a different device may need the picker
           // Faults describe the boot of a device that is no longer attached.
           setBoot(null);
+          setStats(null);
         },
         onRebooting: (reason) => onRebooting.current(reason),
       }),
@@ -409,6 +418,7 @@ export function App() {
     // can attach. A device too old to answer leaves it null, which reads as "nothing recorded".
     const bootStatus = await transport.request<BootStatus>("DUMP_BOOT");
     setBoot(bootStatus);
+    setStats(await transport.request<UsageStats>("DUMP_STATS"));
     bootProblem.current =
       (bootStatus?.configFaults?.length ?? 0) > 0 || (next.pinConflicts?.length ?? 0) > 0;
 
@@ -1551,6 +1561,7 @@ export function App() {
             live={live}
             schema={schema}
             boot={boot}
+            stats={stats}
             device={device}
             profiles={profiles}
             profileName={profileName}

@@ -18,7 +18,7 @@ The pages are in the sidebar. On a phone the main four are tabs along the bottom
 
 | Page | What it does |
 |---|---|
-| **Overview** | The blaster at a glance: name, board, firmware and battery, the three profiles, what the last boot reported, and backups. |
+| **Overview** | The blaster at a glance: name, board, firmware and battery, [usage stats](Device#general), the three profiles, what the last boot reported, and backups. |
 | **Profiles** | RPM targets, dwell and idle, spindown, and the fire mode list, for whichever of the 3 profile slots you pick at the top. |
 | **Blaster settings** | Everything shared across profiles: motors and PID, solenoid timing, battery, display, debounce, shot counting, and on firmware 2.3.0 and later the [boot rules](Device#boot-actions) and each motor's [Test, Normal and Reversed](Motors-and-PID) buttons. |
 | **Wiring** | Which pin each thing is on, with a diagram of your board where one has been drawn. Also where pin conflicts are reported, and where you change board. |

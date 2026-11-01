@@ -14,6 +14,14 @@ void recordShot();
 void recordCurrent(uint32_t mv); // the ESC current-sense pin, in mV
 void recordEscTemp(uint32_t degC);
 
+struct Records
+{
+    uint32_t shotsFired;
+    uint32_t maxCurrent_mv;
+    uint32_t maxEscTemp_C;
+};
+Records records();
+
 bool unsaved();
 // Clears unsaved() first, so a record made during the write is saved next time.
 bool save();

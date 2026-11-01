@@ -4299,6 +4299,10 @@
               ]
             },
             {
+              "label": "Usage Stats",
+              "kind": "action"
+            },
+            {
               "label": "About",
               "kind": "action"
             }

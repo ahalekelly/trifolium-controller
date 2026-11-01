@@ -1,7 +1,7 @@
 """Lifetime usage stats: darts fired, the highest ESC current-sense reading and the hottest ESC,
 recorded every tick and stored once the wheels have been stopped for 5 s."""
 
-from helpers import armed_v12
+from helpers import armed_v12, enter, open_menu, select
 
 STATS = "/stats.cfg"
 CURRENT_PIN = 26
@@ -62,3 +62,15 @@ def test_the_current_sense_reading_at_rest_is_not_a_record(blaster):
     b.analog(CURRENT_PIN, 310)
     b.run_ms(50)
     assert b.command("DUMP_STATS")["maxCurrent_mv"] == 0
+
+
+def test_the_device_menu_shows_the_records(blaster):
+    b = armed_v12(blaster, settle_ms=3000)
+    b.esc_reply(1, edt="temperature", value=52)
+    b.run_ms(50)
+    open_menu(b)
+    enter(b, "Advanced", "Device", "Usage Stats")
+    text = b.panel().text
+    assert "Darts fired: 0" in text
+    assert "Peak current: --" in text
+    assert "Hottest ESC: 52C" in text

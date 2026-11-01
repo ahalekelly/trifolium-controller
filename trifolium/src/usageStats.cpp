@@ -14,16 +14,23 @@ volatile uint32_t maxCurrent_mv = 0;
 volatile uint32_t maxEscTemp_C = 0;
 volatile bool dirty = false;
 
-void toJson(JsonDocument& doc)
-{
-    doc["shotsFired"] = shotsFired;
-    doc["maxCurrent_mv"] = maxCurrent_mv;
-    doc["maxEscTemp_C"] = maxEscTemp_C;
-}
 } // namespace
 
 namespace UsageStats
 {
+Records records()
+{
+    return {shotsFired, maxCurrent_mv, maxEscTemp_C};
+}
+
+static void toJson(JsonDocument& doc)
+{
+    const Records r = records();
+    doc["shotsFired"] = r.shotsFired;
+    doc["maxCurrent_mv"] = r.maxCurrent_mv;
+    doc["maxEscTemp_C"] = r.maxEscTemp_C;
+}
+
 void load()
 {
     File f = LittleFS.open(STATS_PATH, "r");
