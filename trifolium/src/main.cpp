@@ -22,6 +22,7 @@
 #include "adcSampler.h"
 #include "batteryMonitor.h"
 #include "rpmLogger.h"
+#include "usageStats.h"
 #include "displayManager.h"
 #include "firingModeBehavior.h"
 #include "bootStatus.h"
@@ -299,6 +300,7 @@ static bool dartSensingOn();
 void updateSpeedPot();
 void resetFWControl();
 void registerShot();
+static bool driveTrainStopped();
 void applyMotorConfig();
 void applyEmaFilterConstant();
 void applySolenoidTimingCurve();
@@ -379,6 +381,7 @@ void registerShot()
 {
     runtimeShotCounter++;
     displayShotCounter++;
+    UsageStats::recordShot();
     if (runtimeShotCounter % 10000 == 0)
     {
         displayShotCounter = 0;
@@ -784,6 +787,7 @@ void setup()
     activeProfileIndex = ProfileStore::loadActiveProfileIndex();
     DeviceStore::LoadResult loaded = DeviceStore::loadDeviceSettings(deviceSettings);
     applyPrintTelemetry(); // as early as possible so logging behaves correctly for the rest of boot
+    UsageStats::load();
 
     // Recorded because the boot line announcing it is gone from the port before a host can attach.
     (void)loaded;
@@ -1475,6 +1479,14 @@ void mainFiringLogic()
     AdcSampler::update();
     batteryMonitor->update();
     updateSpeedPot();
+    // Only while the wheels are driven: the peak is the ESCs' load, not the offset at rest.
+    if (pinDefined(currentAdcPin) && !driveTrainStopped())
+        UsageStats::recordCurrent(AdcSampler::millivolts(currentAdcPin));
+    for (int i = 0; i < 4; i++)
+    {
+        if (motorsEnabled[i] && motorArr[i].telemetryTempSeen)
+            UsageStats::recordEscTemp(motorArr[i].telemetryTempRaw);
+    }
 }
 
 // Sets the active profile's rev RPM from the pot: stage 1 between Pot Min and Pot Max RPM,
@@ -2403,6 +2415,33 @@ static void persistSpeedPotWhenIdle()
         speedPotUnsaved = true;
 }
 
+static const uint32_t STATS_SETTLE_MS = 5000;
+
+// Once the wheels have been stopped for 5 s, so a run of bursts costs one write, after it.
+static void persistStatsWhenIdle()
+{
+    static uint32_t busyAt_ms = 0;
+    if (!driveTrainStopped())
+    {
+        busyAt_ms = millis();
+        return;
+    }
+    if (!UsageStats::unsaved() || millis() - busyAt_ms < STATS_SETTLE_MS)
+        return;
+    if (!UsageStats::save())
+    {
+        busyAt_ms = millis(); // tried again after another settle, not every pass
+        logger.error("Could not store the usage stats");
+    }
+}
+
+static void persistWhenIdle()
+{
+    persistFiringModeWhenIdle();
+    persistSpeedPotWhenIdle();
+    persistStatsWhenIdle();
+}
+
 // One line at boot and every 3 s after, from core 1, the only core that writes to Serial. Stops
 // once a host has spoken - a reader taking the first JSON line would otherwise capture this.
 static void announceUnconfigured()
@@ -2432,8 +2471,7 @@ void loop1()
     if (!displayManager.hasDisplay())
     {
         serviceMenuButton();
-        persistFiringModeWhenIdle();
-        persistSpeedPotWhenIdle();
+        persistWhenIdle();
         return;
     }
 
@@ -2450,8 +2488,7 @@ void loop1()
             break; // menu closed - fall through and let loop1() re-enter fresh next tick
         }
 
-        persistFiringModeWhenIdle();
-        persistSpeedPotWhenIdle();
+        persistWhenIdle();
 
         if (millis() - lastUpdated > 100 || updateRuntimeNow)
         {

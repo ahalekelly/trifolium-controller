@@ -29,6 +29,10 @@ The reason a setting is off the menu is almost always the same: changing it from
 | **RPM log length** | How many samples a capture takes, one per millisecond, so 2000 is two seconds. On the **RPM capture** page, beside RPM Logging. The toggle that arms it *is* on the menu, under Motors & PID. |
 | **Splash screen** | A custom 128x64 boot image. The **Splash screen** page has an upload button; any picture is converted for you. Takes effect next boot. On firmware 2.3.0 and later the page shows the splash the blaster holds and can download it. |
 
+## Usage stats
+
+The blaster keeps lifetime records: darts fired, the highest ESC current-sense reading in mV while the flywheels run (with a **Current ADC Pin** wired), and the hottest temperature any ESC reported. It saves them once the flywheels have been stopped for 5 seconds. Read them with `python tools/send_serial.py <port> DUMP_STATS`, and clear them with `RESET_STATS`.
+
 ## Still fixed in the firmware
 
 Only ceilings remain, and none of them is a per-blaster choice:
