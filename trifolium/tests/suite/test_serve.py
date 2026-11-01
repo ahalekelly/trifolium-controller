@@ -201,6 +201,7 @@ def test_a_host_slow_to_read_still_gets_a_whole_capture_dump(capturing):
         asked = time.time()
         bench(control_port, op="state")
         slowest = max(slowest, time.time() - asked)
+        time.sleep(0.01)  # each ask is a new connection: unpaced, they use up the local ports
     assert slowest < 1.0
 
     received = b""
