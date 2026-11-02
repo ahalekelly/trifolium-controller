@@ -62,14 +62,26 @@ void serialCommandsBegin()
     Serial.ignoreFlowControl(true);
 }
 
-// Every LOAD_* answers with one of these.
-static void ackError(const char* command, const char* reason)
+// A refusal. `index` is as in ackOk(): a host matches the reply to a command naming a slot or a
+// motor by it, so a refusal without one would read as no reply at all.
+static void ackError(const char* command, int index, const char* reason)
 {
     Serial.print("{\"cmd\":\"");
     Serial.print(command);
-    Serial.print("\",\"ok\":false,\"err\":\"");
+    Serial.print("\",\"ok\":false");
+    if (index >= 0)
+    {
+        Serial.print(",\"index\":");
+        Serial.print(index);
+    }
+    Serial.print(",\"err\":\"");
     Serial.print(reason);
     Serial.println("\"}");
+}
+
+static void ackError(const char* command, const char* reason)
+{
+    ackError(command, -1, reason);
 }
 
 // A body too big for the heap fails as NoMemory, which is not malformed JSON.
@@ -78,7 +90,7 @@ static const char* parseError(DeserializationError err)
     return err == DeserializationError::NoMemory ? "too large" : "invalid JSON";
 }
 
-// `index` is the profile slot, or -1 where the command has no slot.
+// `index` is the slot or motor the command names, or -1 if none.
 static void ackOk(const char* command, int index, bool clamped, bool rebooting)
 {
     Serial.print("{\"cmd\":\"");
@@ -93,8 +105,6 @@ static void ackOk(const char* command, int index, bool clamped, bool rebooting)
     Serial.println(rebooting ? ",\"rebooting\":true}" : ",\"rebooting\":false}");
 }
 
-// Why a motor action from the console cannot run now, or nullptr. These spin a wheel, so they wait
-// for the blaster to be at rest, the same as the menu that offers them.
 static void printBase64(const uint8_t* data, size_t len)
 {
     static const char kAlphabet[] =
@@ -112,6 +122,8 @@ static void printBase64(const uint8_t* data, size_t len)
 
 static bool motorActionRunning = false; // the test loop answers serial while it spins
 
+// Why a motor action from the console cannot run now, or nullptr. These spin a wheel, so they wait
+// for the blaster to be at rest and able to rev, the same as the menu that offers them.
 static const char* motorActionRefusal(int index)
 {
     if (motorActionRunning)
@@ -122,8 +134,10 @@ static const char* motorActionRefusal(int index)
         return "no such motor enabled";
     if (menuIsOpen())
         return "menu open";
-    if (safetyEngaged)
-        return "safety engaged";
+    if (!revControlAllowed())
+        return safetyEngaged ? "safety engaged" : "SAFE";
+    if (batteryFlat)
+        return "battery flat";
     if (flywheelState != STATE_IDLE || shotsToFire > 0)
         return "blaster busy";
     for (int i = 0; i < 4; i++)
@@ -139,7 +153,7 @@ static void runMotorAction(const char* command, int index, bool test, bool rever
     const char* refusal = motorActionRefusal(index);
     if (refusal)
     {
-        ackError(command, refusal);
+        ackError(command, index, refusal);
         return;
     }
     // Acked first: the spin takes seconds, and the console only needs to know it started.
@@ -155,7 +169,7 @@ static void runMotorAction(const char* command, int index, bool test, bool rever
 
 // Rejects a payload whose schema version isn't the one this build speaks, before it reaches
 // fromJson().
-static bool schemaVersionOk(const char* command, JsonDocument& doc, uint16_t expected)
+static bool schemaVersionOk(const char* command, int index, JsonDocument& doc, uint16_t expected)
 {
     uint16_t loaded = doc["schemaVersion"] | (uint16_t)0; // 0 = predates versioning
     if (loaded == expected)
@@ -163,7 +177,13 @@ static bool schemaVersionOk(const char* command, JsonDocument& doc, uint16_t exp
 
     Serial.print("{\"cmd\":\"");
     Serial.print(command);
-    Serial.print("\",\"ok\":false,\"err\":\"schemaVersion ");
+    Serial.print("\",\"ok\":false");
+    if (index >= 0)
+    {
+        Serial.print(",\"index\":");
+        Serial.print(index);
+    }
+    Serial.print(",\"err\":\"schemaVersion ");
     Serial.print(loaded);
     Serial.print(" != ");
     Serial.print(expected);
@@ -320,7 +340,11 @@ void handleSerialCommands()
     {
         // factoryResetSettings(), not a payload the host composes - the device decides what the
         // preserved set is. Wiring survives this; RESET_PINS is what moves it.
-        DeviceStore::saveDeviceSettings(DeviceStore::factoryResetSettings());
+        if (!DeviceStore::saveDeviceSettings(DeviceStore::factoryResetSettings()))
+        {
+            ackError("FACTORY_RESET_DEVICE", "could not write the device settings");
+            return;
+        }
         ackOk("FACTORY_RESET_DEVICE", -1, false, true);
         SerialLock::printKept();
         Serial.flush();
@@ -337,7 +361,7 @@ void handleSerialCommands()
         }
         if (!ProfileStore::resetProfile((uint8_t)explicitIndex))
         {
-            ackError("FACTORY_RESET_PROFILE", "could not write the slot");
+            ackError("FACTORY_RESET_PROFILE", explicitIndex, "could not write the slot");
             return;
         }
         // Reboots whichever slot it was: activeProfile is a RAM copy loaded at boot, so resetting
@@ -352,10 +376,21 @@ void handleSerialCommands()
     else if (command == "FACTORY_RESET_ALL")
     {
         // What the OLED's "Factory Reset All" does, in the order it does it. Still not the wiring -
-        // RESET_PINS stays the only command that moves it.
+        // RESET_PINS stays the only command that moves it. A failed write stops it there: slots
+        // already reset stay reset, and the next boot loads them.
         for (uint8_t i = 0; i < ProfileStore::MAX_PROFILE_COUNT; i++)
-            ProfileStore::resetProfile(i);
-        DeviceStore::saveDeviceSettings(DeviceStore::factoryResetSettings());
+        {
+            if (!ProfileStore::resetProfile(i))
+            {
+                ackError("FACTORY_RESET_ALL", "could not write a slot");
+                return;
+            }
+        }
+        if (!DeviceStore::saveDeviceSettings(DeviceStore::factoryResetSettings()))
+        {
+            ackError("FACTORY_RESET_ALL", "could not write the device settings");
+            return;
+        }
         ackOk("FACTORY_RESET_ALL", -1, false, true);
         SerialLock::printKept();
         Serial.flush();
@@ -367,8 +402,13 @@ void handleSerialCommands()
     {
         // Back to no wiring at all: the device comes up driving nothing and asks for a preset. Also
         // the only thing that clears wiringConfigured - editing a pin deliberately does not.
-        DeviceStore::clearWiring(deviceSettings);
-        DeviceStore::saveDeviceSettings(deviceSettings);
+        DeviceSettings unwired = deviceSettings;
+        DeviceStore::clearWiring(unwired);
+        if (!DeviceStore::saveDeviceSettings(unwired))
+        {
+            ackError("RESET_PINS", "could not write the device settings");
+            return;
+        }
         ackOk("RESET_PINS", -1, false, true);
         SerialLock::printKept();
         Serial.flush();
@@ -421,10 +461,10 @@ void handleSerialCommands()
         DeserializationError err = deserializeJson(doc, Serial);
         if (err)
         {
-            ackError("LOAD_PROFILE", parseError(err));
+            ackError("LOAD_PROFILE", targetIndex, parseError(err));
             return;
         }
-        if (!schemaVersionOk("LOAD_PROFILE", doc, ProfileStore::CURRENT_SCHEMA_VERSION))
+        if (!schemaVersionOk("LOAD_PROFILE", targetIndex, doc, ProfileStore::CURRENT_SCHEMA_VERSION))
             return;
 
         ShotProfile newSettings;
@@ -441,9 +481,18 @@ void handleSerialCommands()
 
         if (targetIndex == activeIndex)
         {
-            activeProfile = newSettings;
+            // Published before clamping, which works on the live settings. Some profile bounds come
+            // from device settings, so a failed save puts both back: flash still holds them.
+            const DeviceSettings runningDevice = deviceSettings;
+            std::swap(activeProfile, newSettings); // newSettings now holds the running profile
             const bool clamped = clampAllSettings();
-            ProfileStore::saveProfile(targetIndex, activeProfile);
+            if (!ProfileStore::saveProfile(targetIndex, activeProfile))
+            {
+                activeProfile = newSettings;
+                deviceSettings = runningDevice;
+                ackError("LOAD_PROFILE", targetIndex, "could not write the slot");
+                return;
+            }
             ackOk("LOAD_PROFILE", targetIndex, clamped, true);
             SerialLock::printKept();
             Serial.flush();
@@ -453,7 +502,11 @@ void handleSerialCommands()
         }
         else
         {
-            ProfileStore::saveProfile(targetIndex, newSettings);
+            if (!ProfileStore::saveProfile(targetIndex, newSettings))
+            {
+                ackError("LOAD_PROFILE", targetIndex, "could not write the slot");
+                return;
+            }
             ackOk("LOAD_PROFILE", targetIndex, false, false);
         }
     }
@@ -563,14 +616,21 @@ void handleSerialCommands()
             ackError("LOAD_DEVICE", parseError(err));
             return;
         }
-        if (!schemaVersionOk("LOAD_DEVICE", doc, DeviceStore::CURRENT_SCHEMA_VERSION))
+        if (!schemaVersionOk("LOAD_DEVICE", -1, doc, DeviceStore::CURRENT_SCHEMA_VERSION))
             return;
         DeviceSettings newSettings = deviceSettings;
         DeviceStore::fromJson(doc, newSettings);
-        // Publish before clamping, same reason as LOAD_PROFILE - and this path always reboots.
-        deviceSettings = newSettings;
+        // Published before clamping and put back if the save fails, same as LOAD_PROFILE.
+        const ShotProfile runningProfile = activeProfile;
+        std::swap(deviceSettings, newSettings); // newSettings now holds the running settings
         const bool clamped = clampAllSettings();
-        DeviceStore::saveDeviceSettings(deviceSettings);
+        if (!DeviceStore::saveDeviceSettings(deviceSettings))
+        {
+            deviceSettings = newSettings;
+            activeProfile = runningProfile;
+            ackError("LOAD_DEVICE", "could not write the device settings");
+            return;
+        }
         ackOk("LOAD_DEVICE", -1, clamped, true);
         SerialLock::printKept();
         Serial.flush();
