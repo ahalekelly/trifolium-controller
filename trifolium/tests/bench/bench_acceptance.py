@@ -205,7 +205,7 @@ def step3(link):
     rows = reply.get("motors") or [{}] * 4
     silent = [i + 1 for i in motors if not rows[i].get("erpmSeen")]
     check(3, "each enabled ESC is sending eRPM", not silent, f"silent: {silent}")
-    edt = {i + 1: rows[i].get("edtSeen") for i in motors}
+    edt = {i + 1: {k: v is not None for k, v in (rows[i].get("edt") or {}).items()} for i in motors}
     check(3, "extended telemetry is the same on every ESC", len({str(v) for v in edt.values()}) == 1,
           str(edt))
 

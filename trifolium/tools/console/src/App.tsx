@@ -42,7 +42,13 @@ import { RawJson } from "./ui/RawJson";
 import { ResetDialog, type ResetKind, type ResetPlan } from "./ui/ResetDialog";
 import { RpmLog } from "./ui/RpmLog";
 import { FW_CONSOLE_CONTROLS, RevHold, type MotorsStatus, type RevHoldApi } from "./ui/RevHold";
-import { motorActionRows, useMotorActions, type Ack } from "./ui/MotorActions";
+import {
+  MOTORS_LIVE_POLL_MS,
+  motorActionRows,
+  useMotorActions,
+  type Ack,
+  type MotorsLive,
+} from "./ui/MotorActions";
 import { RpmStages } from "./ui/RpmStages";
 import { EncoderSelector, SelectorSwitch } from "./ui/SelectorSwitch";
 import { WiringWarnings } from "./ui/WiringWarnings";
@@ -604,6 +610,27 @@ export function App() {
   const consoleControls = live && compareVersions(schema.fw ?? "0", FW_CONSOLE_CONTROLS) >= 0;
   const runCommand = (command: string) => transport.request<NonNullable<Ack>>(command);
   const motorActions = useMotorActions(runCommand, (ok, text) => note(ok ? "ok" : "err", text));
+  /**
+   * The motor table's live rows, polled while the blaster page is open. Paused while busy: a write
+   * may be about to reboot the device.
+   */
+  const [motorsLive, setMotorsLive] = React.useState<MotorsLive | null>(null);
+  React.useEffect(() => {
+    if (!live) setMotorsLive(null);
+    if (!live || view !== "blaster" || busy) return;
+    let stopped = false;
+    void (async () => {
+      while (!stopped) {
+        const dump = await transport.request<MotorsLive>("DUMP_MOTORS", undefined, { quiet: true });
+        if (stopped) return;
+        setMotorsLive(dump);
+        await new Promise((r) => setTimeout(r, MOTORS_LIVE_POLL_MS));
+      }
+    })();
+    return () => {
+      stopped = true;
+    };
+  }, [live, view, busy, transport]);
   // Older firmware answers DUMP_SPLASH with raw bytes rather than a line, so it is not asked.
   const readSplash = React.useCallback(async (): Promise<DeviceSplash | null> => {
     if (!consoleControls) return null;
@@ -1747,6 +1774,7 @@ export function App() {
                               matrixExtras={motorActionRows({
                                 motors: enabledMotors(device),
                                 available: consoleControls,
+                                live: motorsLive,
                                 ...motorActions,
                               })}
                             />
