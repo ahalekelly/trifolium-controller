@@ -78,7 +78,7 @@ import { helpFor } from "./help/settings";
 import Switch from "@mui/material/Switch";
 import { Firmware } from "./ui/pages/Firmware";
 import { Maintenance } from "./ui/pages/Maintenance";
-import { Overview } from "./ui/pages/Overview";
+import { FW_USAGE_STATS, Overview } from "./ui/pages/Overview";
 
 // Real replies captured from a device, checked in so the whole form can be built and reviewed with
 // nothing plugged in. Replaced by live data on connect.
@@ -418,7 +418,11 @@ export function App() {
     // can attach. A device too old to answer leaves it null, which reads as "nothing recorded".
     const bootStatus = await transport.request<BootStatus>("DUMP_BOOT");
     setBoot(bootStatus);
-    setStats(await transport.request<UsageStats>("DUMP_STATS"));
+    setStats(
+      compareVersions(next.fw, FW_USAGE_STATS) >= 0
+        ? await transport.request<UsageStats>("DUMP_STATS")
+        : null,
+    );
     bootProblem.current =
       (bootStatus?.configFaults?.length ?? 0) > 0 || (next.pinConflicts?.length ?? 0) > 0;
 

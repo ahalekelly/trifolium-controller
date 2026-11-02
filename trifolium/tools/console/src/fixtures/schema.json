@@ -1,6 +1,6 @@
 {
   "cmd": "DUMP_SCHEMA",
-  "fw": "2.3.0",
+  "fw": "2.4.0",
   "boardId": "trifolium_v1_2",
   "wiringConfigured": true,
   "deviceSchemaVersion": 3,

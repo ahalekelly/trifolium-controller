@@ -87,6 +87,9 @@ function HealthRow({ ok, title, detail }: { ok: boolean; title: string; detail: 
   );
 }
 
+/** The first firmware that answers DUMP_STATS. */
+export const FW_USAGE_STATS = "2.4.0";
+
 export interface OverviewProps {
   live: boolean;
   schema: Schema;
