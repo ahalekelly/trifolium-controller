@@ -188,7 +188,7 @@ export function Overview(props: OverviewProps) {
               s="ESC current-sense output while the wheels ran"
             />
             <Stat
-              k="Hottest ESC"
+              k="Peak ESC temp"
               v={stats.maxEscTemp_C ? `${stats.maxEscTemp_C} °C` : "—"}
               s="Highest temperature any ESC reported"
             />

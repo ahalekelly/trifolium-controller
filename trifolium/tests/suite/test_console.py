@@ -290,8 +290,8 @@ def test_the_overview_shows_the_lifetime_usage_stats(page, serve):
     connect(open_console(page, served))
     expect(page.get_by_text("Darts fired", exact=True).locator("..")).to_have_text(
         re.compile(r"^Darts fired1Lifetime"))
-    expect(page.get_by_text("Hottest ESC", exact=True).locator("..")).to_have_text(
-        re.compile(r"^Hottest ESC—Highest"))
+    expect(page.get_by_text("Peak ESC temp", exact=True).locator("..")).to_have_text(
+        re.compile(r"^Peak ESC temp—Highest"))
 
 
 def test_a_renamed_blaster_is_written_rebooted_into_and_read_back(page, serve):

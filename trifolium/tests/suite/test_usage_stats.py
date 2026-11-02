@@ -1,5 +1,5 @@
-"""Lifetime usage stats: darts fired, the highest ESC current-sense reading and the hottest ESC,
-recorded every tick and stored once the wheels have been stopped for 5 s."""
+"""Lifetime usage stats: darts fired, the highest ESC current-sense reading and the peak ESC
+temperature, recorded every tick and stored once the wheels have been stopped for 5 s."""
 
 from helpers import armed_v12, enter, open_menu, select
 
@@ -73,4 +73,4 @@ def test_the_device_menu_shows_the_records(blaster):
     text = b.panel().text
     assert "Darts fired: 0" in text
     assert "Peak current: --" in text
-    assert "Hottest ESC: 52C" in text
+    assert "Peak ESC temp: 52C" in text

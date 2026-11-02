@@ -69,7 +69,7 @@ static void usageStatsFired()
     const String current = r.maxCurrent_mv ? String(r.maxCurrent_mv) + "mV" : String("--");
     const String temp = r.maxEscTemp_C ? String(r.maxEscTemp_C) + "C" : String("--");
     showTrapdoor("Usage Stats\nDarts fired: " + String(r.shotsFired) + "\nPeak current: " +
-                 current + "\nHottest ESC: " + temp + "\nany press = back");
+                 current + "\nPeak ESC temp: " + temp + "\nany press = back");
 }
 static ActionItem usageStatsItem("Usage Stats", usageStatsFired);
 
