@@ -6,7 +6,7 @@
 // Build-time check that this file matches what main.cpp expects. Unrelated to the store schema
 // versions, which version the persisted flash JSON at runtime.
 #define CONFIG_VERSION_MAJOR 2
-#define CONFIG_VERSION_MINOR 3
+#define CONFIG_VERSION_MINOR 4
 #define CONFIG_VERSION_PATCH 0
 
 inline uint32_t targetLoopTime_us = 1000;
@@ -60,6 +60,7 @@ inline const DeviceSettings kDefaultDeviceSettings = {
     .i2cSdaPin = PIN_NOT_USED,
     .i2cSclPin = PIN_NOT_USED,
     .batteryAdcPin = PIN_NOT_USED,
+    .currentAdcPin = PIN_NOT_USED,
     .escEnablePin = PIN_NOT_USED,
     .speedPotPin = PIN_NOT_USED,
     .speedPotReversed = false,
@@ -120,7 +121,6 @@ inline const DeviceSettings kDefaultDeviceSettings = {
     .dartWaitTimeout_ms = 1000,
     .minPushTime_ms = 8,
     .revOnlyWithDart = false,
-    .voltageAveragingWindow = 5,
     .useRpmBaseShotCounter = true,
     .goodRpmShotReads = 5,
     .rpmDropThreshold = 200,

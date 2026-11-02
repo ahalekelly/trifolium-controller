@@ -16,12 +16,18 @@ import {
 import { needsPresetPicker } from "./schema/wiring";
 import { diagramForBoardId } from "./schema/wiringDiagrams";
 import { buildPatch, getByKey, setByKey } from "./schema/keyPath";
-import { walk, type BootStatus, type Schema, type SchemaNode } from "./schema/types";
+import {
+  walk,
+  type BootStatus,
+  type Schema,
+  type SchemaNode,
+  type UsageStats,
+} from "./schema/types";
 import { resolveVisibility } from "./schema/visibility";
 import { configFrom, SerialTransport, TIMEOUT_SCHEMA_MS, type LogLine } from "./serial/transport";
 import { bundleFilename, buildBundle, checkBundle, diffKeys, downloadJson } from "./config/bundle";
 import { blasterLoads, schemaMismatch, type Blaster } from "./config/blasters";
-import { LOG_LINE_CAP, extractRpmCsv } from "./rpm/parse";
+import { LOG_LINE_CAP, extractRpmCsv, wholeRows } from "./rpm/parse";
 import { compareVersions } from "./firmware/releases";
 import { applyLayout } from "./ui/applyLayout";
 import { listChanges, marksToRevert, sectionSummary, splitMark, type Change } from "./ui/changes";
@@ -40,7 +46,7 @@ import { ProfileBar } from "./ui/ProfileBar";
 import { ProfileCopyDialog } from "./ui/ProfileCopyDialog";
 import { RawJson } from "./ui/RawJson";
 import { ResetDialog, type ResetKind, type ResetPlan } from "./ui/ResetDialog";
-import { RpmLog } from "./ui/RpmLog";
+import { RpmLog, downloadCsv } from "./ui/RpmLog";
 import { FW_CONSOLE_CONTROLS, RevHold, type MotorsStatus, type RevHoldApi } from "./ui/RevHold";
 import {
   MOTORS_LIVE_POLL_MS,
@@ -78,7 +84,7 @@ import { helpFor } from "./help/settings";
 import Switch from "@mui/material/Switch";
 import { Firmware } from "./ui/pages/Firmware";
 import { Maintenance } from "./ui/pages/Maintenance";
-import { Overview } from "./ui/pages/Overview";
+import { FW_USAGE_STATS, Overview } from "./ui/pages/Overview";
 
 // Real replies captured from a device, checked in so the whole form can be built and reviewed with
 // nothing plugged in. Replaced by live data on connect.
@@ -234,6 +240,8 @@ export function App() {
   logRef.current = log;
   /** The RPM capture page's box: held here so a finished capture lands in it from any page. */
   const [rpmText, setRpmText] = React.useState("");
+  /** Save CSV files: every finished capture downloads as it arrives, whichever page is open. */
+  const [autoSaveCaptures, setAutoSaveCaptures] = React.useState(true);
   // Open by default where there is room for five lines; folded on a phone.
   const [logOpen, setLogOpen] = React.useState<boolean>(
     () => remembered(LOG_KEY, onPhone() ? "folded" : "open") === "open",
@@ -267,6 +275,8 @@ export function App() {
   const [settingUp, setSettingUp] = React.useState<Blaster | null>(null);
   /** The connected device's DUMP_BOOT, for the faults it recorded. Null while offline. */
   const [boot, setBoot] = React.useState<BootStatus | null>(null);
+  /** The connected device's DUMP_STATS. Null while offline, or from firmware without it. */
+  const [stats, setStats] = React.useState<UsageStats | null>(null);
   /** A reset the user picked, held until they type its word. Null when no dialog is open. */
   const [pendingReset, setPendingReset] = React.useState<ResetPlan | null>(null);
   /** The PICOBOOT flasher. Openable offline, for a board already sitting in its bootloader. */
@@ -288,6 +298,7 @@ export function App() {
           setWiringByHand(false); // a different device may need the picker
           // Faults describe the boot of a device that is no longer attached.
           setBoot(null);
+          setStats(null);
         },
         onRebooting: (reason) => onRebooting.current(reason),
       }),
@@ -413,6 +424,11 @@ export function App() {
     // can attach. A device too old to answer leaves it null, which reads as "nothing recorded".
     const bootStatus = await transport.request<BootStatus>("DUMP_BOOT");
     setBoot(bootStatus);
+    setStats(
+      compareVersions(next.fw, FW_USAGE_STATS) >= 0
+        ? await transport.request<UsageStats>("DUMP_STATS")
+        : null,
+    );
     bootProblem.current =
       (bootStatus?.configFaults?.length ?? 0) > 0 || (next.pinConflicts?.length ?? 0) > 0;
 
@@ -603,6 +619,7 @@ export function App() {
     );
     if (!csv) return;
     setRpmText(csv);
+    if (autoSaveCaptures) downloadCsv(wholeRows(csv).csv);
     note("ok", "The capture is on the RPM capture page.");
   };
 
@@ -1575,6 +1592,7 @@ export function App() {
             live={live}
             schema={schema}
             boot={boot}
+            stats={stats}
             device={device}
             profiles={profiles}
             profileName={profileName}
@@ -1907,6 +1925,8 @@ export function App() {
                   capturing={getByKey(device, "device:useRpmLogging") === true}
                   text={rpmText}
                   onText={setRpmText}
+                  autoSave={autoSaveCaptures}
+                  onAutoSave={setAutoSaveCaptures}
                   revHold={consoleControls ? <RevHold api={revHoldApi} live={live} /> : null}
                 />
               </Box>

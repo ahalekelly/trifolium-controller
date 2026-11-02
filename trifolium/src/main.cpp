@@ -19,8 +19,10 @@
 #include "profileStore.h"
 #include "deviceSettings.h"
 #include "deviceStore.h"
+#include "adcSampler.h"
 #include "batteryMonitor.h"
 #include "rpmLogger.h"
+#include "usageStats.h"
 #include "displayManager.h"
 #include "firingModeBehavior.h"
 #include "bootStatus.h"
@@ -79,6 +81,7 @@ bool wiringLive = false;
 uint8_t ledDataPin = PIN_NOT_USED;
 uint8_t batteryAdcPin = PIN_NOT_USED;
 uint8_t speedPotPin = PIN_NOT_USED;
+uint8_t currentAdcPin = PIN_NOT_USED;
 uint8_t escEnablePin = PIN_NOT_USED;
 
 // Stage 1's rev RPM as the speed pot sets it, before updateSpeedPot()'s limits; 0 with none wired.
@@ -301,6 +304,7 @@ static bool dartSensingOn();
 void updateSpeedPot();
 void resetFWControl();
 void registerShot();
+static bool driveTrainStopped();
 void applyMotorConfig();
 void applyEmaFilterConstant();
 void applySolenoidTimingCurve();
@@ -390,6 +394,7 @@ void registerShot()
 {
     runtimeShotCounter++;
     displayShotCounter++;
+    UsageStats::recordShot();
     if (runtimeShotCounter % 10000 == 0)
     {
         displayShotCounter = 0;
@@ -763,7 +768,6 @@ static void runUnconfiguredBoot()
     // PIN_NOT_USED makes begin() skip the ADC and report a nominal cellCount * 3500 mV, so the paths
     // that dereference batteryMonitor stay safe and the DPS bounds aren't degenerate.
     batteryMonitor = new BatteryMonitor(PIN_NOT_USED, deviceSettings.voltageCalibrationFactor,
-                                        deviceSettings.voltageAveragingWindow,
                                         cellCount(deviceSettings.batteryType));
     batteryMonitor->begin();
     applySolenoidTimingCurve();
@@ -796,6 +800,7 @@ void setup()
     activeProfileIndex = ProfileStore::loadActiveProfileIndex();
     DeviceStore::LoadResult loaded = DeviceStore::loadDeviceSettings(deviceSettings);
     applyPrintTelemetry(); // as early as possible so logging behaves correctly for the rest of boot
+    UsageStats::load();
 
     // Recorded because the boot line announcing it is gone from the port before a host can attach.
     (void)loaded;
@@ -1088,8 +1093,8 @@ void setup()
         delay(2500);
     }
 
+    AdcSampler::begin({batteryAdcPin, currentAdcPin, speedPotPin});
     batteryMonitor = new BatteryMonitor(batteryAdcPin, deviceSettings.voltageCalibrationFactor,
-                                        deviceSettings.voltageAveragingWindow,
                                         cellCount(deviceSettings.batteryType));
     batteryMonitor->begin();
 
@@ -1145,11 +1150,7 @@ void setup()
             motorArr[i].attachEsc(new BidirDShotX1(escPin(i), dshotRate(deviceSettings.dshotMode)));
         }
     }
-    if (pinDefined(speedPotPin))
-    {
-        pinMode(speedPotPin, INPUT);
-        updateSpeedPot();
-    }
+    updateSpeedPot();
     dwellTime_ms = activeProfile.dwellTime_ms;
     idleTime_ms = activeProfile.idleTime_ms;
 
@@ -1495,8 +1496,17 @@ void mainFiringLogic()
         if (queueWasEmpty && shotsToFire > 0)
             pushWaitsForSpeed = true;
     }
+    AdcSampler::update();
     batteryMonitor->update();
     updateSpeedPot();
+    // Only while the wheels are driven: the peak is the ESCs' load, not the offset at rest.
+    if (pinDefined(currentAdcPin) && !driveTrainStopped())
+        UsageStats::recordCurrent(AdcSampler::millivolts(currentAdcPin));
+    for (int i = 0; i < 4; i++)
+    {
+        if (motorsEnabled[i] && motorArr[i].telemetryTempSeen)
+            UsageStats::recordEscTemp(motorArr[i].telemetryTempRaw);
+    }
 }
 
 // Sets the active profile's rev RPM from the pot: stage 1 between Pot Min and Pot Max RPM,
@@ -1505,13 +1515,13 @@ void updateSpeedPot()
 {
     if (!pinDefined(speedPotPin))
         return;
-    static constexpr int kEndDeadband = 12;     // raw counts at each end that still read as the end
+    static constexpr int kEndDeadband_mv = 40;  // this close to either end reads as that end
     static constexpr float kHysteresis = 0.01f; // a share of the whole travel
     static float smoothed = -1.0f;
     static float travel = -1.0f;
-    const int raw = analogRead(speedPotPin);
-    smoothed = smoothed < 0 ? raw : smoothed + (raw - smoothed) / 8.0f;
-    float now = (smoothed - kEndDeadband) / (1023.0f - 2 * kEndDeadband);
+    const int mv = AdcSampler::millivolts(speedPotPin);
+    smoothed = smoothed < 0 ? mv : smoothed + (mv - smoothed) / 8.0f;
+    float now = (smoothed - kEndDeadband_mv) / (3300.0f - 2 * kEndDeadband_mv);
     now = now < 0 ? 0 : now > 1 ? 1 : now;
     if (travel < 0 || now == 0 || now == 1 || fabsf(now - travel) >= kHysteresis)
         travel = now;
@@ -1898,7 +1908,7 @@ bool fwControlLoop()
             resetFWControl();
             if (deviceSettings.useRpmLogging)
             {
-                if (!rpmLogger.startCapture(deviceSettings.rpmLogLength))
+                if (!rpmLogger.startCapture(deviceSettings.rpmLogLength, currentAdcPin))
                     logger.error(
                         "RPM logging: capture buffer allocation failed, skipping this rev");
             }
@@ -2456,6 +2466,33 @@ static void persistSpeedPotWhenIdle()
         speedPotUnsaved = true;
 }
 
+static const uint32_t STATS_SETTLE_MS = 5000;
+
+// Once the wheels have been stopped for 5 s, so a run of bursts costs one write, after it.
+static void persistStatsWhenIdle()
+{
+    static uint32_t busyAt_ms = 0;
+    if (!driveTrainStopped())
+    {
+        busyAt_ms = millis();
+        return;
+    }
+    if (!UsageStats::unsaved() || millis() - busyAt_ms < STATS_SETTLE_MS)
+        return;
+    if (!UsageStats::save())
+    {
+        busyAt_ms = millis(); // tried again after another settle, not every pass
+        logger.error("Could not store the usage stats");
+    }
+}
+
+static void persistWhenIdle()
+{
+    persistFiringModeWhenIdle();
+    persistSpeedPotWhenIdle();
+    persistStatsWhenIdle();
+}
+
 // One line at boot and every 3 s after, from core 1, the only core that writes to Serial. Stops
 // once a host has spoken - a reader taking the first JSON line would otherwise capture this.
 static void announceUnconfigured()
@@ -2485,8 +2522,7 @@ void loop1()
     if (!displayManager.hasDisplay())
     {
         serviceMenuButton();
-        persistFiringModeWhenIdle();
-        persistSpeedPotWhenIdle();
+        persistWhenIdle();
         return;
     }
 
@@ -2503,8 +2539,7 @@ void loop1()
             break; // menu closed - fall through and let loop1() re-enter fresh next tick
         }
 
-        persistFiringModeWhenIdle();
-        persistSpeedPotWhenIdle();
+        persistWhenIdle();
 
         if (millis() - lastUpdated > 100 || updateRuntimeNow)
         {

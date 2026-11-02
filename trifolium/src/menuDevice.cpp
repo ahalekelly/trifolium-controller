@@ -3,6 +3,7 @@
 #include "profileStore.h"
 #include "deviceStore.h"
 #include "hwDiag.h"
+#include "usageStats.h"
 #include "enumIds.h"
 #include "CONFIGURATION.h" // MAX_RPM_LOG_LENGTH - the same ceiling startCapture() allocates against
 
@@ -60,6 +61,17 @@ static void aboutFired()
     }
 }
 static ActionItem aboutItem("About", aboutFired);
+
+static void usageStatsFired()
+{
+    const UsageStats::Records r = UsageStats::records();
+    // 0 is no reading yet: no current-sense pin, or no ESC has reported a temperature.
+    const String current = r.maxCurrent_mv ? String(r.maxCurrent_mv) + "mV" : String("--");
+    const String temp = r.maxEscTemp_C ? String(r.maxEscTemp_C) + "C" : String("--");
+    showTrapdoor("Usage Stats\nDarts fired: " + String(r.shotsFired) + "\nPeak current: " +
+                 current + "\nPeak ESC temp: " + temp + "\nany press = back");
+}
+static ActionItem usageStatsItem("Usage Stats", usageStatsFired);
 
 static void rebootNow()
 {
@@ -267,8 +279,6 @@ static bool revPinWired()
 }
 static SecondsDisplayItem menuHoldTimeItem("Menu Hold Time", "device:menuButtonHoldTime_ms",
                                            &deviceSettings.menuButtonHoldTime_ms, 1000, 5000, 500);
-static NumericItem<int> voltageAvgWindowItem("Volt Avg Window", "device:voltageAveragingWindow",
-                                             &deviceSettings.voltageAveragingWindow, 1, 20, 1);
 static ToggleItem rpmShotCounterItem("RPM Shot Counter", "device:useRpmBaseShotCounter",
                                      &deviceSettings.useRpmBaseShotCounter);
 static NumericItem<uint16_t> goodRpmReadsItem("Good RPM Reads", "device:goodRpmShotReads",
@@ -557,6 +567,8 @@ static AdcPinItem batteryAdcPinItem("Battery ADC Pin", "device:batteryAdcPin",
                                     &deviceSettings.batteryAdcPin);
 static AdcPinItem speedPotPinItem("Speed Pot Pin", "device:speedPotPin",
                                   &deviceSettings.speedPotPin);
+static AdcPinItem currentAdcPinItem("Current ADC Pin", "device:currentAdcPin",
+                                    &deviceSettings.currentAdcPin);
 
 // Driven LOW at boot and again by the low-voltage cutoff, to cut power to the ESCs and the pusher.
 static PinItem escEnablePinItem("ESC Enable Pin", "device:escEnablePin",
@@ -632,17 +644,17 @@ static MenuItem* wiringItems[] = {&boardIdItem,            &wiringConfiguredItem
                                   &esc3PinItem,            &esc4PinItem,
                                   &i2cSdaPinItem,          &i2cSclPinItem,
                                   &batteryAdcPinItem,      &speedPotPinItem,
-                                  &escEnablePinItem,       &pusherFetPinItem,
-                                  &ledDataPinItem,         &safetyPinItem,
-                                  &triggerPinItem,         &revPinItem,
-                                  &menuButtonPinItem,      &cyclePinItem,
-                                  &dartPinItem,            &idlePinItem,
-                                  &select0PinItem,         &select1PinItem,
-                                  &select2PinItem,         &triggerPolarityItem,
-                                  &revPolarityItem,        &menuButtonPolarityItem,
-                                  &cyclePolarityItem,      &dartPolarityItem,
-                                  &idlePolarityItem,       &safetyPolarityItem,
-                                  &speedPotReversedItem};
+                                  &currentAdcPinItem,      &escEnablePinItem,
+                                  &pusherFetPinItem,       &ledDataPinItem,
+                                  &safetyPinItem,          &triggerPinItem,
+                                  &revPinItem,             &menuButtonPinItem,
+                                  &cyclePinItem,           &dartPinItem,
+                                  &idlePinItem,            &select0PinItem,
+                                  &select1PinItem,         &select2PinItem,
+                                  &triggerPolarityItem,    &revPolarityItem,
+                                  &menuButtonPolarityItem, &cyclePolarityItem,
+                                  &dartPolarityItem,       &idlePolarityItem,
+                                  &safetyPolarityItem,     &speedPotReversedItem};
 static SubmenuItem wiringSubmenu("Wiring", wiringItems,
                                  sizeof(wiringItems) / sizeof(wiringItems[0]));
 struct WiringSubmenuInit
@@ -663,9 +675,9 @@ static MenuItem* deviceItems[] = {
     &wiringSubmenu, &rebootSubmenu, &bootActionSubmenu, &displaySubmenu,
     &blasterNameItem, &ledWarningModeItem, &dualStageTriggerItem, &pusherDriveItem,
     &pusherEscChannelItem,
-    &debounceTimeItem, &menuHoldTimeItem, &voltageAvgWindowItem, &rpmShotCounterItem,
+    &debounceTimeItem, &menuHoldTimeItem, &rpmShotCounterItem,
     &goodRpmReadsItem, &rpmDropThresholdItem, &rpmLoggingSubmenu, &resetDeviceSubmenu,
-    &aboutItem,
+    &usageStatsItem, &aboutItem,
 };
 // Non-static: referenced by menu.cpp's Advanced submenu assembly.
 SubmenuItem deviceSubmenu("Device", deviceItems, 18);

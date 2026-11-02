@@ -20,6 +20,7 @@
   "i2cSclPin": 255,
   "batteryAdcPin": 255,
   "speedPotPin": 255,
+  "currentAdcPin": 255,
   "escEnablePin": 255,
   "menuButtonPin": 255,
   "triggerSwitchPin": 255,

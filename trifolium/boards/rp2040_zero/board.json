@@ -8,8 +8,7 @@
     "Every GPIO the module brings out is on the diagram - GP0-GP15 and GP26-GP29 - so the console can tell you when a pin you have picked is not one of them."
   ],
   "unread": {
-    "telem": 255,
-    "escADC": 255
+    "telem": 255
   },
   "schemaVersion": 3,
   "boardId": "rp2040_zero",
@@ -23,6 +22,7 @@
   "i2cSdaPin": 255,
   "i2cSclPin": 255,
   "batteryAdcPin": 255,
+  "currentAdcPin": 255,
   "escEnablePin": 255,
   "menuButtonPin": 255,
   "triggerSwitchPin": 255,
