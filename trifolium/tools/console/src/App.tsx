@@ -167,6 +167,16 @@ const OFFLINE_DEVICE = {
   ...(OFFLINE_PRESET?.wiring ?? {}),
 };
 
+/** An ESC session went through, but the blaster's settings could not be read back after it. */
+class SettingsUnread extends Error {
+  constructor() {
+    super(
+      "the blaster came back from ESC passthrough, but its settings could not be read back - " +
+        "the log says why",
+    );
+  }
+}
+
 /** The device log keeps the newest this many lines. */
 const LOG_LINES = 1000;
 
@@ -666,22 +676,23 @@ export function App() {
    * settings the blaster holds, not the form's edits: passthrough hands over what it has stored.
    *
    * A failure clears the table, since a write that stopped partway leaves some ESCs changed and the
-   * table no longer says which.
+   * table no longer says which. A session that went through but left the blaster's settings unread
+   * throws SettingsUnread, since nothing after it can trust the form.
    */
   const escSession = async (run: (targets: EscTargets) => Promise<EscSettings[]>) => {
     setBusy(true);
     const keep = stagedExcept(new Set());
+    let read: EscSettings[] | null = null;
+    let reread = false;
     try {
-      const read = await run(escTargets(baseline.device));
-      setEscs(read);
-      return read;
-    } catch (e) {
-      setEscs(null);
-      throw e;
+      read = await run(escTargets(baseline.device));
     } finally {
-      if (transport.connected) await readSchemaAndValues(keep);
+      setEscs(read);
+      reread = transport.connected && (await readSchemaAndValues(keep));
       setBusy(false);
     }
+    if (!reread) throw new SettingsUnread();
+    return read;
   };
   escIo.current = {
     read: () => escSession((targets) => readEscSettings(transport, targets)),
@@ -695,7 +706,12 @@ export function App() {
       note("ok", `${what}: done.`);
     } catch (e) {
       const why = (e as Error).message.replace(/\.$/, "");
-      note("err", `${what} failed: ${why}. Read the ESCs again to see what they hold.`);
+      note(
+        "err",
+        e instanceof SettingsUnread
+          ? `${what}: done, but ${why}.`
+          : `${what} failed: ${why}. Read the ESCs again to see what they hold.`,
+      );
     }
   };
 
