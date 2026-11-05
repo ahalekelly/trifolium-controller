@@ -34,6 +34,7 @@ class FlywheelMotor
     uint32_t telemetryCurrentRaw = 0;
     uint32_t telemetryTempRaw = 0;
     uint32_t telemetryStressRaw = 0;
+    uint32_t telemetryDebug1Raw = 0;
     bool telemetryVoltageSeen = false;
     bool telemetryCurrentSeen = false;
     bool telemetryTempSeen = false;
