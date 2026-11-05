@@ -6,7 +6,7 @@ Open it at **[davidpyo.github.io/trifolium-controller](https://davidpyo.github.i
 
 Press **Connect** and pick the blaster from the port list your browser offers. The browser remembers it, so from then on Connect goes straight to it while it is the only blaster plugged in. For a different blaster, or to choose between two plugged in at once, press **Choose Device**.
 
-On Android there is only **Connect**, and the phone asks for permission every time, including after the blaster restarts. A write that needs a restart, a **Restart** or an RPM capture therefore stops at that point, and the log asks you to press **Connect** to carry on. Press it, allow the blaster, and the console finishes what it was doing.
+On Android there is only **Connect**, and the phone asks for permission every time, including after the blaster restarts. A write that needs a restart or a **Restart** therefore stops at that point, and the log asks you to press **Connect** to carry on. Press it, allow the blaster, and the console finishes what it was doing.
 
 > **Browser support.** Chrome, Edge or Opera on desktop, Chrome on Android over a USB cable, or Firefox 151 or newer. Safari, and every browser on an iPhone, cannot reach the blaster. Flashing firmware additionally needs Chrome or Edge, or Chrome on Android. Close any other serial monitor first, since only one program can hold the port at a time.
 
@@ -23,6 +23,7 @@ The pages are in the sidebar. On a phone the main four are tabs along the bottom
 | **Blaster settings** | Everything shared across profiles: motors and PID, solenoid timing, battery, display, debounce, shot counting, and on firmware 2.3.0 and later the [boot rules](Device#boot-actions) and each motor's [Test, Normal and Reversed](Motors-and-PID) buttons. |
 | **Wiring** | Which pin each thing is on, with a diagram of your board where one has been drawn. Also where pin conflicts are reported, and where you change board. |
 | **RPM capture** | Records a spin-up and charts it. |
+| **Tune** | Searches flywheel gains for the fastest dependable spin-up, on the blaster itself. |
 | **Splash screen** | Upload a custom 128x64 boot image from any picture, or clear it back to the default. Takes effect next boot. On firmware 2.3.0 and later the page opens on the image the blaster holds, custom or built-in, and **Download** saves the one shown as a PNG that uploads back unchanged. |
 | **Firmware** | Flashes new firmware over USB. |
 | **Maintenance** | The resets: one profile, the blaster settings, the wiring, or everything. Each asks you to type a word first, so none happens by a stray click. |
@@ -87,11 +88,19 @@ Settings survive a flash: they live in the board's own storage, not the firmware
 The **RPM capture** page takes you through it in three steps:
 
 1. Turn on **RPM Logging** and write it. It is a saved setting, also on the OLED under Motors & PID, and it stays on until you turn it off.
-2. Rev the blaster. Each rev records a capture; the blaster then prints it and restarts, and the console reconnects. On firmware 2.3.0 and later you can also rev it from the page: hold **Hold to rev**, with the motors to spin ticked. It revs only while the button is held down. Letting go, moving off the button, switching to another window or tab, or the connection dropping all stop it within a third of a second. It is off while the blaster's menu is open or it is in SAFE, and there is no fire button: a dart only goes if you pull the trigger yourself, and not at all with some motors unticked.
-3. The capture charts by itself as the console reconnects, from any page, and the newest one if the log holds several. **Take from device log** reads it again. With **Save CSV files** ticked, the default, each capture also downloads as `rpm-capture-<date>_<time>.csv`. You can also open a `.csv` file, paste one in, or drop one on the page.
+2. Rev the blaster. Each rev records a capture, which the blaster sends once it is full. On firmware 2.3.0 and later you can also rev it from the page: hold **Hold to rev**, with the motors to spin ticked. It revs only while the button is held down. Letting go, moving off the button, switching to another window or tab, or the connection dropping all stop it within a third of a second. It is off while the blaster's menu is open or it is in SAFE, and there is no fire button: a dart only goes if you pull the trigger yourself, and not at all with some motors unticked.
+3. The capture charts by itself as it arrives, from any page. With **Save CSV files** ticked, the default, each capture also downloads as `rpm-capture-<date>_<time>.csv`. You can also open a `.csv` file, paste one in, or drop one on the page.
 
 Flywheel RPM and pack voltage go on separate axes, so a 300 mV sag under load is visible rather than a flat line against a 16 V rail, and the horizontal axis is real milliseconds rather than sample numbers. A second chart underneath holds each motor's throttle and, with a **Current ADC Pin** wired, the ESC's current-sense output in mV. A motor's commanded lines (target, throttle) are its colour at half strength.
 
 The table underneath reports, per motor, the target, the time it took to reach it, and how far past it the motor went.
 
-Turn RPM Logging off for normal use: it allocates a buffer on every rev and restarts the blaster after each capture.
+Turn RPM Logging off for normal use: it allocates a buffer on every rev, and a rev that starts while the last capture is still going out is not captured.
+
+## Tuning spin-up
+
+The **Tune** page finds the flywheel gains that spin up fastest without overshooting, by revving the blaster itself, hundreds of times. It needs RPM Logging on, with a capture at least the rampup timeout plus 500 ms long.
+
+Give it PID kp and ki values (it tries every pair), TBH gains, or both, and the target RPMs. Each spin-up waits for the wheels to stop and rest, sets the candidate in RAM, revs every enabled motor and reads the capture. The slower half of the candidates drops out every round; the finalists get **Spin-ups per finalist** each. Any that overshoot past **Overshoot limit %** are ruled out, and the rest rank by fewest rampup timeouts, then their second-worst spin-up time. The blaster's own settings rerun every few candidates, so drift from heat or a sagging pack shows.
+
+The run pauses when a cell reads below **Pause below V a cell**, so you can swap the pack, and when anything else stops it: SAFE, the menu, a dropped connection. It is kept in the browser, so a reload or a closed tab pauses it rather than losing it; **Resume** carries on. While it runs, **Hold to rev** and the motor buttons are off. Nothing is stored until you press **Apply** on a result, and whenever a run stops the blaster goes back to its own gains. **Export JSON** saves the whole run.

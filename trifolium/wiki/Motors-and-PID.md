@@ -36,4 +36,4 @@ The channel's remaining rows stay editable and simply have no effect. On a FET-d
 | **Throttle Cap** | 0 to 2000, ±10 | `Live` · `conditional` | Extra throttle headroom TBH uses on the initial rev, before its own feedback takes over. Only shown while Control Type is TBH, since PID does not use it. |
 | **Auto-Tune PID** | action | `Live` · `conditional` | Try it. |
 | **ESC Dashboard** | read-only | `Live` | Live per-motor voltage, current, temperature and stress from the ESCs, if your ESC firmware reports it. Rev works from this screen so you can see numbers while spinning. |
-| **RPM Logging** | on / off | `Live` | Arms an RPM-versus-time capture on every rev. The blaster prints the capture and reboots once it has its samples, so turn it off again for normal use. Chart it in the [Web Console](Web-Console). |
+| **RPM Logging** | on / off | `Live` | Arms an RPM-versus-time capture on every rev. The blaster prints the capture once it has its samples. Turn it off again for normal use. Chart it in the [Web Console](Web-Console). |
