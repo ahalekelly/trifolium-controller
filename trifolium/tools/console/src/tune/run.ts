@@ -107,12 +107,17 @@ export interface SetRecord {
 export type RunStatus = "running" | "paused" | "done";
 
 /** Changes whenever Run's shape does, so a run another build saved is refused rather than misread. */
-const RUN_VERSION = 3;
+const RUN_VERSION = 4;
 
 export interface Run {
   version: typeof RUN_VERSION;
   /** When it started, in ms since the epoch: every file it saves is named from it. */
   startedAt: number;
+  /**
+   * The chip ID of the blaster it started on, the one it runs on and owes ESC settings to; null from
+   * firmware that does not report one.
+   */
+  blaster: string | null;
   config: TuneConfig;
   /** What the blaster started with, which an ESC run puts back on the ESCs when it stops. */
   baseline: Settings;
@@ -244,11 +249,17 @@ export function plannedEscWrites(count: number, n: number): number {
   return blocks + Math.floor(sets / BASELINE_BLOCKS.esc.every) + 1;
 }
 
-export function startRun(config: TuneConfig, baseline: Settings, rampupTimeoutMs: number): Run {
+export function startRun(
+  config: TuneConfig,
+  baseline: Settings,
+  blaster: string | null,
+  rampupTimeoutMs: number,
+): Run {
   const candidates = candidatesFor(config.grid, baseline);
   return {
     version: RUN_VERSION,
     startedAt: Date.now(),
+    blaster,
     config,
     baseline,
     rampupTimeoutMs,

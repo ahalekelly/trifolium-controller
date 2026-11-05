@@ -76,11 +76,20 @@ const capture = (rpm: number, readyMs: number): Capture => ({
 function rig() {
   const escs = new FakeBlaster([{ block: V4_DEFAULT.slice() }, { block: V4_DEFAULT.slice() }]);
   const events: string[] = [];
-  const blaster = { up: true, escs, events, runner: null as unknown as TuneRunner };
+  const blaster = {
+    up: true,
+    chipId: "E6614103E7345B2F",
+    escs,
+    events,
+    runner: null as unknown as TuneRunner,
+  };
   let rpm = 0;
   const transport = {
     get connected() {
       return blaster.up;
+    },
+    get chipId() {
+      return blaster.up ? blaster.chipId : null;
     },
     log: () => {},
     sendLine: async (line: string) => void events.push(line),
@@ -298,6 +307,69 @@ describe("an ESC run", () => {
     await idle(blaster.runner);
     expect(blaster.runner.getRun()).toBeNull();
     expect(escs.escs.map((e) => e.block[POWER])).toEqual([150, 150]);
+  });
+
+  it("keeps what it owes for its own blaster, refusing another loudly until it connects", async () => {
+    const { blaster, escs, events } = rig();
+    const { runner } = blaster;
+    void runner.start(CONFIG, GAINS, DEVICE);
+    await until(() => events.includes("rev at 120/120"));
+    blaster.up = false;
+    await idle(runner);
+    expect(runOf(runner)).toMatchObject({ blaster: "E6614103E7345B2F", restoreEscs: true });
+
+    // Another Trifolium connects: its ESCs are not the run's to write, nor its run to resume.
+    blaster.chipId = "E66138935F4A2C27";
+    blaster.up = true;
+    const before = sessions(events);
+    runner.connected();
+    await idle(runner);
+    const refused =
+      "This run is for the blaster with chip ID E6614103E7345B2F, but the one connected is " +
+      "E66138935F4A2C27. Connect that blaster to put its ESCs' own settings back, or Discard the " +
+      "run, which leaves that blaster's ESCs on a candidate's settings.";
+    expect(runOf(runner)).toMatchObject({ note: refused, restoreEscs: true });
+    runner.resume(DEVICE);
+    await idle(runner);
+    expect(runOf(runner)).toMatchObject({ status: "paused", note: refused });
+    expect(sessions(events)).toBe(before); // not even a read
+
+    // Its own blaster gets them back.
+    blaster.chipId = "E6614103E7345B2F";
+    runner.connected();
+    await idle(runner);
+    expect(runOf(runner).restoreEscs).toBe(false);
+    expect(escs.escs.map((e) => e.block)).toEqual([V4_DEFAULT, V4_DEFAULT]);
+  });
+
+  it("applies a winner on its own blaster only", async () => {
+    const { blaster, escs } = rig();
+    void blaster.runner.start(CONFIG, GAINS, DEVICE);
+    await idle(blaster.runner);
+    const winner = runOf(blaster.runner).candidates[0];
+    blaster.chipId = "E66138935F4A2C27";
+    const apply = vi.fn();
+    blaster.runner.applyGains(winner, apply);
+    void blaster.runner.applyEsc(winner);
+    await idle(blaster.runner);
+    expect(apply).not.toHaveBeenCalled();
+    expect(escs.escs.map((e) => e.block)).toEqual([V4_DEFAULT, V4_DEFAULT]);
+    expect(runOf(blaster.runner).note).toMatch(/^This run is for the blaster with chip ID E6614103E7345B2F/);
+  });
+
+  it("is dropped on Discard with another blaster connected, writing nothing", async () => {
+    const { blaster, events } = rig();
+    void blaster.runner.start(CONFIG, GAINS, DEVICE);
+    await until(() => events.includes("rev at 120/120"));
+    blaster.up = false;
+    await idle(blaster.runner);
+    blaster.chipId = "E66138935F4A2C27";
+    blaster.up = true;
+    const before = sessions(events);
+    void blaster.runner.discard();
+    await idle(blaster.runner);
+    expect(blaster.runner.getRun()).toBeNull();
+    expect(sessions(events)).toBe(before);
   });
 
   it("will not start on ESCs that differ on a setting it searches", async () => {

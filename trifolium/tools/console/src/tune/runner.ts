@@ -196,12 +196,17 @@ export class TuneRunner {
         this.setActivity(null);
       }
     }
-    this.set(startRun(config, { gains, esc }, settings.rampupTimeoutMs));
+    this.set(startRun(config, { gains, esc }, this.transport.chipId, settings.rampupTimeoutMs));
     void this.loop(esc ? BASELINE : null, device);
   }
 
   resume(device: unknown) {
     if (this.working || this.run === null || this.run === "unreadable") return;
+    const other = this.otherBlaster();
+    if (other) {
+      this.change({ note: other });
+      return;
+    }
     this.change({ status: "running", note: null });
     void this.loop(null, device);
   }
@@ -211,18 +216,35 @@ export class TuneRunner {
     this.pauseWanted = true;
   }
 
-  /** Drops a run that is not going, once any ESC settings it owes are back. */
+  /**
+   * Drops a run that is not going, once any ESC settings it owes are back. With another blaster
+   * connected, the user is giving up on the run's own, and it goes without them.
+   */
   async discard() {
     await this.drive(async () => {
-      await this.settle();
-      if (this.run !== "unreadable" && this.run?.restoreEscs) return; // the page says it is owed
+      if (!this.otherBlaster()) {
+        await this.settle();
+        if (this.run !== "unreadable" && this.run?.restoreEscs) return; // the page says it is owed
+      }
       this.set(null);
     });
+  }
+
+  /** Hands a gains run's winner to `apply`, which stores it - on the run's own blaster only. */
+  applyGains(winner: Candidate, apply: (gains: Gains) => void) {
+    const other = this.otherBlaster();
+    if (other) this.change({ note: other });
+    else apply(winner.gains);
   }
 
   /** Writes an ESC run's winner to the ESCs, to stay. */
   async applyEsc(winner: Candidate) {
     await this.drive(async () => {
+      const other = this.otherBlaster();
+      if (other) {
+        this.change({ note: other });
+        return;
+      }
       this.change({ restoreEscs: true });
       try {
         await this.writeEscs(winner.esc!, winner.id);
@@ -241,7 +263,11 @@ export class TuneRunner {
   connected() {
     this.load();
     if (this.working) return;
-    if (this.run === null || this.run === "unreadable" || !this.run.restoreEscs) {
+    const other = this.otherBlaster();
+    if (other && this.run !== null && this.run !== "unreadable") {
+      if (this.run.restoreEscs || this.run.status === "paused") this.change({ note: other });
+    }
+    if (other || this.run === null || this.run === "unreadable" || !this.run.restoreEscs) {
       void this.untune();
       return;
     }
@@ -270,8 +296,30 @@ export class TuneRunner {
     this.notify();
   }
 
+  /**
+   * Why the blaster connected is not the run's, naming both, or null when it is or none is
+   * connected. A run belongs to the blaster it started on: the settings it owes are that blaster's
+   * ESCs', and the browser it is saved in may meet any Trifolium next.
+   */
+  private otherBlaster(): string | null {
+    const run = this.run;
+    if (run === null || run === "unreadable" || !this.transport.connected) return null;
+    const here = this.transport.chipId;
+    if (here === run.blaster) return null;
+    const owed = run.restoreEscs;
+    return (
+      `This run is for the blaster with chip ID ${run.blaster ?? "unknown"}, but the one ` +
+      `connected is ${here ?? "unknown"}. Connect that blaster to ` +
+      (owed ? "put its ESCs' own settings back" : "carry on") +
+      ", or Discard the run" +
+      (owed ? ", which leaves that blaster's ESCs on a candidate's settings." : ".")
+    );
+  }
+
   /** One write of `values` to every flywheel ESC, shown while it lasts and counted on the run. */
   private async writeEscs(values: EscValues, what: string) {
+    const other = this.otherBlaster();
+    if (other) throw new Error(other);
     this.setActivity(`Writing ${what} to the ESCs.`);
     try {
       await this.escs.write(values);

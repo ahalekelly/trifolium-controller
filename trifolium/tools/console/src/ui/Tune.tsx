@@ -513,8 +513,8 @@ export function Tune({
           )}
           {run.restoreEscs && run.status !== "running" && activity === null && (
             <Alert severity="warning" sx={{ py: 0 }}>
-              The ESCs may still hold a candidate's settings. Their own settings go back when the
-              blaster next connects, or on Discard.
+              The ESCs may still hold a candidate's settings. Their own settings go back when this
+              run's blaster next connects, or on Discard.
             </Alert>
           )}
           {baselineMs.length > 0 && (
@@ -543,7 +543,9 @@ export function Tune({
                 size="small"
                 variant="contained"
                 disabled={!live || driving}
-                onClick={() => (winner.esc ? void runner.applyEsc(winner) : onApply(winner.gains))}
+                onClick={() =>
+                  winner.esc ? void runner.applyEsc(winner) : runner.applyGains(winner, onApply)
+                }
               >
                 Apply {winner.id}
               </Button>
