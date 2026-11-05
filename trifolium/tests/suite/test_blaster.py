@@ -1,6 +1,8 @@
 """Boot, ESC arming, rev, firing and the switches that gate them - through the same pins, ESC frames
 and serial port a real blaster has."""
 
+import re
+
 import pytest
 from helpers import armed_v12
 
@@ -17,7 +19,9 @@ def test_an_unwired_board_drives_no_pin_and_says_so_until_a_host_speaks(blaster)
     assert b.pin_mode_calls() == 0
     assert b.transcript.count('{"evt":"unconfigured"') == 3  # at 0, 3 and 6 s
 
-    assert b.command("DUMP_BOOT")["wiring"]["configured"] is False
+    boot = b.command("DUMP_BOOT")
+    assert boot["wiring"]["configured"] is False
+    assert re.fullmatch("[0-9A-F]{16}", boot["chipId"])  # which blaster this is, wired or not
     before = b.transcript.count('"evt"')
     assert b.run_ms(7000)
     assert b.transcript.count('"evt"') == before

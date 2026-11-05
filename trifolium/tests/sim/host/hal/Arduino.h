@@ -77,6 +77,8 @@ class RP2040
 
     void idleOtherCore();
     void resumeOtherCore();
+    // The same for every simulated blaster.
+    const char* getChipID();
 };
 
 extern RP2040 rp2040;
