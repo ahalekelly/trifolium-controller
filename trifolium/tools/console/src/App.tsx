@@ -53,7 +53,8 @@ import { ProfileBar } from "./ui/ProfileBar";
 import { ProfileCopyDialog } from "./ui/ProfileCopyDialog";
 import { RawJson } from "./ui/RawJson";
 import { ResetDialog, type ResetKind, type ResetPlan } from "./ui/ResetDialog";
-import { RpmLog, downloadCsv } from "./ui/RpmLog";
+import { RpmLog } from "./ui/RpmLog";
+import { captureName, downloadCsv } from "./rpm/files";
 import { FW_CONSOLE_CONTROLS, RevHold, type MotorsStatus, type RevHoldApi } from "./ui/RevHold";
 import { motorActionRows, useMotorActions, type Ack } from "./ui/MotorActions";
 import { RpmStages } from "./ui/RpmStages";
@@ -308,7 +309,10 @@ export function App() {
       }),
     [],
   );
-  const tuneRunner = React.useMemo(() => new TuneRunner(transport), [transport]);
+  const tuneRunner = React.useMemo(
+    () => new TuneRunner(transport, (csv, name) => downloadCsv(wholeRows(csv).csv, name)),
+    [transport],
+  );
   const tuning = React.useSyncExternalStore(tuneRunner.subscribe, tuneRunner.running);
   const [tuneDraft, setTuneDraft] = React.useState(DEFAULT_DRAFT);
   React.useEffect(() => {
@@ -321,12 +325,12 @@ export function App() {
     return () => window.removeEventListener("pagehide", abandon);
   }, [tuneRunner]);
   // A finished capture lands on the RPM capture page and, with Save CSV files on, downloads,
-  // whichever page is open - a tuning run's aside, which are hundreds.
+  // whichever page is open. A tuning run's go to the run, which saves each under its set's name.
   onCapture.current = (capture) => {
     tuneRunner.capture(capture);
     if (tuning) return;
     setRpmText(capture.csv);
-    if (autoSaveCaptures) downloadCsv(wholeRows(capture.csv).csv);
+    if (autoSaveCaptures) downloadCsv(wholeRows(capture.csv).csv, captureName());
     note("ok", "RPM capture finished.");
   };
 

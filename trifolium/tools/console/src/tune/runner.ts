@@ -13,6 +13,7 @@ import { sleep } from "../serial/sleep";
 import type { Capture, CommandAck, SerialTransport } from "../serial/transport";
 import {
   BASELINE,
+  captureFile,
   loadRun,
   measure,
   nextSet,
@@ -72,7 +73,14 @@ export class TuneRunner {
   private looping = false;
   private captureWaiter: ((capture: Capture) => void) | null = null;
 
-  constructor(private transport: SerialTransport) {}
+  /**
+   * `save` keeps each capture a run takes as a CSV file named `name`, a refused one included, so a
+   * run's raw data outlives it.
+   */
+  constructor(
+    private transport: SerialTransport,
+    private save: (csv: string, name: string) => void,
+  ) {}
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -167,6 +175,7 @@ export class TuneRunner {
           const { spinup, trace } = await this.spinup(
             gains,
             rpm,
+            captureFile(run, next, rpm),
             settings.holdMs,
             settings.captureMs,
           );
@@ -200,7 +209,7 @@ export class TuneRunner {
     }
   }
 
-  private async spinup(gains: Gains, rpm: number, holdMs: number, captureMs: number) {
+  private async spinup(gains: Gains, rpm: number, file: string, holdMs: number, captureMs: number) {
     const enabled = await this.waitStopped();
     await sleep(REST_MS);
 
@@ -240,10 +249,11 @@ export class TuneRunner {
           "the Rev switch?",
       );
     }
+    this.save(got.csv, file);
     if (got.report.readyMs === null && !got.report.timedOut) {
       throw new Error("The rev ended before the wheels were at speed: SAFE, menu or cutoff.");
     }
-    return measure(got, rpm, holdMs);
+    return measure(got, rpm, file, holdMs);
   }
 
   /**

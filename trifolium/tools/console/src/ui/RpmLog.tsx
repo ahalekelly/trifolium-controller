@@ -20,6 +20,7 @@ import {
   trailingFlatCut,
   wholeRows,
 } from "../rpm/parse";
+import { captureName, downloadCsv } from "../rpm/files";
 import { getByKey } from "../schema/keyPath";
 import { walk, type Schema, type SchemaNode } from "../schema/types";
 import { DropLabel, dropOutlineSx, useFileDrop } from "./FileDrop";
@@ -53,20 +54,6 @@ const FLAT_JITTER = 0.02;
 
 /** The two capture settings, in the order you use them: arm it, then say how long for. */
 const CAPTURE_KEYS = ["device:useRpmLogging", "device:rpmLogLength"];
-
-/** Saves a capture as rpm-capture-<local date and time to the second>.csv. */
-export function downloadCsv(csv: string) {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, "0");
-  const date = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-  const time = `${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
-  const url = URL.createObjectURL(new Blob([`${csv}\n`], { type: "text/csv" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `rpm-capture-${date}_${time}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
 
 export interface RpmLogProps {
   schema: Schema;
@@ -306,7 +293,7 @@ export function RpmLog({
               onChange={(e) => {
                 onAutoSave(e.target.checked);
                 // Turning it on saves what is already shown; later captures save as they arrive.
-                if (e.target.checked && csvOut) downloadCsv(csvOut);
+                if (e.target.checked && csvOut) downloadCsv(csvOut, captureName());
               }}
             />
           }

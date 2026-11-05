@@ -3,6 +3,7 @@
 // Plain data throughout, so a run survives a reload or a disconnect in localStorage and exports as
 // JSON as it stands. The search itself (search.ts) sees only candidate ids and set scores.
 
+import { fileStamp } from "../rpm/files";
 import { parseRpmCsv, wholeRows } from "../rpm/parse";
 import { getByKey } from "../schema/keyPath";
 import type { Capture } from "../serial/transport";
@@ -52,6 +53,8 @@ export interface Candidate {
 /** One spin-up, at one RPM. readyMs is null when the rampup timeout ended it. */
 export interface Spinup {
   rpm: number;
+  /** The capture's CSV file - see captureFile(). */
+  file: string;
   readyMs: number | null;
   overshootPct: number;
   /** At the rev's start, so the pack at rest. */
@@ -71,10 +74,12 @@ export interface SetRecord {
 export type RunStatus = "running" | "paused" | "done";
 
 /** Changes whenever Run's shape does, so a run another build saved is refused rather than misread. */
-const RUN_VERSION = 1;
+const RUN_VERSION = 2;
 
 export interface Run {
   version: typeof RUN_VERSION;
+  /** When it started, in ms since the epoch: every file it saves is named from it. */
+  startedAt: number;
   config: TuneConfig;
   baseline: Gains;
   candidates: Candidate[];
@@ -92,6 +97,20 @@ const BASELINE_EVERY = 8;
 
 export const gainsLabel = (g: Gains) =>
   g.control === "pid" ? `PID kp ${g.kp} ki ${g.ki}` : `TBH gain ${g.ki}`;
+
+/** The run's files: tune-<start>.json for its export, and its captures alongside. */
+export const runName = (run: Run) => `tune-${fileStamp(new Date(run.startedAt))}`;
+
+/**
+ * The CSV file the next set's capture at `rpm` is saved as: the run, the set's index in `sets`, what
+ * it ran - the baseline with its gains - and the RPM, e.g.
+ * tune-2026-11-05_14-50-37_set004_PID-kp-0.2-ki-1_30000rpm.csv.
+ */
+export function captureFile(run: Run, id: string, rpm: number): string {
+  const label = id === BASELINE ? `${BASELINE} ${gainsLabel(run.baseline)}` : id;
+  const set = String(run.sets.length).padStart(3, "0");
+  return `${runName(run)}_set${set}_${label.replace(/[^\w.]+/g, "-")}_${rpm}rpm.csv`;
+}
 
 /**
  * The gains the blaster runs on now, as one set for every motor: its control mode and the first
@@ -125,6 +144,7 @@ export function startRun(config: TuneConfig, baseline: Gains): Run {
   const candidates = candidatesFor(config, baseline);
   return {
     version: RUN_VERSION,
+    startedAt: Date.now(),
     config,
     baseline,
     candidates,
@@ -183,6 +203,7 @@ const REST_RPM = 500;
 export function measure(
   capture: Capture,
   rpm: number,
+  file: string,
   traceMs: number,
 ): { spinup: Spinup; trace: number[] } {
   const log = parseRpmCsv(wholeRows(capture.csv).csv);
@@ -210,6 +231,7 @@ export function measure(
   return {
     spinup: {
       rpm,
+      file,
       readyMs: capture.report.readyMs,
       overshootPct,
       packMv: log.voltage[0],

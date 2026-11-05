@@ -19,6 +19,7 @@ import {
   candidatesFor,
   DEFAULT_CONFIG,
   gainsLabel,
+  runName,
   scoreOf,
   scoresOf,
   type Gains,
@@ -101,12 +102,6 @@ function configOf(
     pauseCellMv: Math.round(cellV * 1000),
   };
 }
-
-/** tune-<when it started, to the minute>.json */
-const exportName = (run: Run) => {
-  const started = new Date(run.sets[0]?.at ?? Date.now());
-  return `tune-${started.toISOString().slice(0, 16).replace(/[:T]/g, "-")}.json`;
-};
 
 const cellSx = { py: 0.25, px: 1 };
 
@@ -380,7 +375,7 @@ export function Tune({
             <Button
               size="small"
               variant="outlined"
-              onClick={() => downloadJson(exportName(run), run)}
+              onClick={() => downloadJson(`${runName(run)}.json`, run)}
             >
               Export JSON
             </Button>

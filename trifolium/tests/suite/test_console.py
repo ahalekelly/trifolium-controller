@@ -436,10 +436,16 @@ def test_a_tune_run_on_noisy_wheels_drops_the_slow_and_the_overshooting_then_app
     page.get_by_label("Overshoot limit %").fill("1")
     page.get_by_label("Pause below V a cell").fill("3")
     downloads = []
-    page.on("download", lambda d: downloads.append(d))  # Save CSV files is on; a run skips it
+    page.on("download", lambda d: downloads.append(d))
     page.get_by_role("button", name="Start", exact=True).click()
     expect(page.get_by_text("Done.")).to_be_visible(timeout=180_000)
-    assert downloads == []
+    # Every capture the run took is saved, named for its run, set, gains and RPM.
+    names = [d.suggested_filename for d in downloads]
+    stamp = r"tune-\d{4}(-\d\d){2}_\d\d(-\d\d){2}"
+    assert re.fullmatch(stamp + r"_set000_baseline-PID-kp-0\.\d+-ki-0\.5_30000rpm\.csv", names[0])
+    assert all(re.fullmatch(stamp + r"_set\d{3}_[\w.-]+_30000rpm\.csv", n) for n in names)
+    assert any("_PID-kp-0.02-ki-1_" in n for n in names)
+    assert open(downloads[0].path(), encoding="utf-8").read().startswith("Voltage_mv,")
     status = lambda name: page.get_by_role("row", name=re.compile(f"^{re.escape(name)} "))
     expect(status("PID kp 0.2 ki 1")).to_contain_text("best")
     expect(status("PID kp 0.05 ki 1")).to_contain_text("finalist")
@@ -464,6 +470,8 @@ def test_a_tune_run_outlives_a_reload_paused_then_resumes_to_the_end_and_exports
     page.get_by_label("PID ki values").fill("1")
     page.get_by_label("Spin-ups per finalist").fill("2")
     page.get_by_label("Pause below V a cell").fill("3")
+    downloads = []
+    page.on("download", lambda d: downloads.append(d.suggested_filename))
     page.get_by_role("button", name="Start", exact=True).click()
     # The run takes the rev itself.
     go(page, "RPM capture")
@@ -487,6 +495,10 @@ def test_a_tune_run_outlives_a_reload_paused_then_resumes_to_the_end_and_exports
     run = json.loads(open(download.value.path(), encoding="utf-8").read())
     assert [s["id"] for s in run["sets"]] == ["baseline", "PID kp 0.2 ki 1", "PID kp 0.2 ki 1",
                                               "baseline"]
+    # Each spin-up names the capture file it was read from, saved as it came in.
+    files = [s["file"] for set_ in run["sets"] for s in set_["spinups"]]
+    assert files[1].endswith("_set001_PID-kp-0.2-ki-1_30000rpm.csv")
+    assert set(files) <= set(downloads)
 
 
 def test_a_tune_run_pauses_for_a_pack_swap_once_a_cell_reads_below_the_level_set(page, serve):

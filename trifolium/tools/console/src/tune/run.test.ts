@@ -3,6 +3,7 @@ import {
   BASELINE,
   baselineOf,
   candidatesFor,
+  captureFile,
   DEFAULT_CONFIG,
   measure,
   nextSet,
@@ -16,6 +17,7 @@ const BASE = { control: "pid" as const, kp: 0.2, ki: 0.5 };
 
 const spinup = (readyMs: number | null): Spinup => ({
   rpm: 30000,
+  file: "a.csv",
   readyMs,
   overshootPct: 1,
   packMv: 16000,
@@ -81,6 +83,20 @@ describe("a gains run", () => {
   });
 });
 
+describe("captureFile", () => {
+  it("names a capture by its run's start, set index, label and RPM", () => {
+    const run = startRun(DEFAULT_CONFIG, BASE);
+    run.startedAt = new Date(2026, 10, 5, 14, 50, 37).getTime();
+    expect(captureFile(run, BASELINE, 30000)).toBe(
+      "tune-2026-11-05_14-50-37_set000_baseline-PID-kp-0.2-ki-0.5_30000rpm.csv",
+    );
+    run.sets.push({ id: BASELINE, at: 0, spinups: [] });
+    expect(captureFile(run, "TBH gain 0.05", 25000)).toBe(
+      "tune-2026-11-05_14-50-37_set001_TBH-gain-0.05_25000rpm.csv",
+    );
+  });
+});
+
 describe("measure", () => {
   const csv = [
     "Voltage_mv,Motor 1,TargetRPM 1,Throttle 1,value 1,Motor 3,TargetRPM 3,Throttle 3,value 3,",
@@ -95,16 +111,17 @@ describe("measure", () => {
     const { spinup: s, trace } = measure(
       { csv, report: { readyMs: 3, slowestMotor: 3, timedOut: false } },
       30000,
+      "a.csv",
       3,
     );
-    expect(s).toEqual({ rpm: 30000, readyMs: 3, overshootPct: 2, packMv: 16400 });
+    expect(s).toEqual({ rpm: 30000, file: "a.csv", readyMs: 3, overshootPct: 2, packMv: 16400 });
     expect(trace).toEqual([0, 28000, 29900]);
   });
 
   it("refuses a capture that did not start from rest at the RPM asked for", () => {
     const report = { readyMs: 3, slowestMotor: 3, timedOut: false };
     const spinning = csv.replace("16400,0,30000", "16400,12000,30000");
-    expect(() => measure({ csv: spinning, report }, 30000, 3)).toThrow(/motor 1 at 12000 RPM/);
-    expect(() => measure({ csv, report }, 25000, 3)).toThrow(/aiming for 30000/);
+    expect(() => measure({ csv: spinning, report }, 30000, "a.csv", 3)).toThrow(/motor 1 at 12000 RPM/);
+    expect(() => measure({ csv, report }, 25000, "a.csv", 3)).toThrow(/aiming for 30000/);
   });
 });
