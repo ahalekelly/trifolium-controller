@@ -192,6 +192,8 @@ export interface UsageStats {
 export interface BootStatus {
   cmd: "DUMP_BOOT";
   ok: boolean;
+  /** The RP2040's unique ID: which blaster this is. Absent from firmware before 2.4.0. */
+  chipId?: string;
   display: { probed: boolean; ok: boolean; err: string };
   wiring: { boardId: string; configured: boolean };
   /** How the ESCs armed at power-on: each motor's ms to its first eRPM frame, 0 for none. */

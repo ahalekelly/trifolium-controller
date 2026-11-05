@@ -414,10 +414,13 @@ describe("SerialTransport over real streams", () => {
   };
 
   it("catches a reply that arrives before the write returns", async () => {
-    instantBlaster((line) => (line === "DUMP_BOOT" ? '{"cmd":"DUMP_BOOT"}' : deviceDump));
+    instantBlaster((line) =>
+      line === "DUMP_BOOT" ? '{"cmd":"DUMP_BOOT","chipId":"E6614103E7345B2F"}' : deviceDump,
+    );
     const transport = new SerialTransport();
     expect(await transport.connect()).toBe(true);
     expect(await transport.waitReady(1, 500)).toBe(true);
+    expect(transport.chipId).toBe("E6614103E7345B2F");
     expect(await transport.request("DUMP_DEVICE", 500)).toEqual(JSON.parse(deviceDump));
     expect(await transport.requestWhole("DUMP_DEVICE", 500)).toEqual(JSON.parse(deviceDump));
     await transport.disconnect();

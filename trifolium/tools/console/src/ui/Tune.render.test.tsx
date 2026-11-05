@@ -70,7 +70,7 @@ describe("the results table", () => {
   function runOf(readyMs: (number | null)[]): Run {
     const grid = { ...DEFAULT_GAINS, kp: [0.2], ki: [1] };
     const gains = { control: "pid" as const, kp: 0.2, ki: 0.5 };
-    const run = startRun({ ...DEFAULT_CONFIG, grid }, { gains, esc: null }, 500);
+    const run = startRun({ ...DEFAULT_CONFIG, grid }, { gains, esc: null }, null, 500);
     run.sets = readyMs.map((ms, at) => ({
       id: "PID kp 0.2 ki 1",
       at,
