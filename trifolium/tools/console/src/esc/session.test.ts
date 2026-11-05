@@ -1,10 +1,14 @@
 // Reads and writes against a fake blaster in passthrough with AM32 ESCs behind it - see
 // fakeBlaster.ts for what it answers and on whose word.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { FakeBlaster } from "./fakeBlaster";
 import { CMD, Fourway } from "./fourway";
 import type { SerialTransport } from "../serial/transport";
+
+vi.mock("../serial/sleep", () => ({
+  sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+}));
 import {
   EscsNotRestored,
   escTargets,
@@ -124,10 +128,12 @@ describe("writeEscs", () => {
  * The transport side of a passthrough session, around a fake blaster: the ack, the reboots and the
  * reconnects all succeed, so what is left to see is what the session sends the ESCs.
  */
-const sessionOver = (blaster: FakeBlaster) => {
+const sessionOver = (blaster: FakeBlaster, stuck: number[] = []) => {
   const said: string[] = [];
   const transport = {
     command: async () => ({ cmd: "ESC_PASSTHROUGH", ok: true, rebooting: true }),
+    // DUMP_MOTORS, after the session: every ESC's app answers but those of the `stuck` motors.
+    request: async () => ({ motors: [1, 2, 3, 4].map((m) => ({ erpmSeen: !stuck.includes(m) })) }),
     reopenAfterReboot: async () => true,
     waitReady: async () => true,
     disconnect: async () => {},
@@ -156,6 +162,17 @@ describe("writeEscSettings", () => {
       writeEscSettings(sessionOver(blaster).transport, targets, { advance_level: 30 }),
     ).rejects.toThrow(/original settings are back/);
     expect(resets(blaster)).toEqual([0, 1]);
+  });
+
+  it("names an ESC that is not back in its app once the blaster is", async () => {
+    vi.useFakeTimers();
+    const blaster = twoEscs();
+    const written = expect(
+      writeEscSettings(sessionOver(blaster, [2]).transport, targets, { advance_level: 30 }),
+    ).rejects.toThrow(/^the ESC on motor 2 sent no telemetry within 8 s .* stuck in its bootloader/);
+    await vi.advanceTimersByTimeAsync(9000);
+    await written;
+    vi.useRealTimers();
   });
 
   it("leaves an ESC that could not be restored in its bootloader", async () => {
