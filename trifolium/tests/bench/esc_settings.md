@@ -14,23 +14,29 @@ open: each step names the lines to look for. Darts out, muzzle clear.
    Beep volume. Disconnect there.
 2. **Read.** Connect the console, open the ESCs page, press Read ESCs. Expect a column per enabled
    flywheel motor, `Reading the ESCs: done.` in the log, and the console back on the blaster
-   (Profile tab live) within about 10 s.
+   (the Profiles page live) within about 10 s.
    - Every value from step 1 matches. A mismatch means a table offset or scale is wrong.
    - Firmware shows the version am32.ca showed, with layout 4 for 2.21 or 3 for 2.19-2.20.
    - "ESCs differ" appears only where the ESCs really differ.
-3. **Write a harmless change.** Type Beep volume one higher than now and Write. Expect one
+   - The read finishes only once every ESC has sent the restarted blaster telemetry. One that has
+     not within 8 s is named as likely stuck in its bootloader.
+3. **Exit to first frame.** Put a scope or logic analyser on one ESC's signal pad and press Read
+   ESCs again. Measure from the last passthrough byte on the line to the first DShot frame after
+   the blaster restarts, and note it in the report. It must stay well under 2 s: AM32's app drops
+   back into its bootloader after 2 s without a signal, and stays there until its power is cycled.
+4. **Write a harmless change.** Type Beep volume one higher than now and Write. Expect one
    `ESC n written and verified.` line per ESC and the new value in every column.
-4. **It was stored.** Unplug the battery, wait 5 s, plug it in, then Read ESCs. The new beep volume
+5. **It was stored.** Unplug the battery, wait 5 s, plug it in, then Read ESCs. The new beep volume
    is still there, and am32.ca (as in step 1) shows it too.
-5. **No needless erase.** Write the same Beep volume again. Expect `already holds these values -
+6. **No needless erase.** Write the same Beep volume again. Expect `already holds these values -
    not written.` for every ESC, and no `written` line.
-6. **The motors still run.** Rev. Every wheel spins up and turns the way that fires: the write left
+7. **The motors still run.** Rev. Every wheel spins up and turns the way that fires: the write left
    each ESC's own direction alone.
-7. **A spin-up setting.** Write Startup power 10 % higher, rev, and check the wheels reach speed.
+8. **A spin-up setting.** Write Startup power 10 % higher, rev, and check the wheels reach speed.
    Write it back.
-8. **No ESC power.** Unplug the battery and press Read ESCs. Expect, about 10 s later, an error
+9. **No ESC power.** Unplug the battery and press Read ESCs. Expect, about 10 s later, an error
    that the ESC bootloader did not answer, and the console back on the blaster. Press Read ESCs
    again and plug the battery in while it waits: the read succeeds.
-9. **Put it back.** Write the step 1 Beep volume.
+10. **Put it back.** Write the step 1 Beep volume.
 
 Report any failure with the console log, saved from the log panel.

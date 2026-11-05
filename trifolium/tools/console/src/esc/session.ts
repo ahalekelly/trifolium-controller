@@ -15,8 +15,14 @@
 // bootloader will not start the app at all unless byte 0 is 1. So a failed write puts the ESC's
 // original block back and verifies that, and an ESC whose original will not go back either is left
 // in its bootloader, where nothing it holds is run.
+//
+// Every other ESC is restarted into its app before passthrough ends. AM32's app drops back into its
+// bootloader after 2 s without a signal, though, and stays there until its power is cycled, so a
+// session is over only once every flywheel ESC has sent the restarted blaster telemetry, which only
+// the app does.
 
 import { getByKey } from "../schema/keyPath";
+import { sleep } from "../serial/sleep";
 import type { SerialTransport } from "../serial/transport";
 import { Fourway } from "./fourway";
 import { BLOCK_SIZE, layoutOf, withValues, type EscLayout } from "./layouts";
@@ -204,7 +210,34 @@ async function inPassthrough<T>(
     failure ??= new Error("the blaster did not come back from ESC passthrough; reconnect it");
   }
   if (failure !== null) throw failure;
+  await waitForApps(transport, targets.motors);
   return result as T;
+}
+
+/** How long the flywheel ESCs have, once the blaster answers again, to send it telemetry. */
+const APPS_BACK_MS = 8000;
+
+/** Until every flywheel ESC has sent telemetry since the blaster restarted, naming any that has not. */
+async function waitForApps(transport: SerialTransport, motors: number[]) {
+  const deadline = Date.now() + APPS_BACK_MS;
+  for (;;) {
+    const dump = await transport.request<{ motors: { erpmSeen: boolean }[] }>(
+      "DUMP_MOTORS",
+      undefined,
+      { quiet: true },
+    );
+    const silent = motors.filter((m) => !dump?.motors[m - 1].erpmSeen);
+    if (silent.length === 0) return;
+    if (Date.now() > deadline) {
+      const which = silent.map((m) => `motor ${m}`).join(" and ");
+      throw new Error(
+        `the ESC on ${which} sent no telemetry within ${APPS_BACK_MS / 1000} s of the blaster ` +
+          "restarting, so it is likely stuck in its bootloader. Unplug the blaster's battery and " +
+          "plug it back in to restart the ESCs",
+      );
+    }
+    await sleep(250);
+  }
 }
 
 /** Every flywheel ESC's settings. Leaves the blaster in normal mode. */
