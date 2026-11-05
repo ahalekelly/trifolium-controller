@@ -45,7 +45,7 @@ Only ceilings remain, and none of them is a per-blaster choice:
 
 ## Reading an RPM capture
 
-A capture is CSV: a `Voltage_mv` column, then `Motor N, TargetRPM N, Throttle N, value N` repeated per enabled motor, one row per control-loop tick.
+A capture is CSV, one row per control-loop tick: a `Voltage_mv` column, a `Current_mv` column when a current-sense pin is wired, `Motor N, TargetRPM N, Throttle N, value N` per enabled motor, then `EdtV N, EdtI N, EdtT N, EdtD1 N` per enabled motor. The `Edt` columns are the ESC's newest raw extended-telemetry bytes: voltage in 0.25 V steps, current in amps, temperature in °C, and debug frame 1.
 
 After the rows comes one `{"evt":"rpmCapture",...}` line: `readyMs`, when the wheels were first at firing speed, in ms from the rev's start (`null` if they never were); `slowestMotor`, the one that got there last; and `timedOut`, whether the rampup timeout ended the rev first.
 

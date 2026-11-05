@@ -2,7 +2,8 @@
 //
 // Ported from tools/serial-config.html, which is proven against real captures. The shape is an
 // optional leading "Voltage_mv" column, an optional "Current_mv" column after it, then
-// "Motor N,TargetRPM N,Throttle N,value N," repeated per enabled motor, then one row per captured
+// "Motor N,TargetRPM N,Throttle N,value N," repeated per enabled motor, then
+// "EdtV N,EdtI N,EdtT N,EdtD1 N," (raw EDT bytes) per enabled motor, then one row per captured
 // control-loop tick in the same column order.
 //
 // A pasted or dropped capture may come with the device chatter around it, so it has to be found
@@ -24,7 +25,8 @@ export interface RpmLog {
 }
 
 // The Voltage_mv prefix is optional so older logs still parse.
-const HEADER_RE = /^(?:Voltage_mv,(?:Current_mv,)?)?(?:Motor \d+,TargetRPM \d+,Throttle \d+,value \d+,?)+$/;
+const HEADER_RE =
+  /^(?:Voltage_mv,(?:Current_mv,)?)?(?:Motor \d+,TargetRPM \d+,Throttle \d+,value \d+,?)+(?:EdtV \d+,EdtI \d+,EdtT \d+,EdtD1 \d+,?)*$/;
 const DATA_ROW_RE = /^[\d.\-,]+$/;
 
 /** A capture's first line, as the device prints it. */
