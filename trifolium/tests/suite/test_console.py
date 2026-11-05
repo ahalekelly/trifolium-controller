@@ -144,7 +144,8 @@ def write(page, store=None):
     """Reviews what is staged and writes one store - "Blaster settings", "Profile Medium" - or all.
 
     The bar says Review beside its own Write when every edit is in one store, and Review and write
-    when they are not; either opens the review."""
+    when they are not; either opens the review. The sheet stays open through the write, any reboot
+    and the read-back, and closes once they are done."""
     page.get_by_role("region", name="Unsaved changes").get_by_role(
         "button", name=re.compile("^Review")).click()
     sheet = page.get_by_role("dialog", name="Review changes")
@@ -152,6 +153,7 @@ def write(page, store=None):
         sheet.get_by_role("button", name=f"Write only {store}").click()
     else:
         sheet.get_by_role("button", name=re.compile(r"^Write \d+ changes?$")).click()
+    expect(sheet).to_be_hidden(timeout=REBOOT_MS)
 
 
 def nothing_unsaved(page, timeout=REBOOT_MS):
