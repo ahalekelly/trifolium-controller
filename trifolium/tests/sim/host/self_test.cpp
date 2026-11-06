@@ -291,7 +291,7 @@ TEST_CASE_FIXTURE(FreshBoard, "DShot: the FIFO holds four unread replies, and a 
 
 TEST_CASE("the heap counts a core's allocations as newlib would hold them, and refuses past the limit")
 {
-    hal::detail::heapCountThisThread(0);
+    hal::detail::heapCountCaller(0);
     const hal::Heap start = hal::heap();
 
     void* small = malloc(1);
@@ -317,7 +317,7 @@ TEST_CASE("the heap counts a core's allocations as newlib would hold them, and r
     free(small);
     free(block);
     CHECK(hal::heap().live == start.live);
-    hal::detail::heapCountThisThread(0, false);
+    hal::detail::heapCountCaller(0, false);
     void* host = malloc(64);
     CHECK(hal::heap().live == start.live);
     free(host);
