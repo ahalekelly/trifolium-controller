@@ -1,13 +1,35 @@
-// The fake board's clock, and the scheduler that runs the firmware's two cores against it.
+// The fake board's clock, and the scheduler that runs the firmware's two cores against it. Each
+// core is a fiber on the host's one thread, so handing over is a stack switch rather than a wake-up
+// the OS has to schedule, which a loaded machine delays.
+
+#ifndef _WIN32
+#define _XOPEN_SOURCE 600 // for ucontext.h on macOS
+#endif
 
 #include "hal/detail.h"
 #include "hal/hal.h"
 #include "hal/machine.h"
 
-#include <condition_variable>
+#include <cstdint>
+#include <cstdlib>
 #include <limits>
-#include <mutex>
-#include <thread>
+
+#ifdef _WIN32
+// Not <windows.h>, whose INPUT collides with Arduino's.
+extern "C"
+{
+__declspec(dllimport) void* __stdcall ConvertThreadToFiber(void* parameter);
+__declspec(dllimport) void* __stdcall CreateFiber(size_t stack, void(__stdcall* start)(void*),
+                                                  void* parameter);
+__declspec(dllimport) void __stdcall SwitchToFiber(void* fiber);
+__declspec(dllimport) void __stdcall DeleteFiber(void* fiber);
+}
+#else
+#include <sys/mman.h>
+#include <type_traits>
+#include <ucontext.h>
+#include <unistd.h>
+#endif
 
 // Common.h declares setup() and loop(); arduino-pico's main.cpp declares these two itself.
 void setup1();
@@ -31,20 +53,75 @@ bool pendingPowerLoss = false;
 
 struct Sched
 {
-    std::mutex m;
-    std::condition_variable cv;
     bool active = false;
-    int current = kHost;
     uint64_t wakeAt[3] = {kNever, kNever, kNever};
     bool live[2] = {false, false};
     bool unwinding = false;
     hal::Stop stop = hal::Stop::None;
     std::string detail;
-    std::thread threads[2];
 };
 
 Sched s;
-thread_local int self = kHost;
+int self = kHost;
+
+constexpr size_t kStack = 1 << 20;
+
+void coreMain(int id);
+
+#ifdef _WIN32
+void* fibers[3];
+
+void __stdcall fiberMain(void* id)
+{
+    coreMain((int)(intptr_t)id);
+}
+
+void makeCore(int id)
+{
+    if (!fibers[kHost])
+        fibers[kHost] = ConvertThreadToFiber(nullptr);
+    if (fibers[id])
+        DeleteFiber(fibers[id]);
+    fibers[id] = CreateFiber(kStack, fiberMain, (void*)(intptr_t)id);
+    if (!fibers[kHost] || !fibers[id])
+        std::abort();
+}
+
+void switchFiber(int, int to)
+{
+    SwitchToFiber(fibers[to]);
+}
+#else
+// getcontext() fills an mcontext stored right after the ucontext_t. macOS declares a ucontext_t
+// without that storage when its headers come before _XOPEN_SOURCE, as the force-included
+// heap_count.h makes them, so it is reserved here.
+struct Context
+{
+    ucontext_t uc;
+    std::remove_pointer_t<mcontext_t> mc;
+};
+Context contexts[3];
+// Page-aligned for 4 and 16 KB pages. The lowest page is a guard, so an overflow faults.
+alignas(1 << 14) char stacks[2][kStack];
+
+void makeCore(int id)
+{
+    const size_t page = sysconf(_SC_PAGESIZE);
+    if (mprotect(stacks[id], page, PROT_NONE))
+        std::abort();
+    ucontext_t& uc = contexts[id].uc;
+    getcontext(&uc);
+    uc.uc_stack.ss_sp = stacks[id] + page;
+    uc.uc_stack.ss_size = kStack - page;
+    uc.uc_link = nullptr;
+    makecontext(&uc, (void (*)())coreMain, 1, id);
+}
+
+void switchFiber(int from, int to)
+{
+    swapcontext(&contexts[from].uc, &contexts[to].uc);
+}
+#endif
 
 bool schedulable(int who)
 {
@@ -69,10 +146,10 @@ int pickNext()
 
 void handTo(int next)
 {
-    std::unique_lock<std::mutex> lk(s.m);
-    s.current = next;
-    s.cv.notify_all();
-    s.cv.wait(lk, [] { return s.current == self; });
+    const int me = self;
+    self = next;
+    switchFiber(me, next);
+    self = me;
     if (self != kHost && s.unwinding)
         throw CoreStop{};
 }
@@ -93,12 +170,7 @@ const char* coreName(int id)
 
 void coreBody(int id)
 {
-    self = id;
-    hal::detail::heapCountThisThread(id);
-    {
-        std::unique_lock<std::mutex> lk(s.m);
-        s.cv.wait(lk, [id] { return s.current == id; });
-    }
+    hal::detail::heapCountCaller(id);
 
     hal::Stop why = hal::Stop::None;
     std::string detail;
@@ -154,7 +226,6 @@ void coreBody(int id)
         detail = "unknown exception";
     }
 
-    std::unique_lock<std::mutex> lk(s.m);
     s.live[id] = false;
     s.wakeAt[id] = kNever;
     // A reboot or a fault stops the chip, not one core: the other never runs again.
@@ -163,8 +234,14 @@ void coreBody(int id)
         s.stop = why;
         s.detail = std::string(coreName(id)) + (detail.empty() ? "" : ": " + detail);
     }
-    s.current = kHost;
-    s.cv.notify_all();
+}
+
+// A fiber has nowhere to return to, so a finished core hands back to the test for good.
+void coreMain(int id)
+{
+    coreBody(id);
+    self = kHost;
+    switchFiber(id, kHost);
 }
 } // namespace
 
@@ -284,15 +361,14 @@ void Machine::start()
 {
     halt();
     s.active = true;
-    s.current = kHost;
     s.unwinding = false;
     s.stop = Stop::None;
     s.detail.clear();
     s.wakeAt[kCore0] = s.wakeAt[kCore1] = clock_us;
     s.wakeAt[kHost] = kNever;
     s.live[kCore0] = s.live[kCore1] = true;
-    s.threads[kCore0] = std::thread(coreBody, kCore0);
-    s.threads[kCore1] = std::thread(coreBody, kCore1);
+    makeCore(kCore0);
+    makeCore(kCore1);
 }
 
 bool Machine::run_us(uint64_t us)
@@ -329,8 +405,6 @@ void Machine::halt()
     {
         if (s.live[id])
             handTo(id);
-        if (s.threads[id].joinable())
-            s.threads[id].join();
     }
     s.unwinding = false;
     s.active = false;

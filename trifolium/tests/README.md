@@ -189,7 +189,7 @@ Real code wherever it can be:
   64 bits, so `micros()` never wraps there.
 
 The fake board:
-- **Two cores, one clock.** Each core is a thread, and only one runs at a time. The running core keeps
+- **Two cores, one clock.** Each core is a fiber, and only one runs at a time. The running core keeps
   going until it delays, or reads the clock past the other core's (or the test's) wake time. Runs
   are deterministic, and a core spinning on `millis()` still lets the other run.
 - **GPIO** with pulls and outputs, and the pad and SIO registers `DUMP_GPIO` reads.
