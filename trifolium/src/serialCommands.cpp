@@ -47,6 +47,7 @@ extern bool revSafetyLatched;
 extern int16_t shotsToFire;
 extern volatile uint8_t serialRevMask;
 extern volatile uint32_t serialRevUntil_ms;
+bool serialRevHeld();
 void runMotorTest(uint8_t motorIndex);                  // menuMotors.cpp
 void runMotorDirection(uint8_t motorIndex, bool reversed); // menuMotors.cpp
 extern volatile bool directMotorControlActive;
@@ -55,8 +56,8 @@ extern RpmLogger rpmLogger;
 const char* applyTune(uint32_t revRPM, flywheelControlType_t control, float kp, float ki);
 void clearTune();
 
-// How long one REV_HOLD keeps the rev up. The console renews it well inside this, so a closed tab or
-// a pulled cable lets go within it.
+// How long one REV_HOLD or REV_RENEW keeps the rev up. The console renews well inside this, so a
+// closed tab or a pulled cable lets go within it.
 static constexpr uint32_t kSerialRevLease_ms = 300;
 
 volatile bool serialCommandSeen = false;
@@ -246,52 +247,67 @@ void handleSerialCommands()
         delay(100);
         rp2040.rebootToBootloader();
     }
-    else if (command == "REV_HOLD")
+    else if (command == "REV_HOLD" || command == "REV_RENEW")
     {
-        // Revs the motors in the mask (bit 0 = motor 1) for one lease; the console renews it while
-        // its button is held. The usual gates apply: no rev in SAFE, with the menu open or on a flat
-        // pack. There is no fire counterpart, by design.
-        if (!hasIndex || explicitIndex < 1 || explicitIndex > 15)
+        // REV_HOLD <mask> revs the motors in the mask (bit 0 = motor 1) for one lease, and REV_RENEW
+        // extends the lease while the console's button stays held. A renewal that arrives after the
+        // lease ran out is refused rather than revving again from speed: the console learns the rev
+        // is over from the refusal, not from its own clock. The usual gates apply: no rev in SAFE,
+        // with the menu open or on a flat pack. There is no fire counterpart, by design.
+        const bool renew = command == "REV_RENEW";
+        const char* name = renew ? "REV_RENEW" : "REV_HOLD";
+        if (!renew && (!hasIndex || explicitIndex < 1 || explicitIndex > 15))
         {
-            ackError("REV_HOLD", "needs a motor mask, 1-15");
+            ackError(name, "needs a motor mask, 1-15");
             return;
         }
         if (!wiringLive)
         {
-            ackError("REV_HOLD", "no wiring configured");
+            ackError(name, "no wiring configured");
             return;
         }
         if (!revControlAllowed())
         {
-            ackError("REV_HOLD", menuIsOpen() ? "menu open" : "SAFE");
+            ackError(name, menuIsOpen() ? "menu open" : "SAFE");
             return;
         }
         if (batteryFlat)
         {
-            ackError("REV_HOLD", "battery flat");
+            ackError(name, "battery flat");
             return;
         }
-        uint8_t mask = 0;
-        for (int i = 0; i < 4; i++)
+        if (renew)
         {
-            if (motorsEnabled[i] && (explicitIndex & (1 << i)))
-                mask |= 1 << i;
+            if (!serialRevHeld())
+            {
+                ackError(name, "no rev held - the lease ran out or it was let go");
+                return;
+            }
         }
-        if (!mask)
+        else
         {
-            ackError("REV_HOLD", "no enabled motor in the mask");
-            return;
+            uint8_t mask = 0;
+            for (int i = 0; i < 4; i++)
+            {
+                if (motorsEnabled[i] && (explicitIndex & (1 << i)))
+                    mask |= 1 << i;
+            }
+            if (!mask)
+            {
+                ackError(name, "no enabled motor in the mask");
+                return;
+            }
+            serialRevMask = mask;
         }
-        serialRevMask = mask;
         serialRevUntil_ms = millis() + kSerialRevLease_ms;
         // An aborted rev stays down until every rev source lets go, this hold included, so the
         // hold is renewed even when refused.
         if (revSafetyLatched)
         {
-            ackError("REV_HOLD", "rev aborted - let go to rev again");
+            ackError(name, "rev aborted - let go to rev again");
             return;
         }
-        ackOk("REV_HOLD", mask, false, false);
+        ackOk(name, serialRevMask, false, false);
     }
     else if (command == "REV_RELEASE")
     {
