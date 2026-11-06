@@ -9,6 +9,7 @@ import {
   DEFAULT_CONFIG,
   DEFAULT_GAINS,
   escOriginals,
+  escRecords,
   measure,
   nextSet,
   plannedEscWrites,
@@ -69,7 +70,7 @@ describe("a gains run", () => {
 
   it("opens and closes on the baseline, with one every eight candidate sets between", () => {
     const grid = { ...DEFAULT_GAINS, kp: [0.1, 0.2, 0.4], ki: [0.25, 0.5, 1] };
-    const ids = order(startRun({ ...DEFAULT_CONFIG, grid, n: 3 }, BASE, null, 500));
+    const ids = order(startRun({ ...DEFAULT_CONFIG, grid, n: 3 }, BASE, null, null, 500));
     expect(ids[0]).toBe(BASELINE);
     expect(ids[ids.length - 1]).toBe(BASELINE);
     expect(ids[9]).toBe(BASELINE);
@@ -87,7 +88,7 @@ describe("a gains run", () => {
 
 describe("captureFile", () => {
   it("names a capture by its run's start, set index, label and RPM", () => {
-    const run = startRun(DEFAULT_CONFIG, BASE, null, 500);
+    const run = startRun(DEFAULT_CONFIG, BASE, null, null, 500);
     run.startedAt = new Date(2026, 10, 5, 14, 50, 37).getTime();
     expect(captureFile(run, BASELINE, 30000)).toBe(
       "tune-2026-11-05_14-50-37_set000_baseline-PID-kp-0.2-ki-0.5_30000rpm.csv",
@@ -121,10 +122,21 @@ describe("an ESC run", () => {
     expect(candidates[1]).toMatchObject({ gains: GAINS, esc: { pwm_frequency: 16, motor_kv: 80 } });
   });
 
+  it("records every field each ESC holds, raw and as shown, by the motor it drives", () => {
+    const [record] = escRecords([{ esc: 0, layout: LAYOUTS[4], block: V4_DEFAULT }], [3]);
+    expect(record).toMatchObject({ motor: 3, eepromVersion: 4, firmware: "2.21" });
+    expect(Object.keys(record.raw)).toEqual(LAYOUTS[4].fields.map((f) => f.name));
+    expect(record.raw.startup_power).toBe(V4_DEFAULT[25]);
+    expect(record.shown.startup_power).toBe(`${V4_DEFAULT[25]} %`);
+  });
+
   it("puts back the value every ESC holds, and refuses ESCs that differ", () => {
     const other = V4_DEFAULT.slice();
     other[25] = 120; // startup_power
-    const escs = [V4_DEFAULT, other].map((block, esc) => ({ esc, layout: LAYOUTS[4], block }));
+    const escs = escRecords(
+      [V4_DEFAULT, other].map((block, esc) => ({ esc, layout: LAYOUTS[4], block })),
+      [1, 2],
+    );
     expect(escOriginals(escs, grid({ advance_level: [10] }))).toEqual({
       advance_level: V4_DEFAULT[23],
     });
@@ -138,6 +150,7 @@ describe("an ESC run", () => {
       { ...DEFAULT_CONFIG, grid: grid({ startup_power: [80] }) },
       { gains: GAINS, esc: { startup_power: 100 } },
       null,
+      null,
       500,
     );
     run.startedAt = new Date(2026, 10, 5, 14, 50, 37).getTime();
@@ -149,14 +162,14 @@ describe("an ESC run", () => {
 
   it("runs each candidate's round as one block, and baselines in blocks of 3 between", () => {
     const config = { ...DEFAULT_CONFIG, grid: grid({ pwm_frequency: [16, 24, 32, 48] }), n: 20 };
-    const ids = order(startRun(config, { gains: GAINS, esc: { pwm_frequency: 24 } }, null, 500));
+    const ids = order(startRun(config, { gains: GAINS, esc: { pwm_frequency: 24 } }, null, null, 500));
     const blocks: [string, number][] = [];
     for (const id of ids) {
       const last = blocks[blocks.length - 1];
       if (last?.[0] === id) last[1]++;
       else blocks.push([id, 1]);
     }
-    const [c16, c24, c32, c48] = startRun(config, BASE, null, 500).candidates.map((c) => c.id);
+    const [c16, c24, c32, c48] = startRun(config, BASE, null, null, 500).candidates.map((c) => c.id);
     // Rounds end on 10 and 20 sets. A baseline block comes at the first block's end after 24
     // candidate sets, and the last one leaves the ESCs on the settings the run started with.
     expect(blocks).toEqual([

@@ -9,7 +9,7 @@
 // JSON as it stands. The search itself (search.ts) sees only candidate ids and set scores.
 
 import { fileStamp } from "../rpm/files";
-import { shown, type EscField } from "../esc/layouts";
+import { firmwareOf, shown, type EscField } from "../esc/layouts";
 import type { EscSettings } from "../esc/session";
 import { parseRpmCsv, wholeRows } from "../rpm/parse";
 import { getByKey } from "../schema/keyPath";
@@ -78,6 +78,23 @@ export interface Settings {
   esc: EscValues | null;
 }
 
+/**
+ * Everything one flywheel ESC held as an ESC run started. A candidate's full settings on it are
+ * `raw` with the candidate's own `esc` values over it.
+ */
+export interface EscRecord {
+  /** The 1-based motor it drives. */
+  motor: number;
+  /** Its block's eeprom_version, which names the layout. */
+  eepromVersion: number;
+  /** The AM32 version it reports, e.g. "2.21". */
+  firmware: string;
+  /** Every field its layout names, raw by field name, as writes take them. */
+  raw: EscValues;
+  /** The same, as the console shows them. */
+  shown: Record<string, string>;
+}
+
 export interface Candidate extends Settings {
   /** Also its label. */
   id: string;
@@ -107,7 +124,7 @@ export interface SetRecord {
 export type RunStatus = "running" | "paused" | "done";
 
 /** Changes whenever Run's shape does, so a run another build saved is refused rather than misread. */
-const RUN_VERSION = 5;
+const RUN_VERSION = 6;
 
 export interface Run {
   version: typeof RUN_VERSION;
@@ -121,6 +138,8 @@ export interface Run {
   config: TuneConfig;
   /** What the blaster started with, which an ESC run puts back on the ESCs when it stops. */
   baseline: Settings;
+  /** What every flywheel ESC held as an ESC run started, in motor order; null in a gains run. */
+  escs: EscRecord[] | null;
   /** The blaster's rampup timeout as the run started: a timed-out spin-up counts at it. */
   rampupTimeoutMs: number;
   candidates: Candidate[];
@@ -215,17 +234,28 @@ export function candidatesFor(grid: TuneConfig["grid"], baseline: Settings): Can
   return [...byId].map(([id, s]) => ({ id, ...s }));
 }
 
+/** Each ESC's settings as read, `motors` giving the motor each passthrough index drives. */
+export const escRecords = (escs: EscSettings[], motors: number[]): EscRecord[] =>
+  escs.map(({ esc, layout, block }) => ({
+    motor: motors[esc],
+    eepromVersion: layout.version,
+    firmware: firmwareOf(block),
+    raw: Object.fromEntries(layout.fields.map((f) => [f.name, block[f.offset]])),
+    shown: Object.fromEntries(layout.fields.map((f) => [f.name, shown(f, block[f.offset])])),
+  }));
+
 /**
  * The value every ESC holds for each field an ESC grid searches, which the run puts back. ESCs that
  * differ on one have no single value to put back, so they are refused.
  */
-export function escOriginals(escs: EscSettings[], grid: EscGrid): EscValues {
+export function escOriginals(escs: EscRecord[], grid: EscGrid): EscValues {
   const values: EscValues = {};
   for (const { field } of grid.fields) {
-    const raws = escs.map(({ esc, layout, block }) => {
-      const own = layout.fields.find((f) => f.name === field.name);
-      if (!own) throw new Error(`ESC ${esc}'s settings layout ${layout.version} lacks ${field.label}.`);
-      return block[own.offset];
+    const raws = escs.map(({ motor, eepromVersion, raw }) => {
+      if (!(field.name in raw)) {
+        throw new Error(`Motor ${motor}'s ESC settings layout ${eepromVersion} lacks ${field.label}.`);
+      }
+      return raw[field.name];
     });
     if (new Set(raws).size > 1) {
       throw new Error(
@@ -252,6 +282,7 @@ export function plannedEscWrites(count: number, n: number): number {
 export function startRun(
   config: TuneConfig,
   baseline: Settings,
+  escs: EscRecord[] | null,
   blaster: string | null,
   rampupTimeoutMs: number,
 ): Run {
@@ -262,6 +293,7 @@ export function startRun(
     blaster,
     config,
     baseline,
+    escs,
     rampupTimeoutMs,
     candidates,
     search: startSearch(
