@@ -143,6 +143,13 @@ def go(page, name):
     rail.get_by_role("button", name=re.compile(rf"^{re.escape(name)}(,|$)")).click()
 
 
+def finish_tune(page, timeout_ms):
+    """Until the tune run ends, failing with its note if it paused instead."""
+    expect(page.get_by_text(re.compile(r"^(Done|Paused)\. "))).to_be_visible(timeout=timeout_ms)
+    notes = page.get_by_role("alert").all_inner_texts()
+    assert page.get_by_text(re.compile(r"^Done\. ")).is_visible(), notes
+
+
 def write(page, store=None):
     """Reviews what is staged and writes one store - "Blaster settings", "Profile Medium" - or all.
 
@@ -436,7 +443,7 @@ def test_a_tune_run_on_noisy_wheels_drops_the_overshooting_and_ranks_the_slow_th
     page.get_by_label("Overshoot limit %").fill("1")
     page.get_by_label("Pause below V a cell").fill("3")
     page.get_by_role("button", name="Start", exact=True).click()
-    expect(page.get_by_text("Done.")).to_be_visible(timeout=120_000)
+    finish_tune(page, 120_000)
     status = lambda name: page.get_by_role("row", name=re.compile(f"^{re.escape(name)} "))
     expect(status("PID kp 0.2 ki 1")).to_contain_text("best")
     expect(status("PID kp 0.02 ki 1")).to_contain_text("finalist")
@@ -479,7 +486,7 @@ def test_a_tune_run_outlives_a_reload_paused_then_resumes_to_the_end_and_exports
     expect(page.get_by_role("button", name="Resume")).to_be_disabled()
     connect(page)
     page.get_by_role("button", name="Resume").click()
-    expect(page.get_by_text("Done.")).to_be_visible(timeout=60000)
+    finish_tune(page, 60_000)
     with page.expect_download() as download:
         page.get_by_role("button", name="Export JSON").click()
     run = json.loads(open(download.value.path(), encoding="utf-8").read())
