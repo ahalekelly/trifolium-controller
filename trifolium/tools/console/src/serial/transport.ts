@@ -8,6 +8,10 @@
 // "any line starting with {" as the payload, which could not tell a config dump from an error.
 // Every reply carries a `cmd` naming the command it answers, and a slot where there is one, so
 // replies are matched on that rather than on shape - see repliesTo().
+//
+// The one exception to lines is the ESC passthrough session, where the same port carries MSP and
+// 4-way frames: binaryLink() hands that connection's bytes over raw, which is why the reader takes
+// bytes and splits lines itself rather than piping through a text decoder it could not get back.
 
 import { serial as usbSerial } from "../vendor/web-serial-polyfill/dist/serial.js";
 import { isCaptureHeader, isCaptureRow } from "../rpm/parse";
@@ -250,20 +254,68 @@ export const configFrom = (reply: unknown): unknown => {
   return rest;
 };
 
-/** Splits the decoded byte stream into lines, holding the partial tail between chunks. */
-class LineBreakTransformer implements Transformer<string, string> {
-  private chunk = "";
+/**
+ * The bytes a binary protocol is reading, gathered as they arrive and taken by length.
+ *
+ * The ESC passthrough session's protocols (MSP, 4-way) are request/reply with length-prefixed
+ * frames, so their client reads a known count rather than splitting on anything.
+ */
+export class ByteQueue {
+  private chunks: Uint8Array[] = [];
+  private length = 0;
+  private wake: (() => void) | null = null;
 
-  transform(chunk: string, controller: TransformStreamDefaultController<string>) {
-    this.chunk += chunk;
-    const lines = this.chunk.split("\n");
-    this.chunk = lines.pop() ?? "";
-    for (const line of lines) controller.enqueue(line);
+  push(chunk: Uint8Array): void {
+    this.chunks.push(chunk);
+    this.length += chunk.length;
+    this.wake?.();
   }
 
-  flush(controller: TransformStreamDefaultController<string>) {
-    if (this.chunk) controller.enqueue(this.chunk);
+  /** Exactly `count` bytes, or an error once `timeoutMs` passes without them all. */
+  async read(count: number, timeoutMs: number): Promise<Uint8Array> {
+    const deadline = Date.now() + timeoutMs;
+    while (this.length < count) {
+      const left = deadline - Date.now();
+      if (left <= 0) {
+        throw new Error(`timed out after ${timeoutMs} ms holding ${this.length} of ${count} bytes`);
+      }
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, left);
+        this.wake = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
+      this.wake = null;
+    }
+    const out = new Uint8Array(count);
+    for (let at = 0; at < count; ) {
+      const head = this.chunks[0];
+      const n = Math.min(head.length, count - at);
+      out.set(head.subarray(0, n), at);
+      at += n;
+      if (n === head.length) this.chunks.shift();
+      else this.chunks[0] = head.subarray(n);
+    }
+    this.length -= count;
+    return out;
   }
+
+  /** Drops everything gathered so far, returning how much that was. */
+  clear(): number {
+    const dropped = this.length;
+    this.chunks = [];
+    this.length = 0;
+    return dropped;
+  }
+}
+
+/** Raw bytes both ways, for a protocol that is not the firmware's lines - see binaryLink(). */
+export interface ByteLink {
+  write(bytes: Uint8Array): Promise<void>;
+  read(count: number, timeoutMs: number): Promise<Uint8Array>;
+  /** Waits `ms`, then drops whatever arrived up to then, returning how many bytes that was. */
+  drain(ms: number): Promise<number>;
 }
 
 export interface TransportEvents {
@@ -276,9 +328,12 @@ export interface TransportEvents {
 export class SerialTransport {
   private port: Port | null = null;
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
-  private reader: ReadableStreamDefaultReader<string> | null = null;
-  /** Resolves once the pipe to the text decoder tears down and releases port.readable. */
-  private readableClosed: Promise<void> | null = null;
+  private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  /** The device's lines are decoded and split here, the partial tail held between chunks. */
+  private decoder: TextDecoder | null = null;
+  private partialLine = "";
+  /** Set by binaryLink(): every byte read goes here instead of being split into lines. */
+  private binary: ByteQueue | null = null;
   private listeners: Listener[] = [];
   private disconnecting = false;
   /** Kept across a reboot the device performed itself, so reopenAfterReboot() has a port to retry. */
@@ -307,7 +362,8 @@ export class SerialTransport {
     return this.reconnectWaiter !== null;
   }
 
-  private log(kind: LogKind, text: string) {
+  /** A line in the console's log, for this transport and for protocols run over it. */
+  log(kind: LogKind, text: string) {
     this.events.onLog?.({ kind, text, at: Date.now() });
   }
 
@@ -386,16 +442,11 @@ export class SerialTransport {
   /** Wires reader/writer onto an opened port. Shared so the reopen path cannot drift from connect. */
   private attach(port: Port): void {
     this.port = port;
-    const decoder = new TextDecoderStream();
-    // TextDecoderStream types its writable as WritableStream<BufferSource> while port.readable
-    // is ReadableStream<Uint8Array>. The pipe is valid at runtime; the mismatch is variance only.
-    this.readableClosed = port
-      .readable!.pipeTo(decoder.writable as unknown as WritableStream<Uint8Array>)
-      .catch(() => {});
-    this.reader = decoder.readable
-      .pipeThrough(new TransformStream(new LineBreakTransformer()))
-      .getReader();
+    this.reader = port.readable!.getReader();
     this.writer = port.writable!.getWriter();
+    this.decoder = new TextDecoder();
+    this.partialLine = "";
+    this.binary = null;
   }
 
   /** Same physical device, by USB identity. getInfo() is all Web Serial exposes to match on. */
@@ -499,8 +550,9 @@ export class SerialTransport {
       } catch {
         /* already torn down */
       }
+      // Released so close() can cancel port.readable, which it cannot while a reader holds it.
       try {
-        await this.readableClosed; // wait for the pipe to unlock port.readable
+        this.reader?.releaseLock();
       } catch {
         /* ignore */
       }
@@ -525,7 +577,7 @@ export class SerialTransport {
       this.writer = null;
       this.port = null;
       this.captures.reset();
-      this.readableClosed = null;
+      this.binary = null;
       this.log("err", reason);
       this.events.onDisconnect?.(reason);
     } finally {
@@ -538,21 +590,15 @@ export class SerialTransport {
       for (;;) {
         const { value, done } = await this.reader!.read();
         if (done) break;
-        const line = (value ?? "").trim();
-        if (!line) continue;
-        // A capture goes to onCapture whole rather than into the log line by line.
-        if (this.captures.take(line)) continue;
-
-        // Anything not claimed by a waiting caller is device chatter worth showing - except the acks
-        // of a command sent quietly, which say only that it was taken again.
-        const claimed = this.listeners.some((l) => l.predicate(line));
-        if (!claimed && !this.isQuietAck(line)) this.log("in", line);
-
-        this.listeners = this.listeners.filter(({ predicate, resolve }) => {
-          if (!predicate(line)) return true;
-          resolve(line);
-          return false;
-        });
+        if (this.binary) {
+          this.binary.push(value);
+          continue;
+        }
+        const lines = (this.partialLine + this.decoder!.decode(value, { stream: true })).split("\n");
+        this.partialLine = lines.pop() ?? "";
+        for (const line of lines) {
+          this.takeLine(line.trim());
+        }
       }
     } catch {
       // Expected on disconnect() cancelling the reader, or the device rebooting mid-session.
@@ -562,7 +608,52 @@ export class SerialTransport {
     }
   }
 
-  /** Resolves with the next matching line, or null on timeout. */
+  /** Hands one line to a capture, to whoever waits for it, or to the log. */
+  private takeLine(line: string): void {
+    if (!line) return;
+    // A capture goes to onCapture whole rather than into the log line by line.
+    if (this.captures.take(line)) return;
+
+    // Anything not claimed by a waiting caller is device chatter worth showing - except the acks of
+    // a command sent quietly, which say only that it was taken again.
+    const claimed = this.listeners.some((l) => l.predicate(line));
+    if (!claimed && !this.isQuietAck(line)) this.log("in", line);
+
+    this.listeners = this.listeners.filter(({ predicate, resolve }) => {
+      if (!predicate(line)) return true;
+      resolve(line);
+      return false;
+    });
+  }
+
+  /**
+   * Turns this connection over to a binary protocol for the rest of its life: from here every byte
+   * read goes to the returned link, none to lines. For the ESC passthrough session, where the
+   * blaster answers MSP and 4-way frames instead of commands. Closing the port ends it.
+   */
+  binaryLink(): ByteLink {
+    const queue = new ByteQueue();
+    this.binary = queue;
+    return {
+      write: async (bytes) => {
+        if (!this.writer) throw new Error("not connected");
+        await this.writer.write(bytes);
+      },
+      read: (count, timeoutMs) => queue.read(count, timeoutMs),
+      drain: async (ms) => {
+        await sleep(ms);
+        return queue.clear();
+      },
+    };
+  }
+
+  /**
+   * Resolves with the next matching line, or null on timeout.
+   *
+   * Always registered before the command it waits for is written: the reader hands a line to
+   * whoever is waiting the moment it arrives, and a reply that lands first is logged as chatter
+   * and lost to its request.
+   */
   private waitForLine(predicate: (line: string) => boolean, timeoutMs: number) {
     return new Promise<string | null>((resolve) => {
       const entry: Listener = { predicate, resolve: () => {} };
@@ -650,10 +741,11 @@ export class SerialTransport {
     timeoutMs = TIMEOUT_SHORT_MS,
     { quiet = false }: { quiet?: boolean } = {},
   ): Promise<T | null> {
+    const pending = this.waitForLine(repliesTo(command), timeoutMs);
     // A poll asked every second leaves no trace either way: its reply is claimed, so not logged.
     if (quiet) await this.write(`${command}\n`);
     else await this.sendLine(command);
-    const line = await this.waitForLine(repliesTo(command), timeoutMs);
+    const line = await pending;
     if (line === null) {
       this.log("err", `No reply to ${command} within ${timeoutMs} ms.`);
       return null;
@@ -717,8 +809,9 @@ export class SerialTransport {
   async requestWhole<T>(command: string, timeoutMs = TIMEOUT_SHORT_MS): Promise<T | null> {
     return askUntilWhole<T>(
       async () => {
+        const pending = this.waitForLine(repliesTo(command), timeoutMs);
         await this.sendLine(command);
-        const line = await this.waitForLine(repliesTo(command), timeoutMs);
+        const line = await pending;
         if (line === null) this.log("err", `No reply to ${command} within ${timeoutMs} ms.`);
         return line;
       },
@@ -760,8 +853,9 @@ export class SerialTransport {
    */
   async waitReady(attempts = 10, timeoutMs = 1500): Promise<boolean> {
     for (let i = 0; i < attempts; i++) {
+      const pending = this.waitForLine(repliesTo("DUMP_BOOT"), timeoutMs);
       await this.write("DUMP_BOOT\n");
-      const line = await this.waitForLine(repliesTo("DUMP_BOOT"), timeoutMs);
+      const line = await pending;
       if (line !== null) return true;
     }
     // Not "reconnected": connect() calls this too, and on a USB-only board that is the common

@@ -13,6 +13,7 @@ import {
   serialApi,
   type SerialApi,
   type Capture,
+  type LogLine,
 } from "./transport";
 import { sleep } from "./sleep";
 import { SerialPort as UsbSerialPort, serial as usbSerial } from "../vendor/web-serial-polyfill/dist/serial.js";
@@ -380,5 +381,69 @@ describe("a reboot on Android", () => {
     expect(usb.picked).toBe(2); // the picker both times, never the disconnected device
     expect(transport.awaitingReconnect).toBe(false);
     expect(transport.connected).toBe(true);
+  });
+});
+
+describe("SerialTransport over real streams", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * A blaster that answers each line within the write that carried it - the fastest a device can
+   * be, and the case a listener registered after the write misses.
+   */
+  const instantBlaster = (answer: (line: string) => string) => {
+    let device!: ReadableStreamDefaultController<Uint8Array>;
+    const port = {
+      readable: new ReadableStream<Uint8Array>({ start: (c) => void (device = c) }),
+      writable: new WritableStream<Uint8Array>({
+        write: (chunk) => {
+          const line = new TextDecoder().decode(chunk).trim();
+          device.enqueue(new TextEncoder().encode(`${answer(line)}\n`));
+        },
+      }),
+      open: async () => {},
+      close: async () => {},
+      getInfo: () => ({ usbVendorId: 0x2e8a, usbProductId: 0x000a }),
+    };
+    vi.stubGlobal("navigator", {
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140.0.0.0",
+      serial: { getPorts: async () => [port], requestPort: async () => port },
+    });
+  };
+
+  it("catches a reply that arrives before the write returns", async () => {
+    instantBlaster((line) => (line === "DUMP_BOOT" ? '{"cmd":"DUMP_BOOT"}' : deviceDump));
+    const transport = new SerialTransport();
+    expect(await transport.connect()).toBe(true);
+    expect(await transport.waitReady(1, 500)).toBe(true);
+    expect(await transport.request("DUMP_DEVICE", 500)).toEqual(JSON.parse(deviceDump));
+    expect(await transport.requestWhole("DUMP_DEVICE", 500)).toEqual(JSON.parse(deviceDump));
+    await transport.disconnect();
+  });
+
+  it("hands every byte to the binary link, none to the log or a capture", async () => {
+    instantBlaster((line) => line); // echoes, so what is written comes back as device output
+    const logged: LogLine[] = [];
+    const captured: Capture[] = [];
+    const transport = new SerialTransport({
+      onLog: (line) => logged.push(line),
+      onCapture: (capture) => captured.push(capture),
+    });
+    expect(await transport.connect()).toBe(true);
+    const link = transport.binaryLink();
+    const lines = [
+      "Voltage_mv,Motor 1,TargetRPM 1,Throttle 1,value 1,",
+      "16390,0,30000,1115,0.00,",
+      '{"evt":"rpmCapture","readyMs":178,"slowestMotor":1,"timedOut":false}',
+      "[info] chatter",
+    ].join("\n");
+    await link.write(new TextEncoder().encode(lines));
+    const back = await link.read(lines.length + 1, 500);
+    expect(new TextDecoder().decode(back)).toBe(`${lines}\n`);
+    expect(logged.filter((l) => l.kind === "in")).toEqual([]);
+    expect(captured).toEqual([]);
+    await transport.disconnect();
   });
 });

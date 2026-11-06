@@ -1,20 +1,15 @@
 import Box from "@mui/material/Box";
-import Link from "@mui/material/Link";
 import Typography from "@mui/material/Typography";
 import { getByKey } from "../schema/keyPath";
 import { HelpSection, Para, Step, Steps } from "./Help";
 
 // The ESC's half of the motor settings, stated next to the controller's half.
 //
-// Nothing here is reachable from this console. The fields above are what the firmware does with the
-// motors - it divides the ESC's eRPM by Poles/2 to get RPM and estimates throttle from Kv, both in
-// flywheelMotor.cpp - while AM32 holds its own copy of the same two facts and decides, through its
-// protections, whether a motor is allowed to keep turning at all. The two copies have to agree, and
-// the only way to set the ESC's one is a host tool over passthrough. So: prose beside the fields,
-// with the numbers it tells you to type read from the fields themselves.
-
-/** The AM32 web configurator, which talks to the ESCs through a passthrough session. */
-export const AM32_URL = "https://am32.ca/";
+// The fields above are what the firmware does with the motors - it divides the ESC's eRPM by
+// Poles/2 to get RPM and estimates throttle from Kv, both in flywheelMotor.cpp. AM32 keeps its own
+// Kv and poles, used only for the RPM range of its low-RPM power protection, and set on the ESCs
+// page. Matching the motor is the starting point the panel names, read from the fields themselves;
+// a spin-up search may move the ESC's Kv from there.
 
 export interface EscMotorSetup {
   /** 1-based, as the motor matrix above labels them. */
@@ -77,22 +72,18 @@ export function EscSetup({ device }: { device: unknown }) {
     <HelpSection summary="Setting up the ESCs in AM32">
       <Para>
         The flywheel ESCs run AM32, and its settings live on the ESCs rather than in this config.
-        Maintenance &gt; Start passthrough releases the
-        serial port; open{" "}
-        <Link href={AM32_URL} target="_blank" rel="noopener noreferrer">
-          am32.ca
-        </Link>{" "}
-        and connect to the same port from there. Closing the port in that tool ends the session, and
-        the blaster comes back on Connect.
+        The ESCs page reads them and writes them to every flywheel ESC at once.
       </Para>
-      <Para>Two things to change on every ESC, then Save:</Para>
+      <Para>Two things to set there, then write them:</Para>
       <Steps>
         <Step>
           Turn <b>Stuck rotor protection</b> and <b>Stall protection</b> off.
         </Step>
         <Step>
-          Set <b>Motor poles</b> and <b>Motor KV</b> to the motor you actually fitted, matching what
-          this page holds. AM32 wants the whole pole count, which is twice the Poles/2 above.
+          Set <b>Motor poles</b> and <b>Motor Kv</b> to the motor you fitted. The blaster uses the
+          Kv and Poles/2 above; AM32 uses its own pair only for the RPM range of its low-RPM power
+          protection, which limits power while a motor turns slowly, and Kv Off disables it. AM32
+          wants the whole pole count, twice the Poles/2 above.
           {groups.length > 0 && (
             <Box component="ul" sx={{ m: 0, mt: 0.35, pl: 2.5 }}>
               {groups.map((group) => (
