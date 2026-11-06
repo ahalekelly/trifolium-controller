@@ -107,7 +107,7 @@ export interface SetRecord {
 export type RunStatus = "running" | "paused" | "done";
 
 /** Changes whenever Run's shape does, so a run another build saved is refused rather than misread. */
-const RUN_VERSION = 4;
+const RUN_VERSION = 5;
 
 export interface Run {
   version: typeof RUN_VERSION;
