@@ -45,6 +45,8 @@ export interface TuneConfig {
   rpms: number[];
   /** Sets each finalist gets; its second-worst is the 95th percentile at the default 20. */
   n: number;
+  /** Halve the candidates down to finalists, or give every candidate its n sets. */
+  halving: boolean;
   overshootLimitPct: number;
   /** The run pauses for a pack swap once a cell reads below this at the start of a spin-up. */
   pauseCellMv: number;
@@ -62,6 +64,7 @@ export const DEFAULT_CONFIG: TuneConfig = {
   grid: DEFAULT_GAINS,
   rpms: [30000],
   n: 20,
+  halving: true,
   overshootLimitPct: 3,
   pauseCellMv: 3600,
 };
@@ -274,8 +277,8 @@ export function escOriginals(escs: EscRecord[], grid: EscGrid): EscValues {
  * candidate that ends one round and opens the next is not written again, and a run that pauses
  * writes twice more: the baseline's settings back, then the candidate's again on Resume.
  */
-export function plannedEscWrites(count: number, n: number): number {
-  const { sets, blocks } = planned(count, n);
+export function plannedEscWrites(count: number, n: number, halving: boolean): number {
+  const { sets, blocks } = planned(count, n, halving);
   return blocks + Math.floor(sets / BASELINE_BLOCKS.esc.every) + 1;
 }
 
@@ -299,6 +302,7 @@ export function startRun(
     search: startSearch(
       candidates.map((c) => c.id),
       config.n,
+      config.halving,
     ),
     sets: [],
     traces: {},

@@ -32,7 +32,7 @@ const escsWith = (startupPower: number): EscSettings[] => {
 };
 
 /** The form's text with these ESCs and these values typed for them. */
-async function formText(escs: EscSettings[], esc: Record<string, string>) {
+async function formText(escs: EscSettings[], esc: Record<string, string>, halving = true) {
   const host = document.createElement("div");
   const root = createRoot(host);
   const unused = () => Promise.reject(new Error("not in this test"));
@@ -44,7 +44,7 @@ async function formText(escs: EscSettings[], esc: Record<string, string>) {
         device={DEVICE}
         gainMax={{ kp: 2, ki: 2 }}
         escs={escs}
-        draft={{ ...DEFAULT_DRAFT, kind: "esc", esc }}
+        draft={{ ...DEFAULT_DRAFT, kind: "esc", esc, halving }}
         onDraft={() => {}}
         onApply={() => {}}
       />,
@@ -109,8 +109,17 @@ describe("the ESC run form", () => {
     expect(text).not.toContain("Motor poles");
     expect(text).not.toContain("Brake on stop");
     // Rounds end on 10 and 20 spin-ups: 4 x 10, then 2 finalists x 10 more.
-    const writes = plannedEscWrites(4, 20);
+    const writes = plannedEscWrites(4, 20, true);
     expect(text).toContain(`4 candidates, about 60 spin-ups and at most ${writes} ESC writes`);
+  });
+
+  it("plans every candidate's N spin-ups without halving", async () => {
+    const grid = { startup_power: "80, 120", motor_kv: "off, 3220" };
+    const text = await formText(escsWith(V4_DEFAULT[25]), grid, false);
+    const writes = plannedEscWrites(4, 20, false);
+    expect(text).toContain(`4 candidates, about 80 spin-ups and at most ${writes} ESC writes`);
+    expect(text).toContain("Spin-ups per candidate");
+    expect(text).toContain("Every candidate gets N spin-ups.");
   });
 
   it("says what a setting takes, and shows where the ESCs differ", async () => {

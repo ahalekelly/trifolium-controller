@@ -41,8 +41,8 @@ import { RpmChart, type Series } from "./RpmChart";
 
 // The spin-up search: runs spin-ups on the blaster by itself and finds the flywheel gains, or the
 // AM32 ESC settings, with the shortest dependable spin-up. Each candidate is tried at every target
-// RPM; successive halving spends most of the spin-ups on the candidates still in contention
-// (tune/search.ts), and the runner (tune/runner.ts) drives the blaster. A run lives in this browser
+// RPM; successive halving spends most of the spin-ups on the candidates still in contention, or
+// the full matrix gives every candidate the same (tune/search.ts), and the runner (tune/runner.ts) drives the blaster. A run lives in this browser
 // until discarded, so a reload or a dropped link pauses it rather than losing it.
 
 const COLOURS = ["#4f9dff", "#ff9f40", "#4ad991", "#e57bd8"];
@@ -59,6 +59,7 @@ type Form = Record<"kp" | "ki" | "tbh" | "rpms" | "n" | "overshootLimitPct" | "c
 export interface TuneDraft {
   kind: TuneConfig["grid"]["kind"];
   mode: GainsGrid["mode"];
+  halving: boolean;
   form: Form;
   /** Each ESC setting's values to try, as typed, by AM32 field name. */
   esc: Record<string, string>;
@@ -67,6 +68,7 @@ export interface TuneDraft {
 export const DEFAULT_DRAFT: TuneDraft = {
   kind: "gains",
   mode: DEFAULT_GAINS.mode,
+  halving: DEFAULT_CONFIG.halving,
   form: {
     kp: DEFAULT_GAINS.kp.join(", "),
     ki: DEFAULT_GAINS.ki.join(", "),
@@ -132,10 +134,11 @@ function configOf(
   if (!rpms || !rpms.every((r) => Number.isInteger(r) && r > 0)) {
     return "Target RPMs are whole numbers.";
   }
-  if (!Number.isInteger(n) || n < 2) return "Spin-ups per finalist is a whole number, at least 2.";
+  if (!Number.isInteger(n) || n < 2) return "Spin-ups per candidate is a whole number, at least 2.";
   if (!(overshootLimitPct >= 0)) return "The overshoot limit is a percentage.";
   if (!(cellV > 0)) return "The cell voltage to pause at is in volts.";
-  return { grid, rpms, n, overshootLimitPct, pauseCellMv: Math.round(cellV * 1000) };
+  const { halving } = draft;
+  return { grid, rpms, n, halving, overshootLimitPct, pauseCellMv: Math.round(cellV * 1000) };
 }
 
 const cellSx = { py: 0.25, px: 1 };
@@ -317,7 +320,7 @@ export function Tune({
   const driving = React.useSyncExternalStore(runner.subscribe, runner.running);
   /** Why the last Start did not start. */
   const [failed, setFailed] = React.useState<string | null>(null);
-  const { kind, mode, form } = draft;
+  const { kind, mode, halving, form } = draft;
   const rows = React.useMemo(() => (escs ? searchableRows(escs) : []), [escs]);
   const config = configOf(draft, gainMax, rows);
   const settings = runSettings(device);
@@ -356,9 +359,9 @@ export function Tune({
     const baseline = baselineOf(device);
     const ready = typeof config !== "string" && baseline !== null;
     const count = ready ? candidatesFor(config.grid, { gains: baseline, esc: null }).length : 0;
-    const sets = ready ? planned(count, config.n).sets : 0;
+    const sets = ready ? planned(count, config.n, config.halving).sets : 0;
     const spinups = ready ? sets * config.rpms.length : 0;
-    const writes = ready && kind === "esc" ? plannedEscWrites(count, config.n) : 0;
+    const writes = ready && kind === "esc" ? plannedEscWrites(count, config.n, config.halving) : 0;
     const minutes = Math.round((spinups * SPINUP_S + writes * ESC_WRITE_S) / 60);
     const problem =
       kind === "esc" && escs === null
@@ -424,9 +427,18 @@ export function Tune({
                 </Typography>
               </>
             )}
+            <ToggleButtonGroup
+              size="small"
+              exclusive
+              value={halving}
+              onChange={(_, v: boolean | null) => v !== null && onDraft({ ...draft, halving: v })}
+            >
+              <ToggleButton value={true}>Halve to finalists</ToggleButton>
+              <ToggleButton value={false}>Every candidate N times</ToggleButton>
+            </ToggleButtonGroup>
             <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", rowGap: 1 }}>
               {field("rpms", "Target RPMs")}
-              {field("n", "Spin-ups per finalist", 150)}
+              {field("n", halving ? "Spin-ups per finalist" : "Spin-ups per candidate", 170)}
               {field("overshootLimitPct", "Overshoot limit %", 150)}
               {field("cellV", "Pause below V a cell", 150)}
             </Stack>
@@ -436,11 +448,13 @@ export function Tune({
               blaster's own settings
               {baseline && kind === "gains" ? ` (${gainsLabel(baseline)})` : ""}{" "}
               rerun between every few to show drift. Each spin-up holds Rev from a standstill.
-              Halving drops the slower half after a few spin-ups each; the finalists rank on fewest
-              rampup timeouts, then the second-slowest of their N spin-ups per finalist (the 95th
-              percentile at the default N = 20), each summed over the target RPMs, and one whose
-              second-worst overshoot passes the limit cannot win. Mean counts a timed-out spin-up at
-              the rampup timeout, so it is a lower bound when Timeouts is not 0.{" "}
+              {halving
+                ? "Halving drops the slower half after a few spin-ups each, down to two finalists. "
+                : "Every candidate gets N spin-ups. "}
+              Finalists rank on fewest rampup timeouts, then the second-slowest of their N spin-ups
+              (the 95th percentile at the default N = 20), each summed over the target RPMs, and one
+              whose second-worst overshoot passes the limit cannot win. Mean counts a timed-out
+              spin-up at the rampup timeout, so it is a lower bound when Timeouts is not 0.{" "}
               {kind === "esc"
                 ? "Each candidate is written to every flywheel ESC once a round, then runs that " +
                   "round's spin-ups at the blaster's own gains. A write restarts the blaster and " +
@@ -489,6 +503,9 @@ export function Tune({
   // Nothing to apply when even the best overshoots past the limit.
   const winner = best?.standing.qualified ? run.candidates.find((c) => c.id === best.id)! : null;
   const escRun = run.config.grid.kind === "esc";
+  const { n, halving: halvingRun } = run.config;
+  const plannedSets = planned(run.candidates.length, n, halvingRun).sets;
+  const plannedWrites = plannedEscWrites(run.candidates.length, n, halvingRun);
   return (
     <Stack spacing={1.25}>
       <Fieldset label="Search">
@@ -499,11 +516,9 @@ export function Tune({
               : run.status === "running"
                 ? `Running round ${run.search.round + 1} of ${run.search.rounds.length}.`
                 : "Paused."}{" "}
-            {candidateSets} of about {planned(run.candidates.length, run.config.n).sets} candidate
-            sets{lastSet ? `, pack ${packV.toFixed(2)} V` : ""}.
+            {candidateSets} of about {plannedSets} candidate sets{lastSet ? `, pack ${packV.toFixed(2)} V` : ""}.
             {escRun &&
-              ` ${run.escWrites} of ${plannedEscWrites(run.candidates.length, run.config.n)} ` +
-                "planned ESC writes."}
+              ` ${run.escWrites} of ${plannedWrites} planned ESC writes.`}
           </Typography>
           {activityLine}
           {run.note && (

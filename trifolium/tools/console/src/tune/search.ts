@@ -1,10 +1,11 @@
-// Successive halving over candidates scored by repeated trials.
+// Successive halving over candidates scored by repeated trials, or the full matrix.
 //
 // A trial is one "set": a candidate's spin-up at every target RPM. This module knows nothing of
 // what a candidate changes - flywheel gains or ESC settings - only each set's score. Early rounds
 // give every surviving candidate a few sets and drop the worse half on medians, which is cheap and
 // robust to a stray set; the finalists then get exactly n sets, ranked on the second-worst, which
-// for the default n = 20 is the 95th percentile: the spin-up a user can count on.
+// for the default n = 20 is the 95th percentile: the spin-up a user can count on. Without halving,
+// the search is that last round alone: every candidate is a finalist.
 
 /** One set's outcome. A timed-out set never got every wheel to speed at some RPM. */
 export interface SetScore {
@@ -34,7 +35,8 @@ const EARLY_SETS = 3;
  * The set counts the rounds end on: each halving round doubles the last, ending at n. The first
  * starts at EARLY_SETS, so a short search may spend no extra sets on its last halving.
  */
-export function roundTargets(count: number, n: number): number[] {
+export function roundTargets(count: number, n: number, halving: boolean): number[] {
+  if (!halving) return [n];
   let halvings = 0;
   for (let alive = count; alive > FINALISTS; alive = Math.ceil(alive / 2)) halvings++;
   const targets: number[] = [];
@@ -44,22 +46,26 @@ export function roundTargets(count: number, n: number): number[] {
   return [...targets, n];
 }
 
-export function startSearch(ids: string[], n: number): Search {
+export function startSearch(ids: string[], n: number, halving: boolean): Search {
   if (ids.length === 0) throw new Error("a search needs at least one candidate");
   if (n < 2) throw new Error("the 95th percentile needs n of at least 2");
-  return { rounds: roundTargets(ids.length, n), round: 0, alive: [...ids], dropped: {} };
+  return { rounds: roundTargets(ids.length, n, halving), round: 0, alive: [...ids], dropped: {} };
 }
 
 /**
  * How many sets a search of `count` candidates runs, baseline sets aside, and in how many blocks: a
  * block is one candidate's sets for one round.
  */
-export function planned(count: number, n: number): { sets: number; blocks: number } {
+export function planned(
+  count: number,
+  n: number,
+  halving: boolean,
+): { sets: number; blocks: number } {
   let alive = count;
   let done = 0;
   let sets = 0;
   let blocks = 0;
-  for (const target of roundTargets(count, n)) {
+  for (const target of roundTargets(count, n, halving)) {
     if (target > done) {
       sets += alive * (target - done);
       blocks += alive;
