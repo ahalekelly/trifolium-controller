@@ -87,6 +87,18 @@ describe("parseRpmCsv", () => {
     expect(log.motors[0].targetRpm).toEqual([200]);
   });
 
+  it("reads the motors past the trailing EDT columns", () => {
+    const csv = extractRpmCsv(
+      "Voltage_mv,Current_mv,Motor 0,TargetRPM 0,Throttle 0,value 0,Motor 2,TargetRPM 2,Throttle 2,value 2," +
+        "EdtV 0,EdtI 0,EdtT 0,EdtD1 0,EdtV 2,EdtI 2,EdtT 2,EdtD1 2,\n" +
+        "16200,412,100,200,300,1,110,200,310,2,64,3,41,0,63,2,40,0,",
+    )!;
+    const log = parseRpmCsv(csv);
+    expect(log.motors.map((m) => m.index)).toEqual([0, 2]);
+    expect(log.motors[1].rpm).toEqual([110]);
+    expect(log.current).toEqual([412]);
+  });
+
   it("returns nothing for an unrecognisable header", () => {
     expect(parseRpmCsv("a,b,c\n1,2,3").motors).toEqual([]);
   });
