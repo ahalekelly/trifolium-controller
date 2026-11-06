@@ -7,12 +7,12 @@ import Typography from "@mui/material/Typography";
 import * as React from "react";
 
 // A rev held from the console, for an RPM capture. Held only while the button is: the transport
-// renews REV_HOLD's 300 ms lease while it holds, so a frozen tab or a pulled cable lets go on its
+// renews the rev's 300 ms lease while it holds, so a frozen tab or a pulled cable lets go on its
 // own. Letting go of the button, moving off it, the window losing focus or the tab being hidden all
 // release it at once. There is no fire: the firmware has no command for it.
 
-/** The firmware these commands arrived in. */
-export const FW_CONSOLE_CONTROLS = "2.3.0";
+/** The firmware these controls speak: REV_HOLD with REV_RENEW, and the motor actions. */
+export const FW_CONSOLE_CONTROLS = "2.5.0";
 /** How often the blaster is asked whether a rev would be refused, while nothing is held. */
 export const POLL_MS = 1000;
 

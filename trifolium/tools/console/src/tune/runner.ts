@@ -8,9 +8,10 @@
 // stops for any reason sends a bare TUNE, which puts the blaster's own settings back once its
 // wheels stop - or, when a dropped link stopped it, the next connection does.
 //
-// A browser's timers run late under load, and a renewal that comes late loses the hold. A spin-up
-// whose hold is lost - other than by its rampup timeout, which scores it - measures nothing, so its
-// capture goes and the spin-up runs again.
+// The blaster ends a held rev whose renewals stop reaching it, as a browser held up for longer than
+// the lease does, and says so by refusing the next one. A spin-up whose rev was lost that way -
+// other than by its rampup timeout, which scores it - measures nothing: its capture goes and the
+// spin-up runs again, once.
 //
 // An ESC run writes a candidate's settings to the ESCs before its block of sets, and each write is
 // a passthrough session that restarts the blaster, which is ready to rev again once it is back. The
@@ -52,14 +53,11 @@ const REST_MS = 2000;
 /** The longest the wheels may take to stop: dwell, idle and the spin-down ramp. */
 const STOP_TIMEOUT_MS = 30000;
 const STOP_POLL_MS = 250;
-/**
- * The run pauses once this many tries at one spin-up in a row lose the hold. A loaded machine loses
- * one now and then; one that loses three running - a background tab, whose timers the browser slows
- * to once a second, or a hung page - will lose them all.
- */
-const LOST_HOLDS = 3;
 /** DUMP_MOTORS' flywheelState for flywheelState_t's STATE_IDLE. */
 const STATE_IDLE = 0;
+
+/** The blaster ended a spin-up's rev, or refused it, before the hold was over. */
+class HoldLost extends Error {}
 
 /** The parts of DUMP_MOTORS a run reads. */
 interface MotorsDump {
@@ -100,8 +98,8 @@ export interface EscIo {
 }
 
 /**
- * Where a run's files go, as downloads: each capture as it comes in, a refused one included, and
- * the whole run once it is done.
+ * Where a run's files go, as downloads: the capture of each spin-up it counts, one measure() then
+ * refuses included, as it comes in, and the whole run once it is done.
  */
 export interface RunFiles {
   capture(csv: string, name: string): void;
@@ -418,13 +416,13 @@ export class TuneRunner {
             this.change({ status: "paused", note: null });
             return;
           }
-          const spinup = await this.spinup(
-            trial.gains,
-            rpm,
-            captureFile(run, next, rpm),
-            settings.holdMs,
-            settings.captureMs,
-          );
+          const args = [trial.gains, rpm, captureFile(run, next, rpm), settings] as const;
+          // A rev the blaster ended once is a hiccup, not a fault of the setup; twice pauses the run.
+          const spinup = await this.spinup(...args).catch((e: Error) => {
+            if (!(e instanceof HoldLost) || this.pauseWanted) throw e;
+            this.transport.log("err", `${e.message} Redoing this spin-up.`);
+            return this.spinup(...args);
+          });
           spinups.push(spinup);
         }
         this.change({ sets: [...run.sets, { id: next, at: Date.now(), spinups }] });
@@ -451,20 +449,12 @@ export class TuneRunner {
     }
   }
 
-  /** One spin-up, tried again while the hold is lost, up to LOST_HOLDS times. */
-  private async spinup(gains: Gains, rpm: number, file: string, holdMs: number, captureMs: number) {
-    for (let tries = 1; ; tries++) {
-      const result = await this.attempt(gains, rpm, file, holdMs, captureMs);
-      if (typeof result !== "string") return result;
-      if (tries === LOST_HOLDS) {
-        throw new Error(`The console let go of Rev ${LOST_HOLDS} times running: ${result}.`);
-      }
-      this.transport.log("err", `The console let go of Rev (${result}); redoing the spin-up.`);
-    }
-  }
-
-  /** One try at a spin-up: what it measured, or why the console lost the hold. */
-  private async attempt(gains: Gains, rpm: number, file: string, holdMs: number, captureMs: number) {
+  private async spinup(
+    gains: Gains,
+    rpm: number,
+    file: string,
+    { holdMs, captureMs }: { holdMs: number; captureMs: number },
+  ) {
     const enabled = await this.waitStopped();
     await sleep(REST_MS);
 
@@ -478,31 +468,29 @@ export class TuneRunner {
       this.captureWaiter = resolve;
       void sleep(captureMs + 5000).then(() => resolve(null));
     });
-    // Held for holdMs, or until the hold is lost. A rampup timeout loses it on purpose - the blaster
-    // refuses the rest of a rev that timed out - and its capture still scores the spin-up.
+    // Held for holdMs, or until the blaster ends the rev. A rampup timeout ends it on purpose - the
+    // blaster refuses the rest of a rev that timed out - and its capture still scores the spin-up.
     const mask = enabled.reduce((m, on, i) => (on ? m | (1 << i) : m), 0);
-    let lost: string | null = null;
-    await new Promise<void>((resolve) => {
-      const release = this.transport.holdRev(mask, (why) => {
-        lost = why;
-        resolve();
-      });
+    const lost = await new Promise<{ why: string; revved: boolean } | null>((resolve) => {
+      const release = this.transport.holdRev(mask, (why, revved) => resolve({ why, revved }));
       void sleep(holdMs).then(() => {
         release();
-        resolve();
+        resolve(null);
       });
     });
+    // A refused rev never started, so no capture is coming.
+    if (lost && !lost.revved) throw new Error(`The blaster refused to rev (${lost.why}).`);
     const got = await capture;
     this.captureWaiter = null;
-    if (lost && !got?.report.timedOut) return lost as string;
-    if (got) this.files.capture(got.csv, file);
-
+    // Any other loss voids the spin-up; its capture shows a rev cut short and is not kept.
+    if (lost && !got?.report.timedOut) throw new HoldLost(`Rev was lost: ${lost.why}.`);
     if (!got) {
       throw new Error(
         "No RPM capture came back. Is the blaster still connected, and does its fire mode rev on " +
           "the Rev switch?",
       );
     }
+    this.files.capture(got.csv, file);
     if (got.report.readyMs === null && !got.report.timedOut) {
       throw new Error("The rev ended before the wheels were at speed: SAFE, menu or cutoff.");
     }

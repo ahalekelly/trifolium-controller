@@ -9,6 +9,7 @@ import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Tooltip from "@mui/material/Tooltip";
 import type { LogLine } from "../../serial/transport";
 import { Lines } from "../LogView";
+import type { LogStore } from "../logStore";
 
 // The device conversation, at the foot of the page. Open, it is the last five lines with its tools
 // on the same row as its title; folded, it is one line, the latest. Full screen shows the lot.
@@ -82,33 +83,35 @@ function ResizeHandle({ height, onResize }: { height: number; onResize: (px: num
 }
 
 export function LogDrawer({
-  lines,
+  log,
   open,
   verbose,
   onToggleVerbose,
   verboseDisabled,
   onToggle,
-  onClear,
   onSave,
   height,
   onResize,
 }: {
-  lines: LogLine[];
+  log: LogStore;
   open: boolean;
   verbose: boolean;
   /** Switches the blaster's verbose logging; absent while nothing is connected. */
   onToggleVerbose?: () => void;
   verboseDisabled?: boolean;
   onToggle: () => void;
-  onClear: () => void;
   onSave: () => void;
   /** The open log's height in px, lines and padding. */
   height: number;
   onResize: (px: number) => void;
 }) {
+  const lines = React.useSyncExternalStore(log.subscribe, log.lines);
   const [filter, setFilter] = React.useState<Filter>("all");
   const [full, setFull] = React.useState(false);
-  const shown = lines.filter(FILTERS.find((f) => f.id === filter)!.keep);
+  const shown = React.useMemo(
+    () => lines.filter(FILTERS.find((f) => f.id === filter)!.keep),
+    [lines, filter],
+  );
   const last = lines[lines.length - 1];
 
   const tools = (
@@ -133,7 +136,7 @@ export function LogDrawer({
       {(
         [
           ["Save", onSave, !lines.length],
-          ["Clear", onClear, !lines.length],
+          ["Clear", log.clear, !lines.length],
           ["Full screen", () => setFull(true), false],
         ] as const
       ).map(([label, act, off]) => (
