@@ -59,6 +59,8 @@ const CONFIG: TuneConfig = {
 const C80 = "Startup power 80 %";
 const C120 = "Startup power 120 %";
 const C150 = "Startup power 150 %";
+/** The firmware's refusal of a renewal once the lease ran out. */
+const LAPSED = "no rev held - the lease ran out or it was let go";
 
 const capture = (rpm: number, readyMs: number): Capture => ({
   csv: [
@@ -83,9 +85,10 @@ function rig() {
     escs,
     events,
     runner: null as unknown as TuneRunner,
-    /** A startup power whose revs end in the rampup timeout, or why every rev's hold is lost. */
+    /** A startup power whose revs end in the rampup timeout. */
     timesOutAt: null as number | null,
-    losesHold: null as string | null,
+    /** Why the blaster refuses to rev at all. */
+    refusesRev: null as string | null,
   };
   let rpm = 0;
   const transport = {
@@ -112,18 +115,19 @@ function rig() {
       if (command !== "TUNE") rpm = JSON.parse(command.slice(5)).revRPM;
       return { cmd: "TUNE", ok: true };
     },
-    holdRev: (_mask: number, onLost: (why: string) => void) => {
+    holdRev: (_mask: number, onLost: (why: string, revved: boolean) => void) => {
       const power = escs.escs.map((e) => e.block[POWER]);
       events.push(`rev at ${power.join("/")}`);
       const at = rpm;
+      if (blaster.refusesRev) {
+        setTimeout(() => onLost(blaster.refusesRev!, false), 10);
+        return () => {};
+      }
       // As the firmware does: a rev that times out refuses its renewals, and still dumps a capture.
-      if (power[0] === blaster.timesOutAt || blaster.losesHold) {
-        const timedOut = power[0] === blaster.timesOutAt;
+      if (power[0] === blaster.timesOutAt) {
         setTimeout(() => {
-          onLost(timedOut ? "the blaster refused it (rev aborted - let go to rev again)" : blaster.losesHold!);
-          const report = timedOut
-            ? { readyMs: null, slowestMotor: 1, timedOut: true, maxThrottle: 1999 }
-            : { readyMs: 300, slowestMotor: 1, timedOut: false, maxThrottle: 1999 };
+          onLost("rev aborted - let go to rev again", true);
+          const report = { readyMs: null, slowestMotor: 1, timedOut: true, maxThrottle: 1999 };
           blaster.runner.capture({ ...capture(at, 0), report });
         }, 500);
         return () => {};
@@ -288,15 +292,15 @@ describe("an ESC run", () => {
     expect(run.candidates.find((c) => c.id === C80)).toBeDefined();
   });
 
-  it("pauses once three tries running lose the hold on revs that did not time out", async () => {
-    const { blaster, runner } = rig();
-    blaster.losesHold = "renewals fell 900 ms apart";
+  it("pauses at once when the blaster refuses to rev, without waiting for a capture", async () => {
+    const { blaster, runner, events } = rig();
+    blaster.refusesRev = "SAFE";
     void runner.start(CONFIG, GAINS, DEVICE);
+    const started = Date.now();
     await idle(runner);
-    expect(runOf(runner)).toMatchObject({
-      status: "paused",
-      note: "The console let go of Rev 3 times running: renewals fell 900 ms apart.",
-    });
+    expect(runOf(runner)).toMatchObject({ status: "paused", note: "The blaster refused to rev (SAFE)." });
+    expect(events.filter((e) => e.startsWith("rev at"))).toHaveLength(1);
+    expect(Date.now() - started).toBeLessThan(DEVICE.rpmLogLength + 5000);
   });
 
   it("puts back the ESCs' own on Pause, and writes the candidate again before Resume measures", async () => {
@@ -504,7 +508,7 @@ function gainsRig(revs: Rev[]) {
       if (command !== "TUNE") rpm = JSON.parse(command.slice(5)).revRPM;
       return { cmd: "TUNE", ok: true };
     },
-    holdRev: (_mask: number, onLost: (why: string) => void) => {
+    holdRev: (_mask: number, onLost: (why: string, revved: boolean) => void) => {
       const rev = revs.shift() ?? "held";
       const at = rpm;
       if (rev === "held") {
@@ -514,14 +518,10 @@ function gainsRig(revs: Rev[]) {
             100,
           );
       }
-      // The firmware dumps a capture either way: a timed-out rev refuses its renewals, and a late
-      // renewal lets the lease lapse mid-rev.
+      // The firmware dumps a capture either way: a timed-out rev refuses its renewals, and a lease
+      // that ran out mid-rev refuses the next.
       setTimeout(() => {
-        onLost(
-          rev === "timeout"
-            ? "the blaster refused it (rev aborted - let go to rev again)"
-            : "renewals fell 321 ms apart",
-        );
+        onLost(rev === "timeout" ? "rev aborted - let go to rev again" : LAPSED, true);
         const report =
           rev === "timeout"
             ? { readyMs: null, slowestMotor: 1, timedOut: true, maxThrottle: 1999 }
@@ -551,28 +551,24 @@ describe("a lost hold", () => {
     expect(run.sets.map((s) => s.spinups[0].readyMs)).toEqual(Array(8).fill(300));
     expect(saved).toHaveLength(8);
     expect(new Set(saved).size).toBe(8);
-    expect(logged).toEqual([
-      "The console let go of Rev (renewals fell 321 ms apart); redoing the spin-up.",
-    ]);
+    expect(logged).toEqual([`Rev was lost: ${LAPSED}. Redoing this spin-up.`]);
   });
 
-  it("pauses the run once three tries running lose it", async () => {
-    const { runner, logged, saved, exported } = gainsRig(["held", "late", "late", "late"]);
+  it("pauses the run once two tries running lose it", async () => {
+    const { runner, logged, saved, exported } = gainsRig(["held", "late", "late"]);
     void runner.start(GAINS_CONFIG, GAINS, DEVICE);
     await idle(runner);
     const run = runOf(runner);
     expect(run.status).toBe("paused");
-    expect(run.note).toBe(
-      "The console let go of Rev 3 times running: renewals fell 321 ms apart.",
-    );
+    expect(run.note).toBe(`Rev was lost: ${LAPSED}.`);
     expect(run.sets).toHaveLength(1);
     expect(saved).toHaveLength(1);
     expect(exported).toEqual([]);
-    expect(logged).toHaveLength(2);
+    expect(logged).toHaveLength(1);
   });
 
   it("counts only tries in a row: a kept hold starts the count again", async () => {
-    const { runner } = gainsRig(["late", "late", "held", "late", "late"]);
+    const { runner } = gainsRig(["late", "held", "late", "held"]);
     void runner.start(GAINS_CONFIG, GAINS, DEVICE);
     await idle(runner);
     expect(runOf(runner).status).toBe("done");
@@ -613,7 +609,7 @@ describe("the run's JSON", () => {
   });
 
   it("saves an unfinished run on discard", async () => {
-    const { runner, exported } = gainsRig(["held", "late", "late", "late"]);
+    const { runner, exported } = gainsRig(["held", "late", "late"]);
     void runner.start(GAINS_CONFIG, GAINS, DEVICE);
     await idle(runner);
     const name = `${runName(runOf(runner))}.json`;
