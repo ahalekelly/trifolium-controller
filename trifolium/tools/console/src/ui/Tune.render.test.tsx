@@ -7,9 +7,17 @@ import { LAYOUTS } from "../esc/layouts";
 import type { EscSettings } from "../esc/session";
 import { V4_DEFAULT } from "../esc/testdata";
 import type { SerialTransport } from "../serial/transport";
-import { DEFAULT_CONFIG, DEFAULT_GAINS, plannedEscWrites, startRun, type Run } from "../tune/run";
+import {
+  BASELINE,
+  DEFAULT_CONFIG,
+  DEFAULT_GAINS,
+  plannedEscWrites,
+  startRun,
+  type Run,
+  type SetRecord,
+} from "../tune/run";
 import { TuneRunner } from "../tune/runner";
-import { DEFAULT_DRAFT, Results, Tune } from "./Tune";
+import { DEFAULT_DRAFT, Results, SpinupTraces, Tune } from "./Tune";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -74,22 +82,83 @@ describe("the results table", () => {
     run.sets = readyMs.map((ms, at) => ({
       id: "PID kp 0.2 ki 1",
       at,
-      spinups: [{ rpm: 30000, file: "", readyMs: ms, overshootPct: 0.5, packMv: 16000 }],
+      spinups: [
+        { rpm: 30000, file: "", readyMs: ms, overshootPct: 0.5, packMv: 16000, trace: [[0, 1, 2]] },
+      ],
     }));
     return run;
   }
+
+  const results = (run: Run, onCheck = () => {}) => (
+    <Results run={run} checked={[]} onCheck={onCheck} />
+  );
 
   const cells = () =>
     [...host.querySelectorAll("tbody tr:first-child td")].map((td) => td.textContent);
 
   it("shows the mean, the slowest and the second slowest set", () => {
-    act(() => root.render(<Results run={runOf([100, 300, 200, 110])} />));
-    expect(cells().slice(2)).toEqual(["0", "178 ms", "300 ms", "200 ms", "0.5%", "4"]);
+    act(() => root.render(results(runOf([100, 300, 200, 110]))));
+    expect(cells().slice(3)).toEqual(["0", "178 ms", "300 ms", "200 ms", "0.5%", "4"]);
   });
 
   it("shows the slowest as a timeout once any set timed out, counted at the timeout in the mean", () => {
-    act(() => root.render(<Results run={runOf([100, null, 200])} />));
-    expect(cells().slice(2)).toEqual(["1", "267 ms", "timeout", "200 ms", "0.5%", "3"]);
+    act(() => root.render(results(runOf([100, null, 200]))));
+    expect(cells().slice(3)).toEqual(["1", "267 ms", "timeout", "200 ms", "0.5%", "3"]);
+  });
+});
+
+describe("the spin-up chart", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  beforeEach(() => {
+    host = document.createElement("div");
+    root = createRoot(host);
+  });
+  afterEach(() => act(() => root.unmount()));
+
+  const set = (id: string, trace: number[][]): SetRecord => ({
+    id,
+    at: 0,
+    spinups: [{ rpm: 30000, file: "", readyMs: 100, overshootPct: 0, packMv: 16000, trace }],
+  });
+
+  it("checks a candidate's row and the baseline's to chart them", () => {
+    const run = startRun(
+      { ...DEFAULT_CONFIG, grid: { ...DEFAULT_GAINS, kp: [0.2], ki: [1] } },
+      { gains: { control: "pid", kp: 0.2, ki: 0.5 }, esc: null },
+      null,
+      null,
+      500,
+    );
+    run.sets = [set(BASELINE, [[0]]), set("PID kp 0.2 ki 1", [[0]])];
+    const onCheck = vi.fn();
+    act(() => root.render(<Results run={run} checked={[BASELINE]} onCheck={onCheck} />));
+    const boxes = host.querySelectorAll<HTMLInputElement>("input[type=checkbox]");
+    expect([...boxes].map((b) => [b.getAttribute("aria-label"), b.checked])).toEqual([
+      ["Chart PID kp 0.2 ki 1", false],
+      ["Chart the baseline", true],
+    ]);
+    act(() => boxes[0].click());
+    expect(onCheck).toHaveBeenCalledWith([BASELINE, "PID kp 0.2 ki 1"]);
+  });
+
+  it("overlays every motor of every spin-up of each checked row, a colour per row", () => {
+    const sets = [
+      set("a", [[0, 100, 200], [0, 90, 180]]),
+      set("b", [[0, 50, 100], [0, 40, 80]]),
+      set("a", [[0, 120, 240], [0, 80, 160]]),
+    ];
+    act(() => root.render(<SpinupTraces sets={sets} rpms={[30000]} checked={["a", "b"]} />));
+    const paths = [...host.querySelectorAll("path")];
+    // One path a row, a line in it a motor a spin-up.
+    expect(paths.map((p) => p.getAttribute("d")!.split("M").length - 1)).toEqual([4, 2]);
+    expect(new Set(paths.map((p) => p.getAttribute("stroke"))).size).toBe(2);
+    expect(host.textContent).toContain("Every spin-up at 30000 RPM");
+  });
+
+  it("asks for a row to chart when none is checked", () => {
+    act(() => root.render(<SpinupTraces sets={[]} rpms={[30000]} checked={[]} />));
+    expect(host.textContent).toContain("Check rows to chart their spin-ups.");
   });
 });
 

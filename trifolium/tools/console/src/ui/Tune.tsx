@@ -2,6 +2,7 @@ import React from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import Checkbox from "@mui/material/Checkbox";
 import Stack from "@mui/material/Stack";
 import Table from "@mui/material/Table";
 import TableBody from "@mui/material/TableBody";
@@ -27,10 +28,12 @@ import {
   scoreOf,
   scoresOf,
   settingsLabel,
+  TRACE_STEP,
   type EscGrid,
   type Gains,
   type GainsGrid,
   type Run,
+  type SetRecord,
   type TuneConfig,
 } from "../tune/run";
 import { runSettings, type TuneRunner } from "../tune/runner";
@@ -45,7 +48,16 @@ import { RpmChart, type Series } from "./RpmChart";
 // the full matrix gives every candidate the same (tune/search.ts), and the runner (tune/runner.ts) drives the blaster. A run lives in this browser
 // until discarded, so a reload or a dropped link pauses it rather than losing it.
 
-const COLOURS = ["#4f9dff", "#ff9f40", "#4ad991", "#e57bd8"];
+const COLOURS = [
+  "#4f9dff",
+  "#ff9f40",
+  "#4ad991",
+  "#e57bd8",
+  "#f2d14b",
+  "#5fd3e6",
+  "#ff6b6b",
+  "#a78bfa",
+];
 
 /** Rough wall-clock cost of one spin-up: the hold, the capture, the spin-down and the rest. */
 const SPINUP_S = 5;
@@ -165,16 +177,44 @@ function StandingCells({ s, scores }: { s: Standing; scores: SetScore[] }) {
   );
 }
 
-export function Results({ run }: { run: Run }) {
+/** A row's checkbox and its chart colour, in the order rows were checked. */
+const colourOf = (checked: string[], id: string) => COLOURS[checked.indexOf(id) % COLOURS.length];
+
+export function Results({
+  run,
+  checked,
+  onCheck,
+}: {
+  run: Run;
+  /** The rows whose spin-ups are charted: candidate ids and BASELINE, in the order checked. */
+  checked: string[];
+  onCheck: (checked: string[]) => void;
+}) {
   const limit = run.config.overshootLimitPct;
   const scores = scoresOf(run);
   const rows = ranking(run.search, scores, limit);
   const done = run.status === "done";
+  const box = (id: string, label: string) => {
+    const on = checked.includes(id);
+    const colour = on ? colourOf(checked, id) : undefined;
+    return (
+      <TableCell padding="checkbox">
+        <Checkbox
+          size="small"
+          checked={on}
+          onChange={() => onCheck(on ? checked.filter((c) => c !== id) : [...checked, id])}
+          sx={{ py: 0, color: colour, "&.Mui-checked": { color: colour } }}
+          slotProps={{ input: { "aria-label": `Chart ${label}` } }}
+        />
+      </TableCell>
+    );
+  };
   return (
     <Table size="small" sx={{ width: "auto" }}>
       <TableHead>
         <TableRow>
           {[
+            "Chart",
             "Candidate",
             "",
             "Timeouts",
@@ -193,6 +233,7 @@ export function Results({ run }: { run: Run }) {
       <TableBody>
         {rows.map(({ id, standing: s, droppedIn }, i) => (
           <TableRow key={id}>
+            {box(id, id)}
             <TableCell sx={cellSx}>{id}</TableCell>
             <TableCell sx={{ ...cellSx, color: "text.secondary" }}>
               {droppedIn !== null
@@ -208,6 +249,7 @@ export function Results({ run }: { run: Run }) {
         ))}
         {scores[BASELINE] && (
           <TableRow>
+            {box(BASELINE, "the baseline")}
             <TableCell sx={{ ...cellSx, fontStyle: "italic" }}>
               Baseline: {settingsLabel(run.config.grid, run.baseline)}
             </TableCell>
@@ -220,30 +262,47 @@ export function Results({ run }: { run: Run }) {
   );
 }
 
-/** Each finalist's latest spin-up at each target RPM, the slowest motor's line. */
-function FinalistTraces({ run }: { run: Run }) {
+/**
+ * Every spin-up of each checked row, overlaid, a chart per target RPM: each motor's RPM, in the
+ * row's colour. Memoised on the sets, which change only as a set ends, so the chart redraws once
+ * a set and never while a rev is held.
+ */
+export const SpinupTraces = React.memo(function SpinupTraces({
+  sets,
+  rpms,
+  checked,
+}: {
+  sets: SetRecord[];
+  rpms: number[];
+  checked: string[];
+}) {
+  if (checked.length === 0) {
+    return (
+      <Typography variant="caption" color="text.secondary">
+        Check rows to chart their spin-ups.
+      </Typography>
+    );
+  }
   return (
     <Stack spacing={1}>
-      {run.config.rpms.map((rpm, k) => {
-        const series: Series[] = run.search.alive
-          .filter((id) => run.traces[id])
-          .map((id, i) => ({
-            name: id,
-            colour: COLOURS[i % COLOURS.length],
-            values: run.traces[id][k],
-          }));
+      {rpms.map((rpm, k) => {
+        const series: Series[] = checked.map((id) => ({
+          name: id === BASELINE ? "Baseline" : id,
+          colour: colourOf(checked, id),
+          lines: sets.filter((s) => s.id === id).flatMap((s) => s.spinups[k].trace),
+        }));
         return (
           <Box key={rpm}>
             <Typography variant="caption" color="text.secondary">
-              Finalists at {rpm} RPM, each one's latest spin-up
+              Every spin-up at {rpm} RPM, each motor's line
             </Typography>
-            <RpmChart series={series} height={200} />
+            <RpmChart series={series} height={240} xLabel="ms" sampleMs={TRACE_STEP} />
           </Box>
         );
       })}
     </Stack>
   );
-}
+});
 
 /** The ESC settings an ESC run can vary, each with what the ESCs hold now and the values to try. */
 function EscGridForm({
@@ -320,6 +379,7 @@ export function Tune({
   const driving = React.useSyncExternalStore(runner.subscribe, runner.running);
   /** Why the last Start did not start. */
   const [failed, setFailed] = React.useState<string | null>(null);
+  const [checked, setChecked] = React.useState<string[]>([]);
   const { kind, mode, halving, form } = draft;
   const rows = React.useMemo(() => (escs ? searchableRows(escs) : []), [escs]);
   const config = configOf(draft, gainMax, rows);
@@ -587,8 +647,8 @@ export function Tune({
       </Fieldset>
       <Fieldset label="Results">
         <Stack spacing={1} sx={{ pt: 1 }}>
-          <Results run={run} />
-          {run.status === "done" && <FinalistTraces run={run} />}
+          <Results run={run} checked={checked} onCheck={setChecked} />
+          <SpinupTraces sets={run.sets} rpms={run.config.rpms} checked={checked} />
         </Stack>
       </Fieldset>
     </Stack>

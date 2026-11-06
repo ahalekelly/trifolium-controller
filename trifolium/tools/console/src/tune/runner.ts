@@ -386,13 +386,12 @@ export class TuneRunner {
           if (next === BASELINE) this.change({ restoreEscs: false });
         }
         const spinups: Spinup[] = [];
-        const traces: number[][] = [];
         for (const rpm of run.config.rpms) {
           if (this.pauseWanted) {
             this.change({ status: "paused", note: null });
             return;
           }
-          const { spinup, trace } = await this.spinup(
+          const spinup = await this.spinup(
             trial.gains,
             rpm,
             captureFile(run, next, rpm),
@@ -400,16 +399,8 @@ export class TuneRunner {
             settings.captureMs,
           );
           spinups.push(spinup);
-          traces.push(trace);
         }
-        const traceKept = next === BASELINE ? { ...run.traces } : { ...run.traces, [next]: traces };
-        // Only the finalists' traces are charted, so a dropped candidate's go.
-        for (const id of Object.keys(search.dropped)) delete traceKept[id];
-        this.change({
-          search,
-          sets: [...run.sets, { id: next, at: Date.now(), spinups }],
-          traces: traceKept,
-        });
+        this.change({ search, sets: [...run.sets, { id: next, at: Date.now(), spinups }] });
         const cellMv = Math.min(...spinups.map((s) => s.packMv)) / settings.cells;
         if (cellMv < run.config.pauseCellMv) {
           throw new Error(

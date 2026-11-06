@@ -165,18 +165,18 @@ export function RpmLog({
     const out: Series[] = [];
     parsed.motors.forEach((m, i) => {
       const colour = COLOURS[i % COLOURS.length];
-      out.push({ name: `M${m.index} rpm`, colour, values: m.rpm.slice(0, cut) });
+      out.push({ name: `M${m.index} rpm`, colour, lines: [m.rpm.slice(0, cut)] });
       out.push({
         name: `M${m.index} target`,
         colour: faded(colour),
-        values: m.targetRpm.slice(0, cut),
+        lines: [m.targetRpm.slice(0, cut)],
       });
     });
     if (parsed.voltage.length) {
       out.push({
         name: "pack mV",
         colour: "#9aa0a6",
-        values: parsed.voltage.slice(0, cut),
+        lines: [parsed.voltage.slice(0, cut)],
         axis: "right",
       });
     }
@@ -193,7 +193,7 @@ export function RpmLog({
         out.push({
           name: `M${m.index} throttle`,
           colour: faded(COLOURS[i % COLOURS.length]),
-          values: m.throttle.slice(0, cut),
+          lines: [m.throttle.slice(0, cut)],
         });
       });
     }
@@ -201,7 +201,7 @@ export function RpmLog({
       out.push({
         name: "current-sense mV",
         colour: "#9aa0a6",
-        values: parsed.current.slice(0, cut),
+        lines: [parsed.current.slice(0, cut)],
         // On the left when alone, else the chart draws an empty left axis.
         axis: showThrottle ? "right" : "left",
       });
@@ -336,8 +336,8 @@ export function RpmLog({
           <Typography variant="caption" color="text.secondary">
             {parsed.motors.length} motor{parsed.motors.length === 1 ? "" : "s"},{" "}
             {parsed.motors[0]?.rpm.length ?? 0} samples
-            {series.length && series[0].values.length !== parsed.motors[0]?.rpm.length
-              ? ` (charting ${series[0].values.length})`
+            {series.length && series[0].lines[0].length !== parsed.motors[0]?.rpm.length
+              ? ` (charting ${series[0].lines[0].length})`
               : ""}
           </Typography>
         )}
