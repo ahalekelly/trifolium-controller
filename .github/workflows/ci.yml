@@ -169,9 +169,20 @@ jobs:
           npm ci
           npm run build
 
+      - name: Probe alone
+        working-directory: trifolium/tests
+        run: |
+          nproc || true
+          for i in 1 2 3; do python -m pytest suite/test_probe.py -q -s -p no:cacheprovider | grep -E "PROBE|passed|failed"; done
+
       - name: The suite
         working-directory: trifolium/tests
-        run: python -m pytest -n auto -ra --junitxml=junit.xml
+        run: |
+          (typeperf "\Processor(_Total)\% Processor Time" -si 1 > cpu.csv 2>&1 &)
+          python -m pytest -n auto -ra --junitxml=junit.xml || true
+          for f in probe-*.json; do echo "== $f"; cat "$f"; echo; done
+          tail -n +3 cpu.csv | cut -d, -f2 | tr -d '"' | sort -n | awk '{a[NR]=$1} END {print "cpu samples", NR, "median", a[int(NR/2)], "p90", a[int(NR*0.9)]}'
+          tail -n 300 cpu.csv | cut -d, -f2 | tr -d '"' | cut -d. -f1 | tr '\n' ' '
 
       # Each failure as an annotation: on the run's page, and readable through the checks API
       # without signing in, where the log is not.
