@@ -249,6 +249,17 @@ def test_an_upload_of_another_schema_version_is_refused_and_nothing_changes(blas
     assert b.command("DUMP_DEVICE")["blasterName"] == "example"
 
 
+def test_a_refused_load_profile_names_its_slot(blaster):
+    """The console matches a slot-addressed reply by its index, so a refusal without one would read
+    as no reply at all."""
+    b = armed_v12(blaster, display=False, settle_ms=100)
+    reply = b.command("LOAD_PROFILE 2\n" + json.dumps({"schemaVersion": 1}))
+    assert reply == {"cmd": "LOAD_PROFILE", "ok": False, "index": 2, "err": "schemaVersion 1 != 2",
+                     "applied": False}
+    assert b.command("LOAD_PROFILE 2\n{,}") == {"cmd": "LOAD_PROFILE", "ok": False, "index": 2,
+                                                 "err": "invalid JSON"}
+
+
 def test_a_v2_device_file_comes_up_unwired_even_if_it_names_a_board(blaster):
     b = blaster
     b.flash_device({"schemaVersion": 2, "boardId": "trifolium_v1_2", "triggerSwitchPin": 21})
@@ -270,6 +281,38 @@ def test_a_saved_device_file_leaves_no_temp_file_behind(blaster):
     assert "/device.cfg" in files
     assert not any(path.endswith(".tmp") for path in files)
     assert b.command("DUMP_DEVICE")["blasterName"] == "saved"
+
+
+LOW_KV = [{"motorKv": 300}] * 4  # clamps the profile's rev RPM, so the profile needs putting back too
+
+
+ACTIVE = "active"
+
+
+@pytest.mark.parametrize("command, index, err", [
+    ("FACTORY_RESET_DEVICE", None, "could not write the device settings"),
+    ("FACTORY_RESET_ALL", None, "could not write a slot"),
+    ("RESET_PINS", None, "could not write the device settings"),
+    ("LOAD_DEVICE\n" + json.dumps({"schemaVersion": 3, "blasterName": "x", "motorConfig": LOW_KV}),
+     None, "could not write the device settings"),
+    ('LOAD_PROFILE\n{"schemaVersion": 2, "dwellTime_ms": 2500}', ACTIVE, "could not write the slot"),
+    ('LOAD_PROFILE 2\n{"schemaVersion": 2, "dwellTime_ms": 2500}', 2, "could not write the slot"),
+    ("FACTORY_RESET_PROFILE 2", 2, "could not write the slot"),
+])
+def test_a_save_that_fails_is_refused_and_the_device_keeps_what_flash_holds(blaster, command, index,
+                                                                             err):
+    b = armed_v12(blaster, display=False, settle_ms=100)
+    active = b.peek("activeProfileIndex")
+    assert active != 2
+    device, profile, files = b.command("DUMP_DEVICE"), b.command("DUMP_PROFILE"), b.flash_files()
+    b.fill_flash()
+    slot = {} if index is None else {"index": active if index == ACTIVE else index}
+    assert b.command(command) == {"cmd": command.split()[0], "ok": False, **slot, "err": err}
+    assert b.run_ms(500)
+    assert len(b.history) == 0  # no reboot
+    assert b.command("DUMP_DEVICE") == device
+    assert b.command("DUMP_PROFILE") == profile
+    assert b.flash_files() == files
 
 
 def test_a_corrupt_device_file_boots_on_defaults(make_blaster):

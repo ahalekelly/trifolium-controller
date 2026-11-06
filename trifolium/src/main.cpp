@@ -1813,6 +1813,9 @@ bool fwControlLoop()
 {
     if (directMotorControlActive)
     {
+        // Else a trigger pull during a console motor action fires once it ends. The menu's own
+        // actions need no help: an open menu already clears the queue.
+        shotsToFire = 0;
         pusher->update();
         loopTime_us = micros() - loopStartTimer_us;
         if (loopTime_us > targetLoopTime_us)

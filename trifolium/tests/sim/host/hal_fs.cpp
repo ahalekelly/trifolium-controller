@@ -79,7 +79,7 @@ size_t File::write(uint8_t c)
 size_t File::write(const uint8_t* buf, size_t size)
 {
     const hal::detail::FakesOwnHeap fakes;
-    if (!impl_ || !impl_->open || !impl_->writable)
+    if (!impl_ || !impl_->open || !impl_->writable || hal::flash().full)
         return 0;
     if (impl_->pos > impl_->data.size())
         impl_->data.resize(impl_->pos);
