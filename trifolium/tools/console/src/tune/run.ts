@@ -173,6 +173,8 @@ export interface Run {
    * candidate's write, cleared once the baseline's or an applied winner's verifies.
    */
   restoreEscs: boolean;
+  /** The winner is applied: stored on the run's own blaster, so there is nothing left to apply. */
+  applied: boolean;
 }
 
 /**
@@ -350,6 +352,7 @@ export function startRun(
     note: null,
     escWrites: 0,
     restoreEscs: false,
+    applied: false,
   };
 }
 

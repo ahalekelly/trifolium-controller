@@ -419,6 +419,24 @@ describe("an ESC run", () => {
     expect(apply).not.toHaveBeenCalled();
     expect(escs.escs.map((e) => e.block)).toEqual([V4_DEFAULT, V4_DEFAULT]);
     expect(runOf(blaster.runner).note).toMatch(/^This run is for the blaster with chip ID E6614103E7345B2F/);
+    expect(runOf(blaster.runner).applied).toBe(false);
+
+    // Back on its own blaster, the winner goes on, and the run says so from then on.
+    blaster.chipId = "E6614103E7345B2F";
+    void blaster.runner.applyEsc(winner);
+    await idle(blaster.runner);
+    expect(runOf(blaster.runner).applied).toBe(true);
+  });
+
+  it("is not applied when writing the winner fails", async () => {
+    const { blaster, escs } = rig();
+    void blaster.runner.start(CONFIG, GAINS, DEVICE);
+    await idle(blaster.runner);
+    escs.escs[1].corrupt = { byte: POWER, writes: 1 };
+    void blaster.runner.applyEsc(runOf(blaster.runner).candidates[0]);
+    await idle(blaster.runner);
+    expect(runOf(blaster.runner).note).toMatch(/^Applying Startup power 80 % failed/);
+    expect(runOf(blaster.runner).applied).toBe(false);
   });
 
   it("is dropped on Discard with another blaster connected, writing nothing", async () => {
@@ -558,5 +576,17 @@ describe("a lost hold", () => {
     expect(run.status).toBe("done");
     expect(run.sets.map((s) => s.spinups[0].readyMs)).toEqual([300, null, 300, 300]);
     expect(logged).toEqual([]);
+  });
+});
+
+describe("applying a gains run's winner", () => {
+  it("hands the gains over and marks the run applied", async () => {
+    const { runner } = gainsRig([]);
+    void runner.start(GAINS_CONFIG, GAINS, DEVICE);
+    await idle(runner);
+    const apply = vi.fn();
+    runner.applyGains(runOf(runner).candidates[0], apply);
+    expect(apply).toHaveBeenCalledWith({ control: "pid", kp: 0.2, ki: 1 });
+    expect(runOf(runner).applied).toBe(true);
   });
 });

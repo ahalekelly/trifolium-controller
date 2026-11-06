@@ -239,8 +239,12 @@ export class TuneRunner {
   /** Hands a gains run's winner to `apply`, which stores it - on the run's own blaster only. */
   applyGains(winner: Candidate, apply: (gains: Gains) => void) {
     const other = this.otherBlaster();
-    if (other) this.change({ note: other });
-    else apply(winner.gains);
+    if (other) {
+      this.change({ note: other });
+      return;
+    }
+    apply(winner.gains);
+    this.change({ applied: true });
   }
 
   /** Writes an ESC run's winner to the ESCs, to stay. */
@@ -254,7 +258,7 @@ export class TuneRunner {
       this.change({ restoreEscs: true });
       try {
         await this.writeEscs(winner.esc!, winner.id);
-        this.change({ restoreEscs: false });
+        this.change({ restoreEscs: false, applied: true });
         this.transport.log("ok", `Applied ${winner.id} to the ESCs.`);
       } catch (e) {
         this.change({ note: `Applying ${winner.id} failed: ${(e as Error).message}` });
