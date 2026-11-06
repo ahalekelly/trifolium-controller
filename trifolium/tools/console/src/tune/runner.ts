@@ -259,9 +259,9 @@ export class TuneRunner {
       try {
         await this.writeEscs(winner.esc!, winner.id);
         this.change({ restoreEscs: false, applied: true });
-        this.transport.log("ok", `Applied ${winner.id} to the ESCs.`);
+        this.transport.log("ok", `Applied ${winner.name} to the ESCs.`);
       } catch (e) {
-        this.change({ note: `Applying ${winner.id} failed: ${(e as Error).message}` });
+        this.change({ note: `Applying ${winner.name} failed: ${(e as Error).message}` });
       }
     });
   }
@@ -375,9 +375,9 @@ export class TuneRunner {
       if (typeof settings === "string") throw new Error(settings);
       for (;;) {
         const run = this.current;
-        const { search, next } = nextSet(run);
+        const next = nextSet(run);
         if (next === null) {
-          this.change({ search, status: "done" });
+          this.change({ status: "done" });
           return;
         }
         if (this.pauseWanted) {
@@ -410,7 +410,7 @@ export class TuneRunner {
           );
           spinups.push(spinup);
         }
-        this.change({ search, sets: [...run.sets, { id: next, at: Date.now(), spinups }] });
+        this.change({ sets: [...run.sets, { id: next, at: Date.now(), spinups }] });
         const cellMv = Math.min(...spinups.map((s) => s.packMv)) / settings.cells;
         if (cellMv < run.config.pauseCellMv) {
           throw new Error(

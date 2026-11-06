@@ -2,8 +2,8 @@
 //
 // A run searches one of two things. A gains run tries flywheel gains, which TUNE sets in RAM for a
 // spin-up. An ESC run tries AM32 settings, written to every flywheel ESC's flash, and spins up on the
-// blaster's own gains. Flash wears out, so an ESC run gives each candidate its sets for a round as
-// one block after one write, where a gains run takes its candidates in turn.
+// blaster's own gains. Flash wears out, so an ESC run gives each candidate its sets as one block
+// after one write, where a gains run takes its candidates in turn.
 //
 // Plain data throughout, so a run survives a reload or a disconnect in localStorage and exports as
 // JSON as it stands. The search itself (search.ts) sees only candidate ids and set scores.
@@ -14,7 +14,7 @@ import type { EscSettings } from "../esc/session";
 import { MS_PER_SAMPLE, parseRpmCsv, wholeRows } from "../rpm/parse";
 import { getByKey } from "../schema/keyPath";
 import type { Capture } from "../serial/transport";
-import { plan, startSearch, type Search, type SetScore } from "./search";
+import { nextCandidate, ranking, type SetScore } from "./search";
 
 export type Control = "pid" | "tbh";
 
@@ -53,10 +53,8 @@ export interface EscGrid {
 export interface TuneConfig {
   grid: GainsGrid | EscGrid;
   rpms: number[];
-  /** Sets each finalist gets; its second-worst is the 95th percentile at the default 20. */
+  /** Sets each candidate gets; its second-worst is the 95th percentile at the default 20. */
   n: number;
-  /** Halve the candidates down to finalists, or give every candidate its n sets. */
-  halving: boolean;
   /** The run pauses for a pack swap once a cell reads below this at the start of a spin-up. */
   pauseCellMv: number;
 }
@@ -74,7 +72,6 @@ export const DEFAULT_CONFIG: TuneConfig = {
   grid: DEFAULT_GAINS,
   rpms: [30000],
   n: 20,
-  halving: true,
   pauseCellMv: 3600,
 };
 
@@ -108,8 +105,10 @@ export interface EscRecord {
 }
 
 export interface Candidate extends Settings {
-  /** Also its label. */
+  /** Every field the grid writes, as settingsLabel() shows them. */
   id: string;
+  /** What the results call it: in a one-at-a-time run, only what it changes from the baseline. */
+  name: string;
 }
 
 /**
@@ -158,7 +157,7 @@ export type RunStatus = "running" | "paused" | "done";
  * Changes whenever Run's shape or how its sets count does, so a run another build saved is refused
  * rather than misread.
  */
-const RUN_VERSION = 8;
+const RUN_VERSION = 9;
 
 export interface Run {
   version: typeof RUN_VERSION;
@@ -177,7 +176,6 @@ export interface Run {
   /** The blaster's rampup timeout as the run started: a timed-out spin-up counts at it. */
   rampupTimeoutMs: number;
   candidates: Candidate[];
-  search: Search;
   sets: SetRecord[];
   status: RunStatus;
   /** Why it is paused. */
@@ -193,13 +191,8 @@ export interface Run {
   applied: boolean;
 }
 
-/**
- * Baseline sets come in blocks of `size`, once `every` candidate sets have run since the last, and
- * never inside a candidate's block. Each of a gains run's sets is a block of its own. An ESC run
- * pays a write for each baseline block, so its blocks are bigger and further apart, for the same
- * share of the run.
- */
-const BASELINE_BLOCKS = { gains: { size: 1, every: 8 }, esc: { size: 3, every: 24 } };
+/** The baseline sets a run opens with, and closes with: drift shows as the change between them. */
+export const BASELINE_BLOCK = 3;
 
 /** The overshoot a candidate may not pass, % of target; null in an ESC run, which has none. */
 export const overshootLimit = (grid: TuneConfig["grid"]): number | null =>
@@ -213,11 +206,14 @@ export const runName = (run: Run) => `tune-${fileStamp(new Date(run.startedAt))}
 
 /**
  * The CSV file the next set's capture at `rpm` is saved as: the run, the set's index in `sets`, what
- * it ran - the baseline with its gains or ESC settings - and the RPM, e.g.
+ * it ran - the candidate's name, or the baseline with its gains or ESC settings - and the RPM, e.g.
  * tune-2026-11-05_14-50-37_set004_PID-kp-0.2-ki-1_30000rpm.csv.
  */
 export function captureFile(run: Run, id: string, rpm: number): string {
-  const label = id === BASELINE ? `${BASELINE} ${settingsLabel(run.config.grid, run.baseline)}` : id;
+  const label =
+    id === BASELINE
+      ? `${BASELINE} ${settingsLabel(run.config.grid, run.baseline)}`
+      : run.candidates.find((c) => c.id === id)!.name;
   const set = String(run.sets.length).padStart(3, "0");
   const slug = label.replace(/[^\w.]+/g, "-").replace(/^-|-$/g, "");
   return `${runName(run)}_set${set}_${slug}_${rpm}rpm.csv`;
@@ -298,7 +294,15 @@ export function candidatesFor(grid: TuneConfig["grid"], baseline: Settings): Can
   }
   // A value listed twice is one candidate.
   const byId = new Map(all.map((s) => [settingsLabel(grid, s), s]));
-  return [...byId].map(([id, s]) => ({ id, ...s }));
+  return [...byId].map(([id, s]) => {
+    if (grid.kind !== "esc" || !grid.oneAtATime) return { id, name: id, ...s };
+    const changed = grid.fields.filter(
+      ({ field }) => valueLabel(field, s.esc!) !== valueLabel(field, baseline.esc!),
+    );
+    // The starting settings change nothing, so keep every field.
+    const name = changed.length === 0 ? id : escLabel({ ...grid, fields: changed }, s.esc!);
+    return { id, name, ...s };
+  });
 }
 
 /** Each ESC's settings as read, `motors` giving the motor each passthrough index drives. */
@@ -346,11 +350,9 @@ export function startingId(run: Run): string | null {
 }
 
 /**
- * The candidate sets a run takes, and the ESC writes an ESC run does: its plan run through on sets
- * that all score alike. Exact without halving; with it, close, as who survives moves the baseline
- * sets' share. The run's opening read leaves the ESCs on the baseline, a write is a change of
- * settings, and a run that pauses writes twice more: the baseline's back, then the candidate's on
- * Resume.
+ * The candidate sets a run takes, and the ESC writes an ESC run does: its plan run through. The
+ * run's opening read leaves the ESCs on the baseline, a write is a change of settings, and a run
+ * that pauses writes twice more: the baseline's back, then the candidate's on Resume.
  */
 export function plannedRun(run: Run): { sets: number; writes: number } {
   const same = startingId(run);
@@ -368,12 +370,11 @@ export function plannedRun(run: Run): { sets: number; writes: number } {
   let loaded = BASELINE;
   let writes = 0;
   for (;;) {
-    const { search, next } = nextSet(current);
+    const next = nextSet(current);
     if (next === null) break;
     if (settingsOf(next) !== loaded) writes++;
     loaded = settingsOf(next);
-    const sets = [...current.sets, { id: next, at: 0, spinups: [spinup] }];
-    current = { ...current, search, sets };
+    current = { ...current, sets: [...current.sets, { id: next, at: 0, spinups: [spinup] }] };
   }
   const sets = current.sets.filter((s) => s.id !== BASELINE).length;
   return { sets, writes: run.config.grid.kind === "esc" ? writes : 0 };
@@ -387,6 +388,8 @@ export function startRun(
   rampupTimeoutMs: number,
 ): Run {
   const candidates = candidatesFor(config.grid, baseline);
+  if (candidates.length === 0) throw new Error("a run needs at least one candidate");
+  if (config.n < 2) throw new Error("the 95th percentile needs n of at least 2");
   return {
     version: RUN_VERSION,
     startedAt: Date.now(),
@@ -396,11 +399,6 @@ export function startRun(
     escs,
     rampupTimeoutMs,
     candidates,
-    search: startSearch(
-      candidates.map((c) => c.id),
-      config.n,
-      config.halving,
-    ),
     sets: [],
     status: "running",
     note: null,
@@ -455,27 +453,32 @@ export function scoresOf(run: Run): Record<string, SetScore[]> {
 }
 
 /**
- * What to run a set of next - a candidate's id or BASELINE - with the search moved on past any round
- * that is complete; null once the run is over. The run opens and closes on a baseline block and has
- * them between, as BASELINE_BLOCKS says, so drift shows against the same settings throughout.
+ * What to run a set of next - a candidate's id or BASELINE - or null once the run is over. The run
+ * opens and closes on a baseline block, with none between: a switch back to the baseline is an ESC
+ * write, and its two ends show drift. An ESC run gives each candidate its sets as one block.
  */
-export function nextSet(run: Run): { search: Search; next: string | null } {
-  const { kind } = run.config.grid;
+export function nextSet(run: Run): string | null {
   const ids = run.sets.map((s) => s.id);
   let lastCandidate = ids.length - 1;
   while (lastCandidate >= 0 && ids[lastCandidate] === BASELINE) lastCandidate--;
-  const stay = kind === "esc" && lastCandidate >= 0 ? ids[lastCandidate] : null;
-  const { search, next } = plan(run.search, scoresOf(run), overshootLimit(run.config.grid), stay);
+  const stay = run.config.grid.kind === "esc" && lastCandidate >= 0 ? ids[lastCandidate] : null;
+  const candidates = run.candidates.map((c) => c.id);
+  const next = nextCandidate(candidates, scoresOf(run), run.config.n, stay);
 
-  const { size, every } = BASELINE_BLOCKS[kind];
-  const baselineSets = ids.length - 1 - lastCandidate; // the block the run ends on so far
-  const sinceBaseline = ids.length - 1 - ids.lastIndexOf(BASELINE);
-  const between = next === null ? sinceBaseline > 0 : sinceBaseline >= every && next !== stay;
-  if (ids.length === 0 || (baselineSets > 0 && baselineSets < size) || between) {
-    return { search, next: BASELINE };
-  }
-  return { search, next };
+  const ending = ids.length - 1 - lastCandidate; // the baseline sets the run ends on so far
+  const opening = lastCandidate < 0 && ending < BASELINE_BLOCK;
+  const closing = next === null && lastCandidate >= 0 && ending < BASELINE_BLOCK;
+  return opening || closing ? BASELINE : next;
 }
+
+/** Every candidate, best first: the results. */
+export const rankingOf = (run: Run) =>
+  ranking(
+    run.candidates.map((c) => c.id),
+    scoresOf(run),
+    run.config.n,
+    overshootLimit(run.config.grid),
+  );
 
 /** A stopped motor's telemetry reads 0; a capture that starts above this did not start from rest. */
 const REST_RPM = 500;

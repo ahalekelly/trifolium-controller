@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { LAYOUTS } from "../esc/layouts";
 import { V4_DEFAULT } from "../esc/testdata";
-import { ranking } from "./search";
 import {
   BASELINE,
   baselineOf,
@@ -14,7 +13,7 @@ import {
   escRecords,
   measure,
   nextSet,
-  overshootLimit,
+  rankingOf,
   plannedRun,
   scoreOf,
   scoresOf,
@@ -39,19 +38,26 @@ const spinup = (readyMs: number | null): Spinup => ({
   trace: [],
 });
 
+/** Ids as blocks: each with how many sets in a row it ran. */
+function blocksOf(ids: string[]): [string, number][] {
+  const blocks: [string, number][] = [];
+  for (const id of ids) {
+    const last = blocks[blocks.length - 1];
+    if (last?.[0] === id) last[1]++;
+    else blocks.push([id, 1]);
+  }
+  return blocks;
+}
+
 /** Runs every set nextSet() asks for, returning the ids in order. */
 function order(run: Run): string[] {
   let current = run;
   const ids: string[] = [];
   for (;;) {
-    const { search, next } = nextSet(current);
+    const next = nextSet(current);
     if (next === null) return ids;
     ids.push(next);
-    current = {
-      ...current,
-      search,
-      sets: [...current.sets, { id: next, at: 0, spinups: [spinup(100)] }],
-    };
+    current = { ...current, sets: [...current.sets, { id: next, at: 0, spinups: [spinup(100)] }] };
   }
 }
 
@@ -59,9 +65,9 @@ describe("a gains run", () => {
   it("grids PID's kp with ki, and gives TBH its gains on ki, each value once", () => {
     const both = { ...DEFAULT_GAINS, mode: "both" as const, kp: [0.1, 0.2, 0.1], ki: [0.5], tbh: [0.05] };
     expect(candidatesFor(both, BASE)).toEqual([
-      { id: "PID kp 0.1 ki 0.5", gains: { control: "pid", kp: 0.1, ki: 0.5 }, esc: null },
-      { id: "PID kp 0.2 ki 0.5", gains: { control: "pid", kp: 0.2, ki: 0.5 }, esc: null },
-      { id: "TBH gain 0.05", gains: { control: "tbh", kp: 0.2, ki: 0.05 }, esc: null },
+      { id: "PID kp 0.1 ki 0.5", name: "PID kp 0.1 ki 0.5", gains: { control: "pid", kp: 0.1, ki: 0.5 }, esc: null },
+      { id: "PID kp 0.2 ki 0.5", name: "PID kp 0.2 ki 0.5", gains: { control: "pid", kp: 0.2, ki: 0.5 }, esc: null },
+      { id: "TBH gain 0.05", name: "TBH gain 0.05", gains: { control: "tbh", kp: 0.2, ki: 0.05 }, esc: null },
     ]);
   });
 
@@ -76,16 +82,17 @@ describe("a gains run", () => {
     expect(baselineOf(device)).toEqual({ control: "tbh", kp: 0.3, ki: 0.07 });
   });
 
-  it("opens and closes on the baseline, with one every eight candidate sets between", () => {
+  it("opens and closes on 3 baseline sets, and takes its candidates in turn between", () => {
     const grid = { ...DEFAULT_GAINS, kp: [0.1, 0.2, 0.4], ki: [0.25, 0.5, 1] };
     const ids = order(startRun({ ...DEFAULT_CONFIG, grid, n: 3 }, BASE, null, null, 500));
-    expect(ids[0]).toBe(BASELINE);
-    expect(ids[ids.length - 1]).toBe(BASELINE);
-    expect(ids[9]).toBe(BASELINE);
-    // Every round ends on n = 3 sets here, so the first round spends them all - but kp 0.2 ki 0.5,
-    // the blaster's own, has its 3 from the baseline.
-    expect(ids.filter((id) => id !== BASELINE)).toHaveLength(24);
-    expect(ids).not.toContain("PID kp 0.2 ki 0.5");
+    expect(ids.slice(0, 3)).toEqual([BASELINE, BASELINE, BASELINE]);
+    expect(ids.slice(-3)).toEqual([BASELINE, BASELINE, BASELINE]);
+    const between = ids.slice(3, -3);
+    expect(between).not.toContain(BASELINE);
+    expect(between.slice(0, 2)).toEqual(["PID kp 0.1 ki 0.25", "PID kp 0.1 ki 0.5"]);
+    // 9 candidates of 3 sets, but kp 0.2 ki 0.5, the blaster's own, has its 3 from the baseline.
+    expect(between).toHaveLength(24);
+    expect(between).not.toContain("PID kp 0.2 ki 0.5");
   });
 
   it("scores a set on its summed spin-ups, a timed-out one at the rampup timeout", () => {
@@ -108,8 +115,8 @@ describe("captureFile", () => {
       "tune-2026-11-05_14-50-37_set000_baseline-PID-kp-0.2-ki-0.5_30000rpm.csv",
     );
     run.sets.push({ id: BASELINE, at: 0, spinups: [] });
-    expect(captureFile(run, "TBH gain 0.05", 25000)).toBe(
-      "tune-2026-11-05_14-50-37_set001_TBH-gain-0.05_25000rpm.csv",
+    expect(captureFile(run, run.candidates[0].id, 25000)).toBe(
+      "tune-2026-11-05_14-50-37_set001_PID-kp-0.1-ki-0.25_25000rpm.csv",
     );
   });
 });
@@ -134,8 +141,18 @@ describe("an ESC run", () => {
     };
     expect(escNames(frequencies)).toEqual(["pwm_frequency", "variable_pwm"]);
     expect(candidatesFor(frequencies, { gains: GAINS, esc })).toEqual([
-      { id: "PWM frequency 32 kHz", gains: GAINS, esc: { pwm_frequency: 32, variable_pwm: 0 } },
-      { id: "PWM frequency By RPM", gains: GAINS, esc: { pwm_frequency: 24, variable_pwm: 2 } },
+      {
+        id: "PWM frequency 32 kHz",
+        name: "PWM frequency 32 kHz",
+        gains: GAINS,
+        esc: { pwm_frequency: 32, variable_pwm: 0 },
+      },
+      {
+        id: "PWM frequency By RPM",
+        name: "PWM frequency By RPM",
+        gains: GAINS,
+        esc: { pwm_frequency: 24, variable_pwm: 2 },
+      },
     ]);
     // By RPM ignores the PWM type, so crossing the two leaves one By RPM candidate.
     const crossed: EscGrid = {
@@ -158,23 +175,27 @@ describe("an ESC run", () => {
     });
   });
 
-  it("tries one setting at a time on the baseline, its own values one candidate", () => {
+  it("tries one setting at a time on the baseline, each named by what it changes", () => {
     const esc = { startup_power: 100, advance_level: 26 };
     const oneAtATime: EscGrid = {
       ...grid({ startup_power: [80, 100, 120], advance_level: [18, 26] }),
       oneAtATime: true,
     };
-    const ids = candidatesFor(oneAtATime, { gains: GAINS, esc }).map((c) => c.id);
+    const candidates = candidatesFor(oneAtATime, { gains: GAINS, esc });
     // 3 + 2 values, of which 100 % and 15 ° are both the baseline: 4 candidates, not 6.
-    expect(ids).toEqual([
-      "Startup power 80 %, Timing advance 15 °",
-      "Startup power 100 %, Timing advance 15 °",
-      "Startup power 120 %, Timing advance 15 °",
-      "Startup power 100 %, Timing advance 7.5 °",
+    expect(candidates.map((c) => [c.id, c.name])).toEqual([
+      ["Startup power 80 %, Timing advance 15 °", "Startup power 80 %"],
+      ["Startup power 100 %, Timing advance 15 °", "Startup power 100 %, Timing advance 15 °"],
+      ["Startup power 120 %, Timing advance 15 °", "Startup power 120 %"],
+      ["Startup power 100 %, Timing advance 7.5 °", "Timing advance 7.5 °"],
     ]);
-    const config = { ...DEFAULT_CONFIG, grid: oneAtATime, halving: false };
+    const config = { ...DEFAULT_CONFIG, grid: oneAtATime };
     const run = startRun(config, { gains: GAINS, esc }, null, null, 500);
     expect(startingId(run)).toBe("Startup power 100 %, Timing advance 15 °");
+    run.startedAt = new Date(2026, 10, 5, 14, 50, 37).getTime();
+    expect(captureFile(run, "Startup power 80 %, Timing advance 15 °", 30000)).toBe(
+      "tune-2026-11-05_14-50-37_set000_Startup-power-80_30000rpm.csv",
+    );
     const everyConfig = { ...config, grid: { ...oneAtATime, oneAtATime: false } };
     const every = startRun(everyConfig, run.baseline, null, null, 500);
     expect(every.candidates).toHaveLength(6);
@@ -235,60 +256,21 @@ describe("an ESC run", () => {
     expect(captureFile(run, run.candidates[0].id, 30000)).toMatch(/_Startup-power-80_30000rpm\.csv$/);
   });
 
-  it("runs each candidate's round as one block, and baselines in blocks of 3 between", () => {
+  it("runs each candidate's sets as one block, between the opening and closing baseline", () => {
     const config = { ...DEFAULT_CONFIG, grid: grid({ pwm_frequency: [16, 24, 32, 48] }), n: 20 };
     const run = startRun(config, { gains: GAINS, esc: { pwm_frequency: 20 } }, null, null, 500);
     const ids = order(run);
-    const blocks: [string, number][] = [];
-    for (const id of ids) {
-      const last = blocks[blocks.length - 1];
-      if (last?.[0] === id) last[1]++;
-      else blocks.push([id, 1]);
-    }
-    const [c16, c24, c32, c48] = startRun(config, BASE, null, null, 500).candidates.map((c) => c.id);
-    // Rounds end on 10 and 20 sets. A baseline block comes at the first block's end after 24
-    // candidate sets, and the last one leaves the ESCs on the settings the run started with.
-    expect(blocks).toEqual([
+    const [c16, c24, c32, c48] = run.candidates.map((c) => c.id);
+    expect(blocksOf(ids)).toEqual([
       [BASELINE, 3],
-      [c16, 10],
-      [c24, 10],
-      [c32, 10],
-      [BASELINE, 3],
-      [c48, 10],
-      [c16, 10],
-      [c24, 10],
+      [c16, 20],
+      [c24, 20],
+      [c32, 20],
+      [c48, 20],
       [BASELINE, 3],
     ]);
     // Every block but the first is a write.
-    expect(plannedRun(run)).toEqual({ sets: 60, writes: blocks.length - 1 });
-  });
-
-  it("without halving, runs every candidate's n sets as one block, baselines between", () => {
-    const config = {
-      ...DEFAULT_CONFIG,
-      grid: grid({ pwm_frequency: [16, 24, 32, 48] }),
-      n: 20,
-      halving: false,
-    };
-    const run = startRun(config, { gains: GAINS, esc: { pwm_frequency: 20 } }, null, null, 500);
-    const ids = order(run);
-    const [c16, c24, c32, c48] = run.candidates.map((c) => c.id);
-    const blocks = ids.filter((id, i) => id !== ids[i - 1]);
-    expect(blocks).toEqual([BASELINE, c16, c24, BASELINE, c32, c48, BASELINE]);
-    expect(plannedRun(run)).toEqual({ sets: 80, writes: blocks.length - 1 });
-  });
-});
-
-describe("timing a spin-up", () => {
-  it("is to fire-ready in a gains run, and to 80% of target in an ESC run", () => {
-    const field = LAYOUTS[4].fields.find((f) => f.name === "pwm_frequency")!;
-    const grid: EscGrid = { kind: "esc", oneAtATime: false, fields: [{ field, values: [{ pwm_frequency: 48 }] }] };
-    const sets = [{ id: BASELINE, at: 0, spinups: [{ ...spinup(300), reachMs: 120 }] }];
-    const gainsRun = { ...startRun(DEFAULT_CONFIG, BASE, null, null, 500), sets };
-    const escBaseline = { gains: GAINS, esc: { pwm_frequency: 24 } };
-    const escRun = { ...startRun({ ...DEFAULT_CONFIG, grid }, escBaseline, null, null, 500), sets };
-    expect(scoresOf(gainsRun)[BASELINE][0].ms).toBe(300);
-    expect(scoresOf(escRun)[BASELINE][0].ms).toBe(120);
+    expect(plannedRun(run)).toEqual({ sets: 80, writes: 5 });
   });
 });
 
@@ -297,14 +279,13 @@ describe("the overshoot limit", () => {
   function ranked(run: Run, outcome: (id: string) => [readyMs: number, overshootPct: number]) {
     let current = run;
     for (;;) {
-      const { search, next } = nextSet(current);
-      current = { ...current, search };
+      const next = nextSet(current);
       if (next === null) break;
       const [readyMs, overshootPct] = next === BASELINE ? [300, 0] : outcome(next);
       const spinups = [{ ...spinup(readyMs), overshootPct }];
       current = { ...current, sets: [...current.sets, { id: next, at: 0, spinups }] };
     }
-    return ranking(current.search, scoresOf(current), overshootLimit(current.config.grid));
+    return rankingOf(current);
   }
 
   it("lets an ESC run's fastest candidate win however far it overshoots", () => {
@@ -343,7 +324,6 @@ describe("the candidate with the baseline's settings", () => {
       fields: [{ field, values: [16, 24, 32, 48].map((pwm_frequency) => ({ pwm_frequency })) }],
     },
     n: 20,
-    halving: false,
   };
   const runOn = (pwm: number) =>
     startRun(config, { gains: GAINS, esc: { pwm_frequency: pwm } }, null, null, 500);
@@ -353,27 +333,18 @@ describe("the candidate with the baseline's settings", () => {
     const [c16, c24, c32, c48] = run.candidates.map((c) => c.id);
     expect(startingId(run)).toBe(c24);
     expect(startingId(runOn(20))).toBeNull();
-    const ids = order(run);
-    const blocks: [string, number][] = [];
-    for (const id of ids) {
-      const last = blocks[blocks.length - 1];
-      if (last?.[0] === id) last[1]++;
-      else blocks.push([id, 1]);
-    }
-    // c24, with the most sets already, goes last, by when two baseline blocks are 6 of its 20.
-    // Baseline blocks still come every 24 candidate sets, as 3, and close the run.
-    expect(blocks).toEqual([
+    // c24, with the opening block's 3 already, goes last and needs 17 of its own.
+    expect(blocksOf(order(run))).toEqual([
       [BASELINE, 3],
       [c16, 20],
       [c32, 20],
-      [BASELINE, 3],
       [c48, 20],
-      [c24, 14],
+      [c24, 17],
       [BASELINE, 3],
     ]);
-    // c24 to the baseline is no write: 5, where 6 would be.
-    expect(plannedRun(run)).toEqual({ sets: 74, writes: 5 });
-    expect(plannedRun(runOn(20))).toEqual({ sets: 80, writes: 6 });
+    // c24 to the closing baseline is no write: 4, where 5 would be.
+    expect(plannedRun(run)).toEqual({ sets: 77, writes: 4 });
+    expect(plannedRun(runOn(20))).toEqual({ sets: 80, writes: 5 });
   });
 
   it("ranks on exactly n of its sets, the baseline's among them", () => {
@@ -383,7 +354,7 @@ describe("the candidate with the baseline's settings", () => {
     }
     const c24 = startingId(run)!;
     expect(scoresOf(run)[c24]).toHaveLength(23);
-    const rows = ranking(run.search, scoresOf(run), null);
+    const rows = rankingOf(run);
     expect(rows.find((r) => r.id === c24)!.standing.sets).toBe(20);
   });
 });

@@ -469,7 +469,7 @@ describe("an ESC run", () => {
 /** What becomes of each rev, in turn; every rev after the list's end keeps its hold. */
 type Rev = "held" | "timeout" | "late";
 
-/** One candidate, its two sets between the baselines: four sets. */
+/** One candidate, its two sets between the baseline's three at each end: eight sets. */
 const GAINS_CONFIG: TuneConfig = {
   ...DEFAULT_CONFIG,
   grid: { ...DEFAULT_GAINS, kp: [0.2], ki: [1] },
@@ -540,9 +540,9 @@ describe("a lost hold", () => {
     await idle(runner);
     const run = runOf(runner);
     expect(run.status).toBe("done");
-    expect(run.sets.map((s) => s.spinups[0].readyMs)).toEqual([300, 300, 300, 300]);
-    expect(saved).toHaveLength(4);
-    expect(new Set(saved).size).toBe(4);
+    expect(run.sets.map((s) => s.spinups[0].readyMs)).toEqual(Array(8).fill(300));
+    expect(saved).toHaveLength(8);
+    expect(new Set(saved).size).toBe(8);
     expect(logged).toEqual([
       "The console let go of Rev (renewals fell 321 ms apart); redoing the spin-up.",
     ]);
@@ -575,7 +575,7 @@ describe("a lost hold", () => {
     await idle(runner);
     const run = runOf(runner);
     expect(run.status).toBe("done");
-    expect(run.sets.map((s) => s.spinups[0].readyMs)).toEqual([300, null, 300, 300]);
+    expect(run.sets.map((s) => s.spinups[0].readyMs)).toEqual([300, null, 300, 300, 300, 300, 300, 300]);
     expect(logged).toEqual([]);
   });
 });

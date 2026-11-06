@@ -53,7 +53,7 @@ so the voltage holds.
 
 1. **Note the start.** Read ESCs on the ESCs page and note Startup power and PWM frequency.
 2. **Plan.** On the Tune page pick ESC settings, type two PWM frequencies (say `24, 48`), set
-   Spin-ups per finalist to 4 and one target RPM. Expect `2 candidates, about 8 spin-ups and at most
+   Spin-ups per candidate to 4 and one target RPM. Expect `2 candidates, about 8 spin-ups and about
    3 ESC writes`.
 3. **Start.** Expect `Reading the ESCs' settings.`, three baseline spin-ups with no write, then
    `Writing PWM frequency 24 kHz to the ESCs.`: the blaster restarts, the log shows `ESC n written

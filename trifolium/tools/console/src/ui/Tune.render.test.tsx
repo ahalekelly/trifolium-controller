@@ -12,6 +12,7 @@ import {
   DEFAULT_CONFIG,
   DEFAULT_GAINS,
   startRun,
+  type Candidate,
   type Run,
   type SetRecord,
 } from "../tune/run";
@@ -101,7 +102,7 @@ describe("the results table", () => {
 
   it("shows the mean, the slowest and the second slowest set", () => {
     act(() => root.render(results(runOf([100, 300, 200, 110]))));
-    expect(cells().slice(3)).toEqual(["0", "178 ms", "200 ms", "300 ms", "0.5%", "4"]);
+    expect(cells().slice(2)).toEqual(["0", "178 ms", "200 ms", "300 ms", "0.5%", "4"]);
   });
 
   it("orders its columns, the 2nd slowest before the slowest", () => {
@@ -110,7 +111,6 @@ describe("the results table", () => {
     expect(heads).toEqual([
       "Chart",
       "Candidate",
-      "",
       "Timeouts",
       "Mean",
       "2nd slowest",
@@ -125,7 +125,7 @@ describe("the results table", () => {
     const values = [80, 120].map((startup_power) => ({ startup_power }));
     const grid = { kind: "esc" as const, oneAtATime: false, fields: [{ field, values }] };
     const run = startRun(
-      { ...DEFAULT_CONFIG, grid, n: 2, halving: false },
+      { ...DEFAULT_CONFIG, grid, n: 2 },
       { gains: { control: "pid", kp: 0.2, ki: 0.5 }, esc: { startup_power: 100 } },
       null,
       null,
@@ -149,12 +149,12 @@ describe("the results table", () => {
       "Slowest to 80%",
       "Sets",
     ]);
-    expect(host.textContent).not.toMatch(/best|finalist|9\.0%/);
+    expect(host.textContent).not.toMatch(/best|9\.0%/);
   });
 
   it("shows the slowest as a timeout once any set timed out, counted at the timeout in the mean", () => {
     act(() => root.render(results(runOf([100, null, 200]))));
-    expect(cells().slice(3)).toEqual(["1", "267 ms", "200 ms", "timeout", "0.5%", "3"]);
+    expect(cells().slice(2)).toEqual(["1", "267 ms", "200 ms", "timeout", "0.5%", "3"]);
   });
 });
 
@@ -167,11 +167,17 @@ describe("the spin-up chart", () => {
   });
   afterEach(() => act(() => root.unmount()));
 
+  const candidate = (id: string): Candidate => ({
+    id,
+    name: id,
+    gains: { control: "pid", kp: 0.2, ki: 0.5 },
+    esc: null,
+  });
   const chart = (sets: SetRecord[], checked: string[]) => (
     <SpinupTraces
       sets={sets}
       rpms={[30000]}
-      candidates={["a", "b"]}
+      candidates={[candidate("a"), candidate("b")]}
       checked={checked}
       same={null}
       grid={DEFAULT_GAINS}
@@ -318,7 +324,7 @@ describe("the spin-up chart", () => {
       return s;
     });
     const traces = (
-      <SpinupTraces sets={sets} rpms={[30000]} candidates={["a"]} checked={["a"]} same={null} grid={grid} />
+      <SpinupTraces sets={sets} rpms={[30000]} candidates={[candidate("a")]} checked={["a"]} same={null} grid={grid} />
     );
     act(() => root.render(traces));
     act(() => {
@@ -404,29 +410,19 @@ describe("the ESC run form", () => {
     expect(text).not.toContain("Motor poles");
     expect(text).not.toContain("Brake on stop");
     expect(text).not.toContain("Overshoot limit");
-    // Rounds end on 10 and 20 spin-ups: 4 x 10, then 2 finalists x 10 more. A write opens each
-    // candidate's block, and each baseline block but the first.
-    expect(text).toContain("4 candidates, about 60 spin-ups and about 8 ESC writes");
-  });
-
-  it("plans every candidate's N spin-ups without halving", async () => {
-    const grid = { startup_power: "80, 120", motor_kv: "off, 3220" };
-    const text = await formText(escsWith(V4_DEFAULT[25]), grid, { halving: false });
-    expect(text).toContain("4 candidates, about 80 spin-ups and about 6 ESC writes");
+    // 4 x 20 spin-ups; a write opens each candidate's block, and the closing baseline's.
+    expect(text).toContain("4 candidates, about 80 spin-ups and about 5 ESC writes");
     expect(text).toContain("Spin-ups per candidate");
-    expect(text).toContain("Every candidate gets N spin-ups.");
   });
 
   it("plans one setting at a time on the ESCs' own: fewer candidates, spin-ups and writes", async () => {
     // Startup power is 100 % on the ESCs, so 3 + 2 values make 5 candidates, not 6.
     const grid = { startup_power: "80, 100, 120", motor_kv: "off, 3220" };
-    const text = await formText(escsWith(V4_DEFAULT[25]), grid, {
-      halving: false,
-      oneAtATime: true,
-    });
+    const text = await formText(escsWith(V4_DEFAULT[25]), grid, { oneAtATime: true });
     expect(text).toContain("All combinations");
-    // 100 % is the ESCs' own: its 20 come from the baseline's 9 and 11 of its own.
-    expect(text).toMatch(/5 candidates, about 91 spin-ups and about \d+ ESC writes/);
+    // 100 % is the ESCs' own: its 20 are the opening baseline's 3 and 17 of its own, and the
+    // closing baseline after it needs no write - 5, not 6.
+    expect(text).toContain("5 candidates, about 97 spin-ups and about 5 ESC writes");
   });
 
   it("says what a setting takes, and shows where the ESCs differ", async () => {

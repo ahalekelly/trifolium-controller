@@ -19,6 +19,7 @@ import { accepted, parseShown, shown, type EscField } from "../esc/layouts";
 import type { EscSettings } from "../esc/session";
 import {
   BASELINE,
+  BASELINE_BLOCK,
   baselineOf,
   ESC_REACH,
   countsFor,
@@ -28,6 +29,7 @@ import {
   overshootLimit,
   runName,
   plannedRun,
+  rankingOf,
   startingId,
   scoreOf,
   scoresOf,
@@ -35,6 +37,7 @@ import {
   startRun,
   timeOf,
   TRACE_STEP,
+  type Candidate,
   type EscGrid,
   type EscValues,
   type Gains,
@@ -46,16 +49,16 @@ import {
   type TuneConfig,
 } from "../tune/run";
 import { runSettings, type TuneRunner } from "../tune/runner";
-import { ranking, standing, type SetScore, type Standing } from "../tune/search";
+import { standing, type SetScore, type Standing } from "../tune/search";
 import { escRows, type EscRow } from "./EscSettings";
 import { Fieldset } from "./Section";
 import { RpmChart, type Series } from "./RpmChart";
 
 // The spin-up search: runs spin-ups on the blaster by itself and finds the flywheel gains, or the
 // AM32 ESC settings, with the shortest dependable spin-up. Each candidate is tried at every target
-// RPM; successive halving spends most of the spin-ups on the candidates still in contention, or
-// the full matrix gives every candidate the same (tune/search.ts), and the runner (tune/runner.ts) drives the blaster. A run lives in this browser
-// until discarded, so a reload or a dropped link pauses it rather than losing it.
+// RPM, the same number of times each (tune/search.ts), and the runner (tune/runner.ts) drives the
+// blaster. A run lives in this browser until discarded, so a reload or a dropped link pauses it
+// rather than losing it.
 
 const COLOURS = [
   "#4f9dff",
@@ -80,7 +83,6 @@ type Form = Record<"kp" | "ki" | "tbh" | "rpms" | "n" | "overshootLimitPct" | "c
 export interface TuneDraft {
   kind: TuneConfig["grid"]["kind"];
   mode: GainsGrid["mode"];
-  halving: boolean;
   /** An ESC grid's: one setting changed at a time, or every combination. */
   oneAtATime: boolean;
   form: Form;
@@ -91,7 +93,6 @@ export interface TuneDraft {
 export const DEFAULT_DRAFT: TuneDraft = {
   kind: "gains",
   mode: DEFAULT_GAINS.mode,
-  halving: DEFAULT_CONFIG.halving,
   oneAtATime: false,
   form: {
     kp: DEFAULT_GAINS.kp.join(", "),
@@ -189,8 +190,7 @@ function configOf(
   }
   if (!Number.isInteger(n) || n < 2) return "Spin-ups per candidate is a whole number, at least 2.";
   if (!(cellV > 0)) return "The cell voltage to pause at is in volts.";
-  const { halving } = draft;
-  return { grid, rpms, n, halving, pauseCellMv: Math.round(cellV * 1000) };
+  return { grid, rpms, n, pauseCellMv: Math.round(cellV * 1000) };
 }
 
 const cellSx = { py: 0.25, px: 1 };
@@ -235,10 +235,10 @@ const BASELINE_COLOUR = "#9aa0a6";
  * A row's chart and checkbox colour, from its candidate's place in the grid, so it keeps it however
  * rows are checked.
  */
-const colourOf = (candidates: string[], same: string | null, id: string) =>
+const colourOf = (candidates: Candidate[], same: string | null, id: string) =>
   id === BASELINE || id === same
     ? BASELINE_COLOUR
-    : COLOURS[candidates.indexOf(id) % COLOURS.length];
+    : COLOURS[candidates.findIndex((c) => c.id === id) % COLOURS.length];
 
 export function Results({
   run,
@@ -252,17 +252,15 @@ export function Results({
 }) {
   const limit = overshootLimit(run.config.grid);
   const scores = scoresOf(run);
-  const rows = ranking(run.search, scores, limit);
+  const rows = rankingOf(run);
   const same = startingId(run);
-  const ids = run.candidates.map((c) => c.id);
+  const nameOf = (id: string) => run.candidates.find((c) => c.id === id)!.name;
   const overshoot = run.config.grid.kind === "gains";
   // What the time columns time: fire-ready, or reaching ESC_REACH of target in an ESC run.
   const to = overshoot ? "" : ` to ${ESC_REACH * 100}%`;
-  // Without halving every candidate is a finalist, so there is no standing to show.
-  const status = run.config.halving;
   const box = (id: string, label: string) => {
     const on = checked.includes(id);
-    const colour = on ? colourOf(ids, same, id) : undefined;
+    const colour = on ? colourOf(run.candidates, same, id) : undefined;
     return (
       <TableCell padding="checkbox">
         <Checkbox
@@ -282,7 +280,6 @@ export function Results({
           {[
             "Chart",
             "Candidate",
-            ...(status ? [""] : []),
             "Timeouts",
             ...["Mean", "2nd slowest", "Slowest"].map((h) => h + to),
             ...(overshoot ? ["2nd worst overshoot"] : []),
@@ -295,27 +292,18 @@ export function Results({
         </TableRow>
       </TableHead>
       <TableBody>
-        {rows.map(({ id, standing: s, droppedIn }) => (
+        {rows.map(({ id, standing: s }) => (
           <TableRow key={id}>
-            {box(id, id)}
+            {box(id, nameOf(id))}
             <TableCell sx={cellSx}>
-              {id}
-              {id === same && (
+              {nameOf(id)}
+              {(id === same || !s.qualified) && (
                 <Typography component="span" sx={{ fontSize: "inherit", fontStyle: "italic" }}>
                   {" "}
-                  (starting settings)
+                  ({id === same ? "starting settings" : `overshoots past ${limit}%`})
                 </Typography>
               )}
             </TableCell>
-            {status && (
-              <TableCell sx={{ ...cellSx, color: "text.secondary" }}>
-                {droppedIn !== null
-                  ? `dropped in round ${droppedIn + 1}`
-                  : !s.qualified && s.sets > 0
-                    ? `overshoots past ${limit}%`
-                    : "finalist"}
-              </TableCell>
-            )}
             <StandingCells s={s} scores={scores[id] ?? []} overshoot={overshoot} />
           </TableRow>
         ))}
@@ -325,7 +313,6 @@ export function Results({
             <TableCell sx={{ ...cellSx, fontStyle: "italic" }}>
               Baseline: {settingsLabel(run.config.grid, run.baseline)}
             </TableCell>
-            {status && <TableCell sx={cellSx} />}
             <StandingCells
               s={standing(scores[BASELINE], limit)}
               scores={scores[BASELINE]}
@@ -395,8 +382,8 @@ export const SpinupTraces = React.memo(function SpinupTraces({
 }: {
   sets: SetRecord[];
   rpms: number[];
-  /** Every candidate's id, in the grid's order, which gives each its colour. */
-  candidates: string[];
+  /** In the grid's order, which gives each its colour. */
+  candidates: Candidate[];
   checked: string[];
   same: string | null;
   grid: TuneConfig["grid"];
@@ -428,7 +415,7 @@ export const SpinupTraces = React.memo(function SpinupTraces({
       </TextField>
       {rpms.map((rpm, k) => {
         const series: Series[] = checked.map((id) => {
-          const name = id === BASELINE ? "Baseline" : id;
+          const name = id === BASELINE ? "Baseline" : candidates.find((c) => c.id === id)!.name;
           const colour = colourOf(candidates, same, id);
           const spinups = sets.filter((s) => countsFor(s, id, same)).map((s) => s.spinups[k]);
           const lines = (traces: MotorTrace[]) => {
@@ -455,6 +442,31 @@ export const SpinupTraces = React.memo(function SpinupTraces({
     </Stack>
   );
 });
+
+/**
+ * The baseline's spin-ups at the run's start and, once it has them, its end, and how far its mean
+ * moved between: the drift every candidate's sets ran under. Null before the first.
+ */
+function driftOf(run: Run): string | null {
+  const ids = run.sets.map((s) => s.id);
+  const firstCandidate = ids.findIndex((id) => id !== BASELINE);
+  let lastCandidate = ids.length - 1;
+  while (lastCandidate >= 0 && ids[lastCandidate] === BASELINE) lastCandidate--;
+  const scored = (sets: SetRecord[]) =>
+    sets.map((s) => scoreOf(s, run.rampupTimeoutMs, timeOf(run.config.grid)));
+  const shown = (scores: SetScore[]) =>
+    scores.map((s) => (s.timedOut ? "timeout" : `${s.ms}`)).join(", ") + " ms";
+  const first = scored(run.sets.slice(0, firstCandidate < 0 ? ids.length : firstCandidate));
+  if (first.length === 0) return null;
+  const last = lastCandidate < 0 ? [] : scored(run.sets.slice(lastCandidate + 1));
+  if (last.length === 0) return `Baseline at the start: ${shown(first)}.`;
+  const mean = (scores: SetScore[]) => scores.reduce((sum, s) => sum + s.ms, 0) / scores.length;
+  const change = ((mean(last) - mean(first)) / mean(first)) * 100;
+  return (
+    `Baseline at the start: ${shown(first)}; at the end: ${shown(last)}, its mean ` +
+    `${Math.abs(change).toFixed(1)}% ${change > 0 ? "slower" : "faster"}.`
+  );
+}
 
 /** The ESC settings an ESC run can vary, each with what the ESCs hold now and the values to try. */
 function EscGridForm({
@@ -532,7 +544,7 @@ export function Tune({
   /** Why the last Start did not start. */
   const [failed, setFailed] = React.useState<string | null>(null);
   const [checked, setChecked] = React.useState<string[]>([]);
-  const { kind, mode, halving, form } = draft;
+  const { kind, mode, form } = draft;
   const rows = React.useMemo(() => (escs ? searchableRows(escs) : []), [escs]);
   const config = configOf(draft, gainMax, rows);
   const settings = runSettings(device);
@@ -552,11 +564,6 @@ export function Tune({
     return { count: draftRun.candidates.length, ...plannedRun(draftRun) };
   }, [draftKey, rows]);
   const runPlan = React.useMemo(() => current && plannedRun(current), [current?.candidates]);
-  // One array for the run, so the memoised chart redraws only when its sets change.
-  const candidateIds = React.useMemo(
-    () => current?.candidates.map((c) => c.id) ?? [],
-    [current?.candidates],
-  );
   const field = (key: keyof Form, label: string, width = 160) => (
     <TextField
       size="small"
@@ -659,15 +666,6 @@ export function Tune({
                 </Typography>
               </>
             )}
-            <ToggleButtonGroup
-              size="small"
-              exclusive
-              value={halving}
-              onChange={(_, v: boolean | null) => v !== null && onDraft({ ...draft, halving: v })}
-            >
-              <ToggleButton value={true}>Halve to finalists</ToggleButton>
-              <ToggleButton value={false}>Every candidate N times</ToggleButton>
-            </ToggleButtonGroup>
             {kind === "esc" && (
               <ToggleButtonGroup
                 size="small"
@@ -683,7 +681,7 @@ export function Tune({
             )}
             <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", rowGap: 1 }}>
               {field("rpms", "Target RPMs")}
-              {field("n", halving ? "Spin-ups per finalist" : "Spin-ups per candidate", 170)}
+              {field("n", "Spin-ups per candidate", 170)}
               {field("cellV", "Pause below V a cell", 150)}
             </Stack>
             <Typography variant="caption" color="text.secondary">
@@ -691,12 +689,10 @@ export function Tune({
               {kind === "esc" ? ` and about ${writes} ESC writes` : ""} ({minutes} min), with the
               blaster's own settings
               {baseline && kind === "gains" ? ` (${gainsLabel(baseline)})` : ""}{" "}
-              rerun between every few to show drift; a candidate with those settings counts those
-              spin-ups as its own. Each spin-up holds Rev from a standstill.
-              {halving
-                ? "Halving drops the slower half after a few spin-ups each, down to two finalists. "
-                : "Every candidate gets N spin-ups. "}
-              Finalists rank on fewest rampup timeouts, then the second-slowest of their N spin-ups
+              run {BASELINE_BLOCK} times first and last to show drift; a candidate with those
+              settings counts those spin-ups as its own. Each spin-up holds Rev from a standstill.
+              Every candidate gets N spin-ups, and ranks on fewest rampup timeouts, then the
+              second-slowest of its N spin-ups
               (the 95th percentile at the default N = 20), each summed over the target RPMs
               {kind === "gains"
                 ? ", and one whose second-worst overshoot passes the limit cannot win. "
@@ -709,8 +705,8 @@ export function Tune({
               Mean counts a timed-out spin-up at the rampup timeout, so it is a lower bound when
               Timeouts is not 0.{" "}
               {kind === "esc"
-                ? "Each candidate is written to every flywheel ESC once a round, then runs that " +
-                  "round's spin-ups at the blaster's own gains. A write restarts the blaster and " +
+                ? "Each candidate is written to every flywheel ESC once, then runs its spin-ups at " +
+                  "the blaster's own gains. A write restarts the blaster and " +
                   "is one erase of each ESC's settings flash, which lasts about 10,000. The ESCs " +
                   "get their own settings back when the run stops, unless you apply the winner."
                 : "Nothing is stored until you apply the winner."}
@@ -745,14 +741,8 @@ export function Tune({
   const candidateSets = run.sets.filter((s) => s.id !== BASELINE).length;
   const lastSet = run.sets[run.sets.length - 1];
   const packV = lastSet && Math.min(...lastSet.spinups.map((s) => s.packMv)) / 1000;
-  const baselineMs = run.sets
-    .filter((s) => s.id === BASELINE)
-    .map((s) => scoreOf(s, run.rampupTimeoutMs, timeOf(run.config.grid)))
-    .map((s) => (s.timedOut ? "timeout" : `${s.ms}`));
-  const best =
-    run.status === "done"
-      ? ranking(run.search, scoresOf(run), overshootLimit(run.config.grid))[0]
-      : null;
+  const drift = driftOf(run);
+  const best = run.status === "done" ? rankingOf(run)[0] : null;
   // Nothing to apply when even the best overshoots past the limit.
   const winner = best?.standing.qualified ? run.candidates.find((c) => c.id === best.id)! : null;
   const escRun = run.config.grid.kind === "esc";
@@ -761,11 +751,7 @@ export function Tune({
       <Fieldset label="Search">
         <Stack spacing={1} sx={{ pt: 1 }}>
           <Typography variant="body2">
-            {run.status === "done"
-              ? "Done."
-              : run.status === "running"
-                ? `Running round ${run.search.round + 1} of ${run.search.rounds.length}.`
-                : "Paused."}{" "}
+            {{ done: "Done.", running: "Running.", paused: "Paused." }[run.status]}{" "}
             {candidateSets} of about {runPlan!.sets} candidate sets
             {lastSet ? `, pack ${packV.toFixed(2)} V` : ""}.
             {escRun && ` ${run.escWrites} of about ${runPlan!.writes} planned ESC writes.`}
@@ -782,9 +768,9 @@ export function Tune({
               run's blaster next connects, or on Discard.
             </Alert>
           )}
-          {baselineMs.length > 0 && (
+          {drift && (
             <Typography variant="caption" color="text.secondary">
-              Baseline spin-ups, first to latest: {baselineMs.join(", ")} ms
+              {drift}
             </Typography>
           )}
           <Stack direction="row" spacing={1}>
@@ -812,7 +798,7 @@ export function Tune({
                   winner.esc ? void runner.applyEsc(winner) : runner.applyGains(winner, onApply)
                 }
               >
-                {run.applied ? "Applied" : "Apply"} {winner.id}
+                {run.applied ? "Applied" : "Apply"} {winner.name}
               </Button>
             )}
             <Button
@@ -841,7 +827,7 @@ export function Tune({
           <SpinupTraces
             sets={run.sets}
             rpms={run.config.rpms}
-            candidates={candidateIds}
+            candidates={run.candidates}
             checked={checked}
             same={startingId(run)}
             grid={run.config.grid}

@@ -426,7 +426,7 @@ def test_an_rpm_capture_from_a_rev_saves_and_charts_by_itself_at_the_published_l
     assert stamped.fullmatch(download.value.suggested_filename)
 
 
-def test_a_tune_run_on_noisy_wheels_drops_the_overshooting_and_ranks_the_slow_then_applies_the_best(
+def test_a_tune_run_on_noisy_wheels_rules_out_the_overshooting_and_ranks_the_slow_then_applies_the_best(
         page, serve):
     """Each wheel's start from rest varies by 25 ms either way, as a real ESC's does. Under that
     noise kp 0.2 still spins up faster than 0.02, and kp 1 overshoots past a 1% limit."""
@@ -439,19 +439,18 @@ def test_a_tune_run_on_noisy_wheels_drops_the_overshooting_and_ranks_the_slow_th
     go(page, "Tune")
     page.get_by_label("PID kp values").fill("0.02, 0.2, 1")
     page.get_by_label("PID ki values").fill("1")
-    page.get_by_label("Spin-ups per finalist").fill("2")
+    page.get_by_label("Spin-ups per candidate").fill("2")
     page.get_by_label("Overshoot limit %").fill("1")
     page.get_by_label("Pause below V a cell").fill("3")
     page.get_by_role("button", name="Start", exact=True).click()
     finish_tune(page, 120_000)
     # A row's name opens with its chart checkbox's label.
     status = lambda name: page.get_by_role("row", name=re.compile(f"^Chart {re.escape(name)} "))
-    # The finalists rank best first.
+    # Rows rank best first, the overshooting one last.
     rows = page.get_by_role("row", name=re.compile("^Chart PID kp"))
     expect(rows.first).to_have_accessible_name(re.compile(r"^Chart PID kp 0\.2 ki 1 "))
-    expect(status("PID kp 0.2 ki 1")).to_contain_text("finalist")
-    expect(status("PID kp 0.02 ki 1")).to_contain_text("finalist")
-    expect(status("PID kp 1 ki 1")).to_contain_text("dropped in round 1")
+    expect(rows.nth(1)).to_have_accessible_name(re.compile(r"^Chart PID kp 0\.02 ki 1 "))
+    expect(status("PID kp 1 ki 1")).to_contain_text("overshoots past 1%")
     # Nothing stored until the winner is applied, which writes it to every motor.
     assert served.settings()["motorConfig"][1]["ki"] == 0.5
     page.get_by_role("button", name="Apply PID kp 0.2 ki 1").click()
@@ -469,7 +468,7 @@ def test_a_tune_run_outlives_a_reload_paused_then_resumes_to_the_end_and_exports
     go(page, "Tune")
     page.get_by_label("PID kp values").fill("0.2")
     page.get_by_label("PID ki values").fill("1")
-    page.get_by_label("Spin-ups per finalist").fill("2")
+    page.get_by_label("Spin-ups per candidate").fill("2")
     page.get_by_label("Pause below V a cell").fill("3")
     downloads = []
     page.on("download", lambda d: downloads.append(d.suggested_filename))
@@ -479,7 +478,7 @@ def test_a_tune_run_outlives_a_reload_paused_then_resumes_to_the_end_and_exports
     expect(page.get_by_text("A tune run is driving the blaster.")).to_be_visible()
     expect(page.get_by_role("button", name="Hold to rev")).to_be_disabled()
     go(page, "Tune")
-    expect(page.get_by_text(re.compile("^Running round 1 of 1. 1 of about 2"))).to_be_visible(
+    expect(page.get_by_text(re.compile(r"^Running\. 1 of about 2 candidate sets"))).to_be_visible(
         timeout=30000)
 
     page.reload()
@@ -494,11 +493,11 @@ def test_a_tune_run_outlives_a_reload_paused_then_resumes_to_the_end_and_exports
     with page.expect_download() as download:
         page.get_by_role("button", name="Export JSON").click()
     run = json.loads(open(download.value.path(), encoding="utf-8").read())
-    assert [s["id"] for s in run["sets"]] == ["baseline", "PID kp 0.2 ki 1", "PID kp 0.2 ki 1",
-                                              "baseline"]
+    assert [s["id"] for s in run["sets"]] == ["baseline"] * 3 + ["PID kp 0.2 ki 1"] * 2 + [
+        "baseline"] * 3
     # Each spin-up names the capture file it was read from, saved as it came in.
     files = [s["file"] for set_ in run["sets"] for s in set_["spinups"]]
-    assert files[1].endswith("_set001_PID-kp-0.2-ki-1_30000rpm.csv")
+    assert files[3].endswith("_set003_PID-kp-0.2-ki-1_30000rpm.csv")
     assert set(files) <= set(downloads)
 
 
