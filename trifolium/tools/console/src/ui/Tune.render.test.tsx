@@ -82,7 +82,7 @@ describe("the results table", () => {
       id: "PID kp 0.2 ki 1",
       at,
       spinups: [
-        { rpm: 30000, file: "", readyMs: ms, overshootPct: 0.5, packMv: 16000, trace: [[0, 1, 2]] },
+        { rpm: 30000, file: "", readyMs: ms, reachMs: ms, overshootPct: 0.5, packMv: 16000, trace: [{ rpm: [0, 1, 2], full: [] }] },
       ],
     }));
     return run;
@@ -127,7 +127,7 @@ describe("the results table", () => {
       null,
       500,
     );
-    const spinup = { rpm: 30000, file: "", readyMs: 100, overshootPct: 9, packMv: 16000, trace: [] };
+    const spinup = { rpm: 30000, file: "", readyMs: 100, reachMs: 100, overshootPct: 9, packMv: 16000, trace: [] };
     run.sets = ["Startup power 80 %", "Startup power 120 %"].map((id) => ({
       id,
       at: 0,
@@ -136,7 +136,15 @@ describe("the results table", () => {
     run.status = "done";
     act(() => root.render(results(run)));
     const heads = [...host.querySelectorAll("thead th")].map((th) => th.textContent);
-    expect(heads).toEqual(["Chart", "Candidate", "Timeouts", "Mean", "2nd slowest", "Slowest", "Sets"]);
+    expect(heads).toEqual([
+      "Chart",
+      "Candidate",
+      "Timeouts",
+      "Mean to 80%",
+      "2nd slowest to 80%",
+      "Slowest to 80%",
+      "Sets",
+    ]);
     expect(host.textContent).not.toMatch(/best|finalist|9\.0%/);
   });
 
@@ -156,13 +164,31 @@ describe("the spin-up chart", () => {
   afterEach(() => act(() => root.unmount()));
 
   const chart = (sets: SetRecord[], checked: string[]) => (
-    <SpinupTraces sets={sets} rpms={[30000]} candidates={["a", "b"]} checked={checked} same={null} />
+    <SpinupTraces
+      sets={sets}
+      rpms={[30000]}
+      candidates={["a", "b"]}
+      checked={checked}
+      same={null}
+      grid={DEFAULT_GAINS}
+    />
   );
 
-  const set = (id: string, trace: number[][]): SetRecord => ({
+  /** A set of one spin-up, each motor's RPM in `rpms`, all at full throttle. */
+  const set = (id: string, rpms: number[][]): SetRecord => ({
     id,
     at: 0,
-    spinups: [{ rpm: 30000, file: "", readyMs: 100, overshootPct: 0, packMv: 16000, trace }],
+    spinups: [
+      {
+        rpm: 30000,
+        file: "",
+        readyMs: 100,
+        reachMs: 100,
+        overshootPct: 0,
+        packMv: 16000,
+        trace: rpms.map((rpm) => ({ rpm, full: [[0, rpm.length]] })),
+      },
+    ],
   });
 
   it("checks a candidate's row and the baseline's to chart them", () => {
@@ -210,7 +236,7 @@ describe("the spin-up chart", () => {
       set("a", [[0, 120, 240], [0, 80, 160]]),
     ];
     act(() => root.render(chart(sets, ["a", "b"])));
-    const paths = [...host.querySelectorAll("path[stroke]")];
+    const paths = [...host.querySelectorAll("path[stroke]:not([stroke-dasharray])")];
     // One path a row, a line in it a motor a spin-up.
     expect(paths.map((p) => p.getAttribute("d")!.split("M").length - 1)).toEqual([4, 2]);
     expect(new Set(paths.map((p) => p.getAttribute("stroke"))).size).toBe(2);
@@ -221,7 +247,7 @@ describe("the spin-up chart", () => {
     const sets = [set("a", [[0, 1]]), set("b", [[0, 1]])];
     const strokes = () =>
       Object.fromEntries(
-        [...host.querySelectorAll("path[stroke]")].map((p, i) => [i, p.getAttribute("stroke")]),
+        [...host.querySelectorAll("path[stroke]:not([stroke-dasharray])")].map((p, i) => [i, p.getAttribute("stroke")]),
       );
     act(() => root.render(chart(sets, ["a", "b"])));
     const [a, b] = Object.values(strokes());
@@ -235,13 +261,23 @@ describe("the spin-up chart", () => {
     const at = (readyMs: number | null, rpm = 1): SetRecord => ({
       id: "a",
       at: 0,
-      spinups: [{ rpm: 30000, file: "", readyMs, overshootPct: 0, packMv: 0, trace: [[0, rpm]] }],
+      spinups: [
+        {
+          rpm: 30000,
+          file: "",
+          readyMs,
+          reachMs: readyMs,
+          overshootPct: 0,
+          packMv: 0,
+          trace: [{ rpm: [0, rpm], full: [[0, 2]] }],
+        },
+      ],
     });
     const sets = [at(300, 3), at(null, 9), at(100, 1), at(200, 2)];
     const spinups = sets.map((s) => s.spinups[0]);
-    expect(atRank(spinups, "median").readyMs).toBe(200);
-    expect(atRank(spinups, "secondSlowest").readyMs).toBe(300);
-    expect(atRank(spinups, "slowest").readyMs).toBeNull();
+    expect(atRank(spinups, "median", (s) => s.readyMs).readyMs).toBe(200);
+    expect(atRank(spinups, "secondSlowest", (s) => s.readyMs).readyMs).toBe(300);
+    expect(atRank(spinups, "slowest", (s) => s.readyMs).readyMs).toBeNull();
 
     act(() => root.render(chart(sets, ["a"])));
     act(() => {
@@ -253,9 +289,44 @@ describe("the spin-up chart", () => {
       (o) => o.textContent === "2nd slowest",
     ) as HTMLElement;
     act(() => option.click());
-    expect(host.querySelectorAll("path[stroke]")[0].getAttribute("d")!.split("M")).toHaveLength(2);
+    expect(host.querySelectorAll("path[stroke]:not([stroke-dasharray])")[0].getAttribute("d")!.split("M")).toHaveLength(2);
     expect(host.textContent).toContain("a (300 ms)");
     expect(host.textContent).toContain("2nd slowest at 30000 RPM");
+  });
+
+  it("draws a line solid at full throttle and dashed where the controller backed off", () => {
+    const backsOff: SetRecord = set("a", [[0, 10, 20, 30]]);
+    backsOff.spinups[0].trace[0].full = [[0, 2]];
+    act(() => root.render(chart([backsOff], ["a"])));
+    const points = (selector: string) =>
+      host.querySelector(selector)!.getAttribute("d")!.trim().split(" ").length / 2;
+    // Solid over samples 0 and 1; dashed from 1, where the two meet, to 3.
+    expect(points("path[stroke]:not([stroke-dasharray])")).toBe(2);
+    expect(points("path[stroke-dasharray]")).toBe(3);
+  });
+
+  it("ranks an ESC run's spin-ups by their time to 80% of target", () => {
+    const field = LAYOUTS[4].fields.find((f) => f.name === "startup_power")!;
+    const grid = { kind: "esc" as const, fields: [{ field, values: [{ startup_power: 80 }] }] };
+    const sets = [100, 200, 300].map((reachMs, i) => {
+      const s = set("a", [[0, i]]);
+      s.spinups[0] = { ...s.spinups[0], readyMs: 400 - reachMs, reachMs };
+      return s;
+    });
+    const traces = (
+      <SpinupTraces sets={sets} rpms={[30000]} candidates={["a"]} checked={["a"]} same={null} grid={grid} />
+    );
+    act(() => root.render(traces));
+    act(() => {
+      host.querySelector("[role=combobox]")!.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, button: 0 }),
+      );
+    });
+    const option = [...document.querySelectorAll("[role=option]")].find(
+      (o) => o.textContent === "Slowest",
+    ) as HTMLElement;
+    act(() => option.click());
+    expect(host.textContent).toContain("a (300 ms)");
   });
 
   it("asks for a row to chart when none is checked", () => {
@@ -277,7 +348,7 @@ describe("the Apply button", () => {
       null,
       500,
     );
-    const spinup = { rpm: 30000, file: "", readyMs: 100, overshootPct: 0, packMv: 16000, trace: [] };
+    const spinup = { rpm: 30000, file: "", readyMs: 100, reachMs: 100, overshootPct: 0, packMv: 16000, trace: [] };
     run.sets = [{ id: "PID kp 0.4 ki 1", at: 0, spinups: [spinup] }];
     Object.assign(run, { status: "done", applied });
     vi.stubGlobal("localStorage", { getItem: () => JSON.stringify(run) });

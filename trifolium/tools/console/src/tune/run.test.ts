@@ -33,6 +33,7 @@ const spinup = (readyMs: number | null): Spinup => ({
   rpm: 30000,
   file: "a.csv",
   readyMs,
+  reachMs: readyMs,
   overshootPct: 1,
   packMv: 16000,
   trace: [],
@@ -89,9 +90,13 @@ describe("a gains run", () => {
 
   it("scores a set on its summed spin-ups, a timed-out one at the rampup timeout", () => {
     const set = { id: "x", at: 0, spinups: [spinup(150), { ...spinup(200), overshootPct: 4 }] };
-    expect(scoreOf(set, 500)).toEqual({ timedOut: false, ms: 350, overshootPct: 4 });
-    const timedOut = scoreOf({ ...set, spinups: [spinup(150), spinup(null)] }, 500);
+    const ready = (s: Spinup) => s.readyMs;
+    expect(scoreOf(set, 500, ready)).toEqual({ timedOut: false, ms: 350, overshootPct: 4 });
+    const timedOut = scoreOf({ ...set, spinups: [spinup(150), spinup(null)] }, 500, ready);
     expect(timedOut).toMatchObject({ timedOut: true, ms: 650 });
+    // Past the rampup timeout is a timeout too, at the timeout.
+    const late = scoreOf({ ...set, spinups: [spinup(150), spinup(620)] }, 500, ready);
+    expect(late).toMatchObject({ timedOut: true, ms: 650 });
   });
 });
 
@@ -250,6 +255,19 @@ describe("an ESC run", () => {
   });
 });
 
+describe("timing a spin-up", () => {
+  it("is to fire-ready in a gains run, and to 80% of target in an ESC run", () => {
+    const field = LAYOUTS[4].fields.find((f) => f.name === "pwm_frequency")!;
+    const grid: EscGrid = { kind: "esc", fields: [{ field, values: [{ pwm_frequency: 48 }] }] };
+    const sets = [{ id: BASELINE, at: 0, spinups: [{ ...spinup(300), reachMs: 120 }] }];
+    const gainsRun = { ...startRun(DEFAULT_CONFIG, BASE, null, null, 500), sets };
+    const escBaseline = { gains: GAINS, esc: { pwm_frequency: 24 } };
+    const escRun = { ...startRun({ ...DEFAULT_CONFIG, grid }, escBaseline, null, null, 500), sets };
+    expect(scoresOf(gainsRun)[BASELINE][0].ms).toBe(300);
+    expect(scoresOf(escRun)[BASELINE][0].ms).toBe(120);
+  });
+});
+
 describe("the overshoot limit", () => {
   /** The run's ranking once every set it asks for has run, a candidate's sets all alike. */
   function ranked(run: Run, outcome: (id: string) => [readyMs: number, overshootPct: number]) {
@@ -358,12 +376,13 @@ describe("measure", () => {
 
   it("takes the worst motor's overshoot past target once there, and the pack at the start", () => {
     const s = measure(
-      { csv, report: { readyMs: 3, slowestMotor: 3, timedOut: false } },
+      { csv, report: { readyMs: 3, slowestMotor: 3, timedOut: false, maxThrottle: 1999 } },
       30000,
       "a.csv",
       3,
     );
-    expect(s).toMatchObject({ rpm: 30000, readyMs: 3, overshootPct: 2, packMv: 16400 });
+    // Both motors are past 80% of target by the second sample.
+    expect(s).toMatchObject({ rpm: 30000, readyMs: 3, reachMs: 1, overshootPct: 2, packMv: 16400 });
   });
 
   it("keeps each motor's RPM over the first traceMs, one sample in TRACE_STEP", () => {
@@ -372,16 +391,35 @@ describe("measure", () => {
       (_, i) => `16400,${i * 100},30000,1999,0.00,${i * 90},30000,1999,0.00,`,
     );
     const long = [csv.split("\n")[0], ...rows].join("\n");
-    const report = { readyMs: 3, slowestMotor: 3, timedOut: false };
+    const report = { readyMs: 3, slowestMotor: 3, timedOut: false, maxThrottle: 1999 };
     expect(TRACE_STEP).toBe(5);
     expect(measure({ csv: long, report }, 30000, "a.csv", 11).trace).toEqual([
-      [0, 500, 1000],
-      [0, 450, 900],
+      { rpm: [0, 500, 1000], full: [[0, 3]] },
+      { rpm: [0, 450, 900], full: [[0, 3]] },
     ]);
   });
 
+  it("keeps where each motor ran at full throttle, and times the slower to 80% of target", () => {
+    // Motor 1 backs off from full throttle at sample 6; motor 3 reaches 24000 RPM at sample 4,
+    // motor 1 at sample 3.
+    const rows = Array.from({ length: 12 }, (_, i) => {
+      const throttle1 = i < 6 ? 1999 : 1500;
+      return `16400,${i * 8000},30000,${throttle1},0.00,${i * 6000},30000,1999,0.00,`;
+    });
+    rows[0] = "16400,0,30000,1999,0.00,0,30000,1999,0.00,";
+    const long = [csv.split("\n")[0], ...rows].join("\n");
+    const report = { readyMs: 9, slowestMotor: 3, timedOut: false, maxThrottle: 1999 };
+    const s = measure({ csv: long, report }, 30000, "a.csv", 12);
+    expect(s.reachMs).toBe(4);
+    expect(s.trace.map((m) => m.full)).toEqual([[[0, 2]], [[0, 3]]]);
+    // A motor that never gets there leaves no time.
+    const stuck = rows.map((row) => row.replace(/,\d+,30000,1999,0\.00,$/, ",0,30000,1999,0.00,"));
+    const slow = [csv.split("\n")[0], ...stuck].join("\n");
+    expect(measure({ csv: slow, report }, 30000, "a.csv", 12).reachMs).toBeNull();
+  });
+
   it("refuses a capture that did not start from rest at the RPM asked for", () => {
-    const report = { readyMs: 3, slowestMotor: 3, timedOut: false };
+    const report = { readyMs: 3, slowestMotor: 3, timedOut: false, maxThrottle: 1999 };
     const spinning = csv.replace("16400,0,30000", "16400,12000,30000");
     expect(() => measure({ csv: spinning, report }, 30000, "a.csv", 3)).toThrow(/motor 1 at 12000 RPM/);
     expect(() => measure({ csv, report }, 25000, "a.csv", 3)).toThrow(/aiming for 30000/);

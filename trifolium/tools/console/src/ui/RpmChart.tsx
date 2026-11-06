@@ -10,6 +10,8 @@ export interface Series {
   name: string;
   colour: string;
   lines: number[][];
+  /** More lines in the same colour, drawn dashed. */
+  dashed?: number[][];
   /** Scaled against its own extent and labelled on the right, for signals the left axis crushes. */
   axis?: "left" | "right";
 }
@@ -50,7 +52,9 @@ export function RpmChart({
 
   const left = series.filter((s) => s.axis !== "right");
   const right = series.filter((s) => s.axis === "right");
-  const sampleCount = Math.max(0, ...series.flatMap((s) => s.lines.map((l) => l.length)));
+  /** Every line a series draws, solid and dashed. */
+  const all = (s: Series) => [...s.lines, ...(s.dashed ?? [])];
+  const sampleCount = Math.max(0, ...series.flatMap((s) => all(s).map((l) => l.length)));
 
   if (!series.length || sampleCount === 0) {
     return (
@@ -63,17 +67,17 @@ export function RpmChart({
   const plotW = Math.max(80, width - PAD.left - PAD.right);
   const plotH = height - PAD.top - PAD.bottom;
 
-  const leftExtent = extentOf(left.flatMap((s) => s.lines));
-  const rightExtent = extentOf(right.flatMap((s) => s.lines));
+  const leftExtent = extentOf(left.flatMap(all));
+  const rightExtent = extentOf(right.flatMap(all));
 
   const x = (i: number) => PAD.left + (sampleCount <= 1 ? 0 : (i / (sampleCount - 1)) * plotW);
   const yFor = (v: number, e: { min: number; max: number }) =>
     PAD.top + plotH - ((v - e.min) / (e.max - e.min || 1)) * plotH;
 
-  const path = (s: Series) => {
+  const path = (s: Series, lines: number[][]) => {
     const e = s.axis === "right" ? rightExtent : leftExtent;
     let d = "";
-    for (const line of s.lines) {
+    for (const line of lines) {
       let penDown = false;
       line.forEach((v, i) => {
         if (!Number.isFinite(v)) {
@@ -89,7 +93,9 @@ export function RpmChart({
 
   /** The value at the hover, or the range its lines span there. */
   const readout = (s: Series, i: number) => {
-    const at = s.lines.map((l) => l[i]).filter(Number.isFinite);
+    const at = all(s)
+      .map((l) => l[i])
+      .filter(Number.isFinite);
     if (at.length === 0) return "";
     const [lo, hi] = [Math.min(...at), Math.max(...at)].map(Math.round);
     return lo === hi ? `: ${lo}` : `: ${lo}-${hi}`;
@@ -167,13 +173,18 @@ export function RpmChart({
         </text>
 
         {series.map((s) => (
-          <path
-            key={s.name}
-            d={path(s)}
-            fill="none"
-            stroke={s.colour}
-            strokeWidth={1.4}
-          />
+          <g key={s.name}>
+            <path d={path(s, s.lines)} fill="none" stroke={s.colour} strokeWidth={1.4} />
+            {s.dashed && (
+              <path
+                d={path(s, s.dashed)}
+                fill="none"
+                stroke={s.colour}
+                strokeWidth={1.4}
+                strokeDasharray="4 3"
+              />
+            )}
+          </g>
         ))}
 
         {hover !== null && (

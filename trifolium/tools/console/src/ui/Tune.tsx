@@ -20,6 +20,7 @@ import type { EscSettings } from "../esc/session";
 import {
   BASELINE,
   baselineOf,
+  ESC_REACH,
   countsFor,
   DEFAULT_CONFIG,
   DEFAULT_GAINS,
@@ -32,12 +33,14 @@ import {
   scoresOf,
   settingsLabel,
   startRun,
+  timeOf,
   TRACE_STEP,
   type EscGrid,
   type EscValues,
   type Gains,
   type GainsGrid,
   type Run,
+  type MotorTrace,
   type SetRecord,
   type Spinup,
   type TuneConfig,
@@ -249,6 +252,8 @@ export function Results({
   const same = startingId(run);
   const ids = run.candidates.map((c) => c.id);
   const overshoot = run.config.grid.kind === "gains";
+  // What the time columns time: fire-ready, or reaching ESC_REACH of target in an ESC run.
+  const to = overshoot ? "" : ` to ${ESC_REACH * 100}%`;
   // Without halving every candidate is a finalist, so there is no standing to show.
   const status = run.config.halving;
   const box = (id: string, label: string) => {
@@ -275,9 +280,7 @@ export function Results({
             "Candidate",
             ...(status ? [""] : []),
             "Timeouts",
-            "Mean",
-            "2nd slowest",
-            "Slowest",
+            ...["Mean", "2nd slowest", "Slowest"].map((h) => h + to),
             ...(overshoot ? ["2nd worst overshoot"] : []),
             "Sets",
           ].map((h) => (
@@ -342,21 +345,41 @@ const DRAWN: { value: Drawn; label: string }[] = [
 ];
 
 /**
- * The spin-up at `drawn`'s rank by fire-ready time, a timeout slowest: the lower median of an even
- * count, so always one that ran.
+ * The spin-up at `drawn`'s rank by `time`, a timeout slowest: the lower median of an even count, so
+ * always one that ran.
  */
-export function atRank(spinups: Spinup[], drawn: Exclude<Drawn, "all">): Spinup {
-  const sorted = [...spinups].sort((a, b) => (a.readyMs ?? Infinity) - (b.readyMs ?? Infinity));
+export function atRank(
+  spinups: Spinup[],
+  drawn: Exclude<Drawn, "all">,
+  time: (s: Spinup) => number | null,
+): Spinup {
+  const sorted = [...spinups].sort((a, b) => (time(a) ?? Infinity) - (time(b) ?? Infinity));
   const last = sorted.length - 1;
   const index = { median: last >> 1, secondSlowest: Math.max(0, last - 1), slowest: last }[drawn];
   return sorted[index];
 }
 
 /**
+ * A motor's RPM as a solid line where it ran at full throttle and a dashed one where the controller
+ * backed off, the two meeting where it changes.
+ */
+function byThrottle({ rpm, full }: MotorTrace): { solid: number[]; dashed: number[] } {
+  const isFull = rpm.map((_, i) => full.some(([from, to]) => i >= from && i < to));
+  return {
+    solid: rpm.map((v, i) => (isFull[i] ? v : NaN)),
+    // A full sample next to one that is not ends the dashed line there too, so the two join.
+    dashed: rpm.map((v, i) =>
+      isFull[i] && isFull[i - 1] !== false && isFull[i + 1] !== false ? NaN : v,
+    ),
+  };
+}
+
+/**
  * Each checked row's spin-ups, a chart per target RPM: each motor's RPM, in the row's colour, all
- * of them overlaid or the one at a rank, ranked within each RPM. The starting candidate's row has the
- * baseline's spin-ups too, as `same` says. Memoised on the sets, which change only as a set ends,
- * so the chart redraws once a set and never while a rev is held.
+ * of them overlaid or the one at a rank, ranked within each RPM by `grid`'s timeOf(). A line is
+ * solid at full throttle and dashed where the controller backed off. The starting candidate's row
+ * has the baseline's spin-ups too, as `same` says. Memoised on the sets, which change only as a set
+ * ends, so the chart redraws once a set and never while a rev is held.
  */
 export const SpinupTraces = React.memo(function SpinupTraces({
   sets,
@@ -364,6 +387,7 @@ export const SpinupTraces = React.memo(function SpinupTraces({
   candidates,
   checked,
   same,
+  grid,
 }: {
   sets: SetRecord[];
   rpms: number[];
@@ -371,7 +395,9 @@ export const SpinupTraces = React.memo(function SpinupTraces({
   candidates: string[];
   checked: string[];
   same: string | null;
+  grid: TuneConfig["grid"];
 }) {
+  const time = timeOf(grid);
   const [drawn, setDrawn] = React.useState<Drawn>("all");
   if (checked.length === 0) {
     return (
@@ -401,12 +427,17 @@ export const SpinupTraces = React.memo(function SpinupTraces({
           const name = id === BASELINE ? "Baseline" : id;
           const colour = colourOf(candidates, same, id);
           const spinups = sets.filter((s) => countsFor(s, id, same)).map((s) => s.spinups[k]);
+          const lines = (traces: MotorTrace[]) => {
+            const parts = traces.map(byThrottle);
+            return { lines: parts.map((p) => p.solid), dashed: parts.map((p) => p.dashed) };
+          };
           if (drawn === "all" || spinups.length === 0) {
-            return { name, colour, lines: spinups.flatMap((s) => s.trace) };
+            return { name, colour, ...lines(spinups.flatMap((s) => s.trace)) };
           }
-          const one = atRank(spinups, drawn);
-          const ready = one.readyMs === null ? "timeout" : `${one.readyMs} ms`;
-          return { name: `${name} (${ready})`, colour, lines: one.trace };
+          const one = atRank(spinups, drawn, time);
+          const ms = time(one);
+          const label = `${name} (${ms === null ? "timeout" : `${ms} ms`})`;
+          return { name: label, colour, ...lines(one.trace) };
         });
         return (
           <Box key={rpm}>
@@ -653,6 +684,11 @@ export function Tune({
               {kind === "gains"
                 ? ", and one whose second-worst overshoot passes the limit cannot win. "
                 : ". "}
+              {kind === "esc"
+                ? `An ESC run times a spin-up to the slower wheel reaching ${ESC_REACH * 100}% of ` +
+                  "target, the climb the ESCs decide; one that does not within the rampup timeout " +
+                  "counts as a timeout. "
+                : "A gains run times a spin-up to fire-ready. "}
               Mean counts a timed-out spin-up at the rampup timeout, so it is a lower bound when
               Timeouts is not 0.{" "}
               {kind === "esc"
@@ -694,7 +730,7 @@ export function Tune({
   const packV = lastSet && Math.min(...lastSet.spinups.map((s) => s.packMv)) / 1000;
   const baselineMs = run.sets
     .filter((s) => s.id === BASELINE)
-    .map((s) => scoreOf(s, run.rampupTimeoutMs))
+    .map((s) => scoreOf(s, run.rampupTimeoutMs, timeOf(run.config.grid)))
     .map((s) => (s.timedOut ? "timeout" : `${s.ms}`));
   const best =
     run.status === "done"
@@ -791,6 +827,7 @@ export function Tune({
             candidates={candidateIds}
             checked={checked}
             same={startingId(run)}
+            grid={run.config.grid}
           />
         </Stack>
       </Fieldset>

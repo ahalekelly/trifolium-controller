@@ -65,7 +65,7 @@ const capture = (rpm: number, readyMs: number): Capture => ({
     `16400,0,${rpm},1999,0.00,`,
     `16300,${rpm},${rpm},1500,0.00,`,
   ].join("\n"),
-  report: { readyMs, slowestMotor: 1, timedOut: false },
+  report: { readyMs, slowestMotor: 1, timedOut: false, maxThrottle: 1999 },
 });
 
 /**
@@ -121,8 +121,8 @@ function rig() {
         setTimeout(() => {
           onLost(timedOut ? "the blaster refused it (rev aborted - let go to rev again)" : blaster.losesHold!);
           const report = timedOut
-            ? { readyMs: null, slowestMotor: 1, timedOut: true }
-            : { readyMs: 300, slowestMotor: 1, timedOut: false };
+            ? { readyMs: null, slowestMotor: 1, timedOut: true, maxThrottle: 1999 }
+            : { readyMs: 300, slowestMotor: 1, timedOut: false, maxThrottle: 1999 };
           blaster.runner.capture({ ...capture(at, 0), report });
         }, 500);
         return () => {};
@@ -216,7 +216,7 @@ describe("an ESC run", () => {
     expect(run.escs![1].raw.startup_power).toBe(ORIGINAL_POWER);
     expectMeasuredOnItsOwnSettings(run);
     // Each spin-up keeps its own trace: the fake capture's one motor, its first sample.
-    expect(run.sets.every((s) => JSON.stringify(s.spinups[0].trace) === "[[0]]")).toBe(true);
+    for (const s of run.sets) expect(s.spinups[0].trace).toEqual([{ rpm: [0], full: [[0, 1]] }]);
     // The opening read leaves the ESCs on the baseline; every later block is one write.
     expect(blocksOf(run)).toEqual([BASELINE, C80, C120, C150, BASELINE]);
     expect(sessions(events)).toBe(5);
@@ -475,7 +475,7 @@ const GAINS_CONFIG: TuneConfig = {
   grid: { ...DEFAULT_GAINS, kp: [0.2], ki: [1] },
   n: 2,
 };
-const heldReport = { readyMs: 300, slowestMotor: 1, timedOut: false };
+const heldReport = { readyMs: 300, slowestMotor: 1, timedOut: false, maxThrottle: 1999 };
 
 function gainsRig(revs: Rev[]) {
   const logged: string[] = [];
@@ -519,8 +519,8 @@ function gainsRig(revs: Rev[]) {
         );
         const report =
           rev === "timeout"
-            ? { readyMs: null, slowestMotor: 1, timedOut: true }
-            : { readyMs: 300, slowestMotor: 1, timedOut: false };
+            ? { readyMs: null, slowestMotor: 1, timedOut: true, maxThrottle: 1999 }
+            : { readyMs: 300, slowestMotor: 1, timedOut: false, maxThrottle: 1999 };
         runner.capture({ ...capture(at, 0), report });
       }, 200);
       return () => {};

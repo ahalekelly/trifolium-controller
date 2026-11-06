@@ -11,7 +11,7 @@
 import { fileStamp } from "../rpm/files";
 import { firmwareOf, LAYOUTS, shown, type EscField } from "../esc/layouts";
 import type { EscSettings } from "../esc/session";
-import { parseRpmCsv, wholeRows } from "../rpm/parse";
+import { MS_PER_SAMPLE, parseRpmCsv, wholeRows } from "../rpm/parse";
 import { getByKey } from "../schema/keyPath";
 import type { Capture } from "../serial/transport";
 import { plan, startSearch, type Search, type SetScore } from "./search";
@@ -116,17 +116,28 @@ export interface Candidate extends Settings {
  */
 export const TRACE_STEP = 5;
 
+/** One motor's part of a spin-up's trace, one capture sample in TRACE_STEP from the rev's start. */
+export interface MotorTrace {
+  rpm: number[];
+  /** Where it ran at full throttle, as [from, to) in `rpm`'s samples. */
+  full: [number, number][];
+}
+
+/** How far up an ESC run times a spin-up: the slower wheel first reaching this share of target. */
+export const ESC_REACH = 0.8;
+
 /** One spin-up, at one RPM. readyMs is null when the rampup timeout ended it. */
 export interface Spinup {
   rpm: number;
   /** The capture's CSV file - see captureFile(). */
   file: string;
   readyMs: number | null;
+  /** When every motor had first reached ESC_REACH of `rpm`; null when one never did. */
+  reachMs: number | null;
   overshootPct: number;
   /** At the rev's start, so the pack at rest. */
   packMv: number;
-  /** Each motor's RPM from the rev's start, one sample in TRACE_STEP. */
-  trace: number[][];
+  trace: MotorTrace[];
 }
 
 /** The id of the settings the blaster started with, run between candidates to show drift. */
@@ -145,7 +156,7 @@ export type RunStatus = "running" | "paused" | "done";
  * Changes whenever Run's shape or how its sets count does, so a run another build saved is refused
  * rather than misread.
  */
-const RUN_VERSION = 7;
+const RUN_VERSION = 8;
 
 export interface Run {
   version: typeof RUN_VERSION;
@@ -336,7 +347,15 @@ export function startingId(run: Run): string | null {
 export function plannedRun(run: Run): { sets: number; writes: number } {
   const same = startingId(run);
   const settingsOf = (id: string) => (id === same ? BASELINE : id);
-  const spinup: Spinup = { rpm: 0, file: "", readyMs: 0, overshootPct: 0, packMv: 0, trace: [] };
+  const spinup: Spinup = {
+    rpm: 0,
+    file: "",
+    readyMs: 0,
+    reachMs: 0,
+    overshootPct: 0,
+    packMv: 0,
+    trace: [],
+  };
   let current = startRun(run.config, run.baseline, run.escs, run.blaster, run.rampupTimeoutMs);
   let loaded = BASELINE;
   let writes = 0;
@@ -383,10 +402,29 @@ export function startRun(
   };
 }
 
-export function scoreOf(set: SetRecord, rampupTimeoutMs: number): SetScore {
+/**
+ * What a run times a spin-up by: a gains run, fire-ready, as settling is what gains decide; an ESC
+ * run, reaching ESC_REACH of target, as the ESCs decide the climb and Trifolium's control the rest.
+ */
+export const timeOf =
+  (grid: TuneConfig["grid"]) =>
+  (s: Spinup): number | null =>
+    grid.kind === "esc" ? s.reachMs : s.readyMs;
+
+/**
+ * A set's score, its spin-ups timed by `time`. One that took no time, or longer than the rampup
+ * timeout, counts as timed out, at the timeout.
+ */
+export function scoreOf(
+  set: SetRecord,
+  rampupTimeoutMs: number,
+  time: (s: Spinup) => number | null,
+): SetScore {
+  const times = set.spinups.map(time);
+  const timedOut = (t: number | null) => t === null || t > rampupTimeoutMs;
   return {
-    timedOut: set.spinups.some((s) => s.readyMs === null),
-    ms: set.spinups.reduce((sum, s) => sum + (s.readyMs ?? rampupTimeoutMs), 0),
+    timedOut: times.some(timedOut),
+    ms: times.reduce((sum: number, t) => sum + (timedOut(t) ? rampupTimeoutMs : t!), 0),
     overshootPct: Math.max(...set.spinups.map((s) => s.overshootPct)),
   };
 }
@@ -398,9 +436,10 @@ export const countsFor = (set: SetRecord, id: string, same: string | null) =>
 /** Each candidate's set scores and the baseline's, in the order they ran - see countsFor(). */
 export function scoresOf(run: Run): Record<string, SetScore[]> {
   const same = startingId(run);
+  const time = timeOf(run.config.grid);
   const scores: Record<string, SetScore[]> = {};
   for (const set of run.sets) {
-    const score = scoreOf(set, run.rampupTimeoutMs);
+    const score = scoreOf(set, run.rampupTimeoutMs, time);
     (scores[set.id] ??= []).push(score);
     if (same && set.id === BASELINE) (scores[same] ??= []).push(score);
   }
@@ -434,10 +473,11 @@ export function nextSet(run: Run): { search: Search; next: string | null } {
 const REST_RPM = 500;
 
 /**
- * Reads a spin-up off its capture: the firmware's own fire-ready time, and how far the worst motor
- * went past `rpm` once it first got there, as % of `rpm`. `traceMs` is how much of each motor's RPM
- * to keep for the chart. A capture that did not start from rest at `rpm` is some other
- * rev's - the trigger, the Rev switch, a hold that lapsed and came back - and is refused.
+ * Reads a spin-up off its capture: the firmware's own fire-ready time, when every motor had reached
+ * ESC_REACH of `rpm`, and how far the worst motor went past `rpm` once it first got there, as % of
+ * `rpm`. `traceMs` is how much of each motor's RPM and throttle to keep for the chart. A capture
+ * that did not start from rest at `rpm` is some other rev's - the trigger, the Rev switch, a hold
+ * that lapsed and came back - and is refused.
  */
 export function measure(
   capture: Capture,
@@ -465,16 +505,33 @@ export function measure(
     const peak = Math.max(...motor.rpm.slice(reached));
     overshootPct = Math.max(overshootPct, ((peak - rpm) / rpm) * 100);
   }
+  const reached = log.motors.map((m) => m.rpm.findIndex((v) => v >= rpm * ESC_REACH));
+  const kept = (values: number[]) =>
+    values.slice(0, traceMs).filter((_, i) => i % TRACE_STEP === 0);
   return {
     rpm,
     file,
     readyMs: capture.report.readyMs,
+    reachMs: reached.includes(-1) ? null : Math.max(...reached) * MS_PER_SAMPLE,
     overshootPct,
     packMv: log.voltage[0],
-    trace: log.motors.map((m) =>
-      m.rpm.slice(0, traceMs).filter((_, i) => i % TRACE_STEP === 0),
-    ),
+    trace: log.motors.map((m) => ({
+      rpm: kept(m.rpm),
+      full: stretches(kept(m.throttle).map((t) => t >= capture.report.maxThrottle)),
+    })),
   };
+}
+
+/** Where `on` holds, as [from, to) runs. */
+function stretches(on: boolean[]): [number, number][] {
+  const out: [number, number][] = [];
+  on.forEach((v, i) => {
+    if (!v) return;
+    const last = out[out.length - 1];
+    if (last?.[1] === i) last[1] = i + 1;
+    else out.push([i, i + 1]);
+  });
+  return out;
 }
 
 const STORAGE_KEY = "trifolium.tune";
