@@ -19,7 +19,7 @@ const set = (ms: number, overshootPct = 0, timedOut = false): SetScore => ({
 function runSearch(
   ids: string[],
   n: number,
-  limitPct: number,
+  limitPct: number | null,
   trial: (id: string) => SetScore,
   blocks = false,
   halving = true,
@@ -138,5 +138,18 @@ describe("a search", () => {
     expect(search.dropped).toEqual({ quick: 0, stalls: 0 });
     const order = ranking(search, scores, 3).map((r) => r.id);
     expect(order).toEqual(["steady", "slow", "stalls", "quick"]);
+  });
+
+  it("without a limit, ranks on fewest timeouts, then time, however far one overshoots", () => {
+    const outcome: Record<string, SetScore> = {
+      quick: set(150, 5),
+      steady: set(200, 1),
+      stalls: set(120, 0, true),
+      slow: set(260, 1),
+    };
+    const { search, scores } = runSearch(Object.keys(outcome), 3, null, (id) => outcome[id]);
+    expect(search.alive).toEqual(["quick", "steady"]);
+    const order = ranking(search, scores, null).map((r) => r.id);
+    expect(order).toEqual(["quick", "steady", "slow", "stalls"]);
   });
 });

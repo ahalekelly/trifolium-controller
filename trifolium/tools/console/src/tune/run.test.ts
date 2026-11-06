@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { LAYOUTS } from "../esc/layouts";
 import { V4_DEFAULT } from "../esc/testdata";
+import { ranking } from "./search";
 import {
   BASELINE,
   baselineOf,
@@ -12,8 +13,10 @@ import {
   escRecords,
   measure,
   nextSet,
+  overshootLimit,
   plannedEscWrites,
   scoreOf,
+  scoresOf,
   startRun,
   type EscGrid,
   type Run,
@@ -203,6 +206,47 @@ describe("an ESC run", () => {
     expect(blocks).toEqual([BASELINE, c16, c24, BASELINE, c32, c48, BASELINE]);
     expect(ids.filter((id) => id !== BASELINE)).toHaveLength(80);
     expect(blocks.length - 1).toBeLessThanOrEqual(plannedEscWrites(4, 20, false));
+  });
+});
+
+describe("the overshoot limit", () => {
+  /** The run's ranking once every set it asks for has run, a candidate's sets all alike. */
+  function ranked(run: Run, outcome: (id: string) => [readyMs: number, overshootPct: number]) {
+    let current = run;
+    for (;;) {
+      const { search, next } = nextSet(current);
+      current = { ...current, search };
+      if (next === null) break;
+      const [readyMs, overshootPct] = next === BASELINE ? [300, 0] : outcome(next);
+      const spinups = [{ ...spinup(readyMs), overshootPct }];
+      current = { ...current, sets: [...current.sets, { id: next, at: 0, spinups }] };
+    }
+    return ranking(current.search, scoresOf(current), overshootLimit(current.config.grid));
+  }
+
+  it("lets an ESC run's fastest candidate win however far it overshoots", () => {
+    const field = LAYOUTS[4].fields.find((f) => f.name === "pwm_frequency")!;
+    const grid: EscGrid = { kind: "esc", fields: [{ field, values: [48, 96] }] };
+    const baseline = { gains: GAINS, esc: { pwm_frequency: 24 } };
+    const run = startRun({ ...DEFAULT_CONFIG, grid, n: 3 }, baseline, null, null, 500);
+    const [fast, steady] = run.candidates.map((c) => c.id);
+    const rows = ranked(run, (id) => (id === fast ? [112, 4.5] : [248, 2.4]));
+    expect(rows.map((r) => [r.id, r.standing.qualified])).toEqual([
+      [fast, true],
+      [steady, true],
+    ]);
+    expect(rows[0].standing.overshootPct).toBe(4.5);
+  });
+
+  it("rules out a gains candidate whose overshoot passes the limit", () => {
+    const grid = { ...DEFAULT_GAINS, kp: [0.1, 0.2], ki: [1], overshootLimitPct: 3 };
+    const run = startRun({ ...DEFAULT_CONFIG, grid, n: 3 }, BASE, null, null, 500);
+    const [fast, steady] = run.candidates.map((c) => c.id);
+    const rows = ranked(run, (id) => (id === fast ? [112, 4.5] : [248, 2.4]));
+    expect(rows.map((r) => [r.id, r.standing.qualified])).toEqual([
+      [steady, true],
+      [fast, false],
+    ]);
   });
 });
 

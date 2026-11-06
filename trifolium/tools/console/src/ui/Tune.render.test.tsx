@@ -177,6 +177,7 @@ describe("the ESC run form", () => {
     expect(text).not.toContain("Current limit");
     expect(text).not.toContain("Motor poles");
     expect(text).not.toContain("Brake on stop");
+    expect(text).not.toContain("Overshoot limit");
     // Rounds end on 10 and 20 spin-ups: 4 x 10, then 2 finalists x 10 more.
     const writes = plannedEscWrites(4, 20, true);
     expect(text).toContain(`4 candidates, about 60 spin-ups and at most ${writes} ESC writes`);

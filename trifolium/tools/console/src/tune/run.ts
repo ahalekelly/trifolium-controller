@@ -32,6 +32,11 @@ export interface GainsGrid {
   kp: number[];
   ki: number[];
   tbh: number[];
+  /**
+   * A candidate whose second-worst overshoot passes this, % of target, cannot win. Only gains have
+   * one: overshoot is Trifolium's speed control's doing, not the ESCs'.
+   */
+  overshootLimitPct: number;
 }
 
 /** An ESC run's candidates: every combination of the values listed, raw, for each field. */
@@ -47,7 +52,6 @@ export interface TuneConfig {
   n: number;
   /** Halve the candidates down to finalists, or give every candidate its n sets. */
   halving: boolean;
-  overshootLimitPct: number;
   /** The run pauses for a pack swap once a cell reads below this at the start of a spin-up. */
   pauseCellMv: number;
 }
@@ -58,6 +62,7 @@ export const DEFAULT_GAINS: GainsGrid = {
   kp: [0.1, 0.2, 0.4],
   ki: [0.25, 0.5, 1],
   tbh: [0.05, 0.1, 0.2],
+  overshootLimitPct: 3,
 };
 
 export const DEFAULT_CONFIG: TuneConfig = {
@@ -65,7 +70,6 @@ export const DEFAULT_CONFIG: TuneConfig = {
   rpms: [30000],
   n: 20,
   halving: true,
-  overshootLimitPct: 3,
   pauseCellMv: 3600,
 };
 
@@ -175,6 +179,10 @@ export interface Run {
  * share of the run.
  */
 const BASELINE_BLOCKS = { gains: { size: 1, every: 8 }, esc: { size: 3, every: 24 } };
+
+/** The overshoot a candidate may not pass, % of target; null in an ESC run, which has none. */
+export const overshootLimit = (grid: TuneConfig["grid"]): number | null =>
+  grid.kind === "gains" ? grid.overshootLimitPct : null;
 
 export const gainsLabel = (g: Gains) =>
   g.control === "pid" ? `PID kp ${g.kp} ki ${g.ki}` : `TBH gain ${g.ki}`;
@@ -344,7 +352,7 @@ export function nextSet(run: Run): { search: Search; next: string | null } {
   let lastCandidate = ids.length - 1;
   while (lastCandidate >= 0 && ids[lastCandidate] === BASELINE) lastCandidate--;
   const stay = kind === "esc" && lastCandidate >= 0 ? ids[lastCandidate] : null;
-  const { search, next } = plan(run.search, scoresOf(run), run.config.overshootLimitPct, stay);
+  const { search, next } = plan(run.search, scoresOf(run), overshootLimit(run.config.grid), stay);
 
   const { size, every } = BASELINE_BLOCKS[kind];
   const baselineSets = ids.length - 1 - lastCandidate; // the block the run ends on so far

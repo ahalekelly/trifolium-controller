@@ -23,6 +23,7 @@ import {
   DEFAULT_CONFIG,
   DEFAULT_GAINS,
   gainsLabel,
+  overshootLimit,
   runName,
   plannedEscWrites,
   scoreOf,
@@ -87,7 +88,7 @@ export const DEFAULT_DRAFT: TuneDraft = {
     tbh: DEFAULT_GAINS.tbh.join(", "),
     rpms: DEFAULT_CONFIG.rpms.join(", "),
     n: String(DEFAULT_CONFIG.n),
-    overshootLimitPct: String(DEFAULT_CONFIG.overshootLimitPct),
+    overshootLimitPct: String(DEFAULT_GAINS.overshootLimitPct),
     cellV: String(DEFAULT_CONFIG.pauseCellMv / 1000),
   },
   esc: {},
@@ -129,7 +130,9 @@ function gridOf(
   if (mode !== "pid" && !within(tbh, gainMax.ki)) {
     return `TBH gains are numbers from 0 to ${gainMax.ki}.`;
   }
-  return { kind, mode, kp: kp ?? [], ki: ki ?? [], tbh: tbh ?? [] };
+  const overshootLimitPct = Number(form.overshootLimitPct);
+  if (!(overshootLimitPct >= 0)) return "The overshoot limit is a percentage.";
+  return { kind, mode, kp: kp ?? [], ki: ki ?? [], tbh: tbh ?? [], overshootLimitPct };
 }
 
 /** The config the form describes, or what is wrong with it. */
@@ -142,15 +145,14 @@ function configOf(
   if (typeof grid === "string") return grid;
   const { form } = draft;
   const rpms = listOf(form.rpms);
-  const [n, overshootLimitPct, cellV] = [form.n, form.overshootLimitPct, form.cellV].map(Number);
+  const [n, cellV] = [form.n, form.cellV].map(Number);
   if (!rpms || !rpms.every((r) => Number.isInteger(r) && r > 0)) {
     return "Target RPMs are whole numbers.";
   }
   if (!Number.isInteger(n) || n < 2) return "Spin-ups per candidate is a whole number, at least 2.";
-  if (!(overshootLimitPct >= 0)) return "The overshoot limit is a percentage.";
   if (!(cellV > 0)) return "The cell voltage to pause at is in volts.";
   const { halving } = draft;
-  return { grid, rpms, n, halving, overshootLimitPct, pauseCellMv: Math.round(cellV * 1000) };
+  return { grid, rpms, n, halving, pauseCellMv: Math.round(cellV * 1000) };
 }
 
 const cellSx = { py: 0.25, px: 1 };
@@ -190,7 +192,7 @@ export function Results({
   checked: string[];
   onCheck: (checked: string[]) => void;
 }) {
-  const limit = run.config.overshootLimitPct;
+  const limit = overshootLimit(run.config.grid);
   const scores = scoresOf(run);
   const rows = ranking(run.search, scores, limit);
   const done = run.status === "done";
@@ -468,6 +470,7 @@ export function Tune({
                   {mode !== "tbh" && field("kp", "PID kp values")}
                   {mode !== "tbh" && field("ki", "PID ki values")}
                   {mode !== "pid" && field("tbh", "TBH gains")}
+                  {field("overshootLimitPct", "Overshoot limit %", 150)}
                 </Stack>
               </>
             ) : (
@@ -499,7 +502,6 @@ export function Tune({
             <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", rowGap: 1 }}>
               {field("rpms", "Target RPMs")}
               {field("n", halving ? "Spin-ups per finalist" : "Spin-ups per candidate", 170)}
-              {field("overshootLimitPct", "Overshoot limit %", 150)}
               {field("cellV", "Pause below V a cell", 150)}
             </Stack>
             <Typography variant="caption" color="text.secondary">
@@ -512,9 +514,13 @@ export function Tune({
                 ? "Halving drops the slower half after a few spin-ups each, down to two finalists. "
                 : "Every candidate gets N spin-ups. "}
               Finalists rank on fewest rampup timeouts, then the second-slowest of their N spin-ups
-              (the 95th percentile at the default N = 20), each summed over the target RPMs, and one
-              whose second-worst overshoot passes the limit cannot win. Mean counts a timed-out
-              spin-up at the rampup timeout, so it is a lower bound when Timeouts is not 0.{" "}
+              (the 95th percentile at the default N = 20), each summed over the target RPMs
+              {kind === "gains"
+                ? ", and one whose second-worst overshoot passes the limit cannot win. "
+                : ". Overshoot does not rank an ESC run, since Trifolium's speed control causes " +
+                  "it, not the ESCs. "}
+              Mean counts a timed-out spin-up at the rampup timeout, so it is a lower bound when
+              Timeouts is not 0.{" "}
               {kind === "esc"
                 ? "Each candidate is written to every flywheel ESC once a round, then runs that " +
                   "round's spin-ups at the blaster's own gains. A write restarts the blaster and " +
@@ -558,7 +564,7 @@ export function Tune({
     .map((s) => (s.timedOut ? "timeout" : `${s.ms}`));
   const best =
     run.status === "done"
-      ? ranking(run.search, scoresOf(run), run.config.overshootLimitPct)[0]
+      ? ranking(run.search, scoresOf(run), overshootLimit(run.config.grid))[0]
       : null;
   // Nothing to apply when even the best overshoots past the limit.
   const winner = best?.standing.qualified ? run.candidates.find((c) => c.id === best.id)! : null;

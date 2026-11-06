@@ -93,7 +93,10 @@ const secondWorst = (values: number[]): number => {
   return sorted[Math.max(0, sorted.length - 2)] ?? NaN;
 };
 
-/** A candidate's standing: overshoot past the limit rules it out, then timeouts and time rank it. */
+/**
+ * A candidate's standing: overshoot past the limit, where there is one, rules it out, then timeouts
+ * and time rank it.
+ */
 export interface Standing {
   timeouts: number;
   overshootPct: number;
@@ -103,25 +106,25 @@ export interface Standing {
 }
 
 /** On medians, for the early rounds. */
-function earlyStanding(scores: SetScore[], limitPct: number): Standing {
+function earlyStanding(scores: SetScore[], limitPct: number | null): Standing {
   const overshootPct = median(scores.map((s) => s.overshootPct));
   return {
     timeouts: scores.filter((s) => s.timedOut).length / scores.length,
     overshootPct,
     ms: median(scores.map(msOf)),
-    qualified: overshootPct <= limitPct,
+    qualified: limitPct === null || overshootPct <= limitPct,
     sets: scores.length,
   };
 }
 
 /** On the second-worst set, for the finalists and the results. */
-export function standing(scores: SetScore[], limitPct: number): Standing {
+export function standing(scores: SetScore[], limitPct: number | null): Standing {
   const overshootPct = secondWorst(scores.map((s) => s.overshootPct));
   return {
     timeouts: scores.filter((s) => s.timedOut).length,
     overshootPct,
     ms: secondWorst(scores.map(msOf)),
-    qualified: overshootPct <= limitPct,
+    qualified: limitPct === null || overshootPct <= limitPct,
     sets: scores.length,
   };
 }
@@ -140,7 +143,7 @@ export const compareStandings = (a: Standing, b: Standing): number =>
 export function plan(
   search: Search,
   scores: Record<string, SetScore[]>,
-  limitPct: number,
+  limitPct: number | null,
   stay: string | null,
 ): { search: Search; next: string | null } {
   let current = search;
@@ -156,7 +159,7 @@ export function plan(
   return { search: current, next: null };
 }
 
-function closeRound(search: Search, scores: Record<string, SetScore[]>, limitPct: number): Search {
+function closeRound(search: Search, scores: Record<string, SetScore[]>, limitPct: number | null): Search {
   const last = search.round === search.rounds.length - 1;
   if (last || search.alive.length <= FINALISTS) return { ...search, round: search.round + 1 };
   const ranked = [...search.alive].sort((a, b) =>
@@ -177,7 +180,7 @@ function closeRound(search: Search, scores: Record<string, SetScore[]>, limitPct
 export function ranking(
   search: Search,
   scores: Record<string, SetScore[]>,
-  limitPct: number,
+  limitPct: number | null,
 ): { id: string; standing: Standing; droppedIn: number | null }[] {
   const row = (id: string) => ({
     id,
