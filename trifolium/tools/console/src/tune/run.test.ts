@@ -68,7 +68,7 @@ describe("a gains run", () => {
 
   it("opens and closes on the baseline, with one every eight candidate sets between", () => {
     const config = { ...DEFAULT_CONFIG, kp: [0.1, 0.2, 0.4], ki: [0.25, 0.5, 1], n: 3 };
-    const ids = order(startRun(config, BASE));
+    const ids = order(startRun(config, BASE, 500));
     expect(ids[0]).toBe(BASELINE);
     expect(ids[ids.length - 1]).toBe(BASELINE);
     expect(ids[9]).toBe(BASELINE);
@@ -76,16 +76,17 @@ describe("a gains run", () => {
     expect(ids.filter((id) => id !== BASELINE)).toHaveLength(27);
   });
 
-  it("scores a set on its summed spin-ups, timed out if any was", () => {
+  it("scores a set on its summed spin-ups, a timed-out one at the rampup timeout", () => {
     const set = { id: "x", at: 0, spinups: [spinup(150), { ...spinup(200), overshootPct: 4 }] };
-    expect(scoreOf(set)).toEqual({ timedOut: false, ms: 350, overshootPct: 4 });
-    expect(scoreOf({ ...set, spinups: [spinup(150), spinup(null)] }).timedOut).toBe(true);
+    expect(scoreOf(set, 500)).toEqual({ timedOut: false, ms: 350, overshootPct: 4 });
+    const timedOut = scoreOf({ ...set, spinups: [spinup(150), spinup(null)] }, 500);
+    expect(timedOut).toMatchObject({ timedOut: true, ms: 650 });
   });
 });
 
 describe("captureFile", () => {
   it("names a capture by its run's start, set index, label and RPM", () => {
-    const run = startRun(DEFAULT_CONFIG, BASE);
+    const run = startRun(DEFAULT_CONFIG, BASE, 500);
     run.startedAt = new Date(2026, 10, 5, 14, 50, 37).getTime();
     expect(captureFile(run, BASELINE, 30000)).toBe(
       "tune-2026-11-05_14-50-37_set000_baseline-PID-kp-0.2-ki-0.5_30000rpm.csv",

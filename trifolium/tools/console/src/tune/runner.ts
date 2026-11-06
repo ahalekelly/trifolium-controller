@@ -51,8 +51,9 @@ interface MotorsDump {
 /** What a run needs from the device config, or why it will not do. */
 export function runSettings(
   device: unknown,
-): { holdMs: number; captureMs: number; cells: number } | string {
-  const holdMs = Number(getByKey(device, "device:rampupTimeout_ms")) + SETTLE_MS;
+): { rampupTimeoutMs: number; holdMs: number; captureMs: number; cells: number } | string {
+  const rampupTimeoutMs = Number(getByKey(device, "device:rampupTimeout_ms"));
+  const holdMs = rampupTimeoutMs + SETTLE_MS;
   const captureMs = Number(getByKey(device, "device:rpmLogLength"));
   const cells = parseInt(String(getByKey(device, "device:batteryType")), 10); // "4s"
   if (getByKey(device, "device:useRpmLogging") !== true) {
@@ -61,7 +62,7 @@ export function runSettings(
   if (captureMs < holdMs) {
     return `Capture Samples must be at least the rampup timeout plus ${SETTLE_MS} ms: ${holdMs}.`;
   }
-  return { holdMs, captureMs, cells };
+  return { rampupTimeoutMs, holdMs, captureMs, cells };
 }
 
 export class TuneRunner {
@@ -116,7 +117,9 @@ export class TuneRunner {
 
   start(config: TuneConfig, baseline: Gains, device: unknown) {
     if (this.looping) throw new Error("a run is already going");
-    void this.loop(startRun(config, baseline), device);
+    const settings = runSettings(device);
+    if (typeof settings === "string") throw new Error(settings);
+    void this.loop(startRun(config, baseline, settings.rampupTimeoutMs), device);
   }
 
   resume(device: unknown) {

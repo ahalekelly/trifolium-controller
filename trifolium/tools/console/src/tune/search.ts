@@ -9,7 +9,7 @@
 /** One set's outcome. A timed-out set never got every wheel to speed at some RPM. */
 export interface SetScore {
   timedOut: boolean;
-  /** Spin-up time summed over the set's RPMs; meaningless when timed out. */
+  /** Spin-up time summed over the set's RPMs, a timed-out spin-up at the rampup timeout. */
   ms: number;
   /** The worst motor's overshoot past target at any of its RPMs, % of target. */
   overshootPct: number;

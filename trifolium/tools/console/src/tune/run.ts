@@ -74,7 +74,7 @@ export interface SetRecord {
 export type RunStatus = "running" | "paused" | "done";
 
 /** Changes whenever Run's shape does, so a run another build saved is refused rather than misread. */
-const RUN_VERSION = 2;
+const RUN_VERSION = 3;
 
 export interface Run {
   version: typeof RUN_VERSION;
@@ -82,6 +82,8 @@ export interface Run {
   startedAt: number;
   config: TuneConfig;
   baseline: Gains;
+  /** The blaster's rampup timeout as the run started: a timed-out spin-up counts at it. */
+  rampupTimeoutMs: number;
   candidates: Candidate[];
   search: Search;
   sets: SetRecord[];
@@ -140,13 +142,14 @@ export function candidatesFor(config: TuneConfig, baseline: Gains): Candidate[] 
   return [...byId].map(([id, g]) => ({ id, gains: g }));
 }
 
-export function startRun(config: TuneConfig, baseline: Gains): Run {
+export function startRun(config: TuneConfig, baseline: Gains, rampupTimeoutMs: number): Run {
   const candidates = candidatesFor(config, baseline);
   return {
     version: RUN_VERSION,
     startedAt: Date.now(),
     config,
     baseline,
+    rampupTimeoutMs,
     candidates,
     search: startSearch(
       candidates.map((c) => c.id),
@@ -159,10 +162,10 @@ export function startRun(config: TuneConfig, baseline: Gains): Run {
   };
 }
 
-export function scoreOf(set: SetRecord): SetScore {
+export function scoreOf(set: SetRecord, rampupTimeoutMs: number): SetScore {
   return {
     timedOut: set.spinups.some((s) => s.readyMs === null),
-    ms: set.spinups.reduce((sum, s) => sum + (s.readyMs ?? 0), 0),
+    ms: set.spinups.reduce((sum, s) => sum + (s.readyMs ?? rampupTimeoutMs), 0),
     overshootPct: Math.max(...set.spinups.map((s) => s.overshootPct)),
   };
 }
@@ -170,7 +173,7 @@ export function scoreOf(set: SetRecord): SetScore {
 /** Each candidate's set scores, in the order they ran. */
 export function scoresOf(run: Run): Record<string, SetScore[]> {
   const scores: Record<string, SetScore[]> = {};
-  for (const set of run.sets) (scores[set.id] ??= []).push(scoreOf(set));
+  for (const set of run.sets) (scores[set.id] ??= []).push(scoreOf(set, run.rampupTimeoutMs));
   return scores;
 }
 

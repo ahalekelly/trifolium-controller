@@ -27,7 +27,7 @@ import {
   type TuneConfig,
 } from "../tune/run";
 import { runSettings, type TuneRunner } from "../tune/runner";
-import { plannedSets, ranking, standing, type Standing } from "../tune/search";
+import { plannedSets, ranking, standing, type SetScore, type Standing } from "../tune/search";
 import { Fieldset } from "./Section";
 import { RpmChart, type Series } from "./RpmChart";
 
@@ -105,13 +105,20 @@ function configOf(
 
 const cellSx = { py: 0.25, px: 1 };
 
-function StandingCells({ s }: { s: Standing }) {
+const msText = (ms: number) =>
+  ms === Infinity ? "timeout" : Number.isNaN(ms) ? "—" : `${Math.round(ms)} ms`;
+
+function StandingCells({ s, scores }: { s: Standing; scores: SetScore[] }) {
+  const mean = scores.reduce((sum, x) => sum + x.ms, 0) / scores.length;
+  const slowest = scores.length
+    ? Math.max(...scores.map((x) => (x.timedOut ? Infinity : x.ms)))
+    : NaN;
   return (
     <>
       <TableCell sx={cellSx}>{s.timeouts}</TableCell>
-      <TableCell sx={cellSx}>
-        {s.ms === Infinity ? "timeout" : Number.isNaN(s.ms) ? "—" : `${Math.round(s.ms)} ms`}
-      </TableCell>
+      <TableCell sx={cellSx}>{msText(mean)}</TableCell>
+      <TableCell sx={cellSx}>{msText(slowest)}</TableCell>
+      <TableCell sx={cellSx}>{msText(s.ms)}</TableCell>
       <TableCell sx={cellSx}>
         {Number.isNaN(s.overshootPct) ? "—" : `${s.overshootPct.toFixed(1)}%`}
       </TableCell>
@@ -120,7 +127,7 @@ function StandingCells({ s }: { s: Standing }) {
   );
 }
 
-function Results({ run }: { run: Run }) {
+export function Results({ run }: { run: Run }) {
   const limit = run.config.overshootLimitPct;
   const scores = scoresOf(run);
   const rows = ranking(run.search, scores, limit);
@@ -129,7 +136,16 @@ function Results({ run }: { run: Run }) {
     <Table size="small" sx={{ width: "auto" }}>
       <TableHead>
         <TableRow>
-          {["Candidate", "", "Timeouts", "p95 spin-up", "p95 overshoot", "Sets"].map((h) => (
+          {[
+            "Candidate",
+            "",
+            "Timeouts",
+            "Mean",
+            "Slowest",
+            "2nd slowest",
+            "2nd worst overshoot",
+            "Sets",
+          ].map((h) => (
             <TableCell key={h} sx={{ ...cellSx, fontWeight: 600 }}>
               {h}
             </TableCell>
@@ -149,7 +165,7 @@ function Results({ run }: { run: Run }) {
                     ? "best"
                     : "finalist"}
             </TableCell>
-            <StandingCells s={s} />
+            <StandingCells s={s} scores={scores[id] ?? []} />
           </TableRow>
         ))}
         {scores[BASELINE] && (
@@ -158,7 +174,7 @@ function Results({ run }: { run: Run }) {
               Baseline: {gainsLabel(run.baseline)}
             </TableCell>
             <TableCell sx={cellSx} />
-            <StandingCells s={standing(scores[BASELINE], limit)} />
+            <StandingCells s={standing(scores[BASELINE], limit)} scores={scores[BASELINE]} />
           </TableRow>
         )}
       </TableBody>
@@ -284,9 +300,11 @@ export function Tune({
               {Math.round((spinups * SPINUP_S) / 60)} min), with the blaster's own settings
               {baseline ? ` (${gainsLabel(baseline)})` : ""} rerun between every few to show drift.
               Each spin-up holds Rev from a standstill. Halving drops the slower half after a few
-              spin-ups each; the finalists rank on fewest rampup timeouts, then the 95th percentile
-              spin-up summed over the target RPMs, and one whose 95th percentile overshoot passes
-              the limit cannot win. Nothing is stored until you apply the winner.
+              spin-ups each; the finalists rank on fewest rampup timeouts, then the second-slowest
+              of their N spin-ups per finalist (the 95th percentile at the default N = 20), each
+              summed over the target RPMs, and one whose second-worst overshoot passes the limit
+              cannot win. Mean counts a timed-out spin-up at the rampup timeout, so it is a lower
+              bound when Timeouts is not 0. Nothing is stored until you apply the winner.
             </Typography>
             {problem && live && (
               <Alert severity="info" sx={{ py: 0 }}>
@@ -314,7 +332,7 @@ export function Tune({
   const packV = lastSet && Math.min(...lastSet.spinups.map((s) => s.packMv)) / 1000;
   const baselineMs = run.sets
     .filter((s) => s.id === BASELINE)
-    .map((s) => scoreOf(s))
+    .map((s) => scoreOf(s, run.rampupTimeoutMs))
     .map((s) => (s.timedOut ? "timeout" : `${s.ms}`));
   const best =
     run.status === "done"
