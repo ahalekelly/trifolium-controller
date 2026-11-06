@@ -31,6 +31,7 @@ import {
   loadRun,
   measure,
   nextSet,
+  runName,
   saveRun,
   startingId,
   startRun,
@@ -98,6 +99,15 @@ export interface EscIo {
   write(values: EscValues): Promise<EscSettings[]>;
 }
 
+/**
+ * Where a run's files go, as downloads: each capture as it comes in, a refused one included, and
+ * the whole run once it is done.
+ */
+export interface RunFiles {
+  capture(csv: string, name: string): void;
+  run(run: Run, name: string): void;
+}
+
 export class TuneRunner {
   /** Read from the browser by load(), once the Tune page first opens or a blaster connects. */
   private run: Saved = null;
@@ -110,14 +120,10 @@ export class TuneRunner {
   private working = false;
   private captureWaiter: ((capture: Capture) => void) | null = null;
 
-  /**
-   * `save` keeps each capture a run takes as a CSV file named `name`, a refused one included, so a
-   * run's raw data outlives it.
-   */
   constructor(
     private transport: SerialTransport,
     private escs: EscIo,
-    private save: (csv: string, name: string) => void,
+    private files: RunFiles,
   ) {}
 
   subscribe = (listener: () => void) => {
@@ -226,11 +232,19 @@ export class TuneRunner {
    * Drops a run that is not going, once any ESC settings it owes are back. With another blaster
    * connected, the user is giving up on the run's own, and it goes without them.
    */
+  /** Drops the run, saving it first unless it saved itself on finishing. */
   async discard() {
     await this.drive(async () => {
       if (!this.otherBlaster()) {
         await this.settle();
         if (this.run !== "unreadable" && this.run?.restoreEscs) return; // the page says it is owed
+      }
+      const run = this.run;
+      if (run === "unreadable") {
+        const why = "The discarded run was saved by another console build; no JSON saved.";
+        this.transport.log("ok", why);
+      } else if (run !== null && run.status !== "done") {
+        this.files.run(run, `${runName(run)}.json`);
       }
       this.set(null);
     });
@@ -378,6 +392,9 @@ export class TuneRunner {
         const next = nextSet(run);
         if (next === null) {
           this.change({ status: "done" });
+          // Only this loop ends a run, and nothing loops a done one, so it saves once here;
+          // discard() leaves a done run unsaved for that reason.
+          this.files.run(this.current, `${runName(this.current)}.json`);
           return;
         }
         if (this.pauseWanted) {
@@ -478,7 +495,7 @@ export class TuneRunner {
     const got = await capture;
     this.captureWaiter = null;
     if (lost && !got?.report.timedOut) return lost as string;
-    if (got) this.save(got.csv, file);
+    if (got) this.files.capture(got.csv, file);
 
     if (!got) {
       throw new Error(

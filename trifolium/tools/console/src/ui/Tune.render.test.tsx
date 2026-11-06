@@ -51,7 +51,7 @@ async function formText(
   await act(async () =>
     root.render(
       <Tune
-        runner={new TuneRunner({} as SerialTransport, { read: unused, write: unused }, unused)}
+        runner={new TuneRunner({} as SerialTransport, { read: unused, write: unused }, { capture: unused, run: unused })}
         live
         device={DEVICE}
         gainMax={{ kp: 2, ki: 2 }}
@@ -369,7 +369,7 @@ describe("the Apply button", () => {
     await act(async () =>
       root.render(
         <Tune
-          runner={new TuneRunner(transport, { read: unused, write: unused }, unused)}
+          runner={new TuneRunner(transport, { read: unused, write: unused }, { capture: unused, run: unused })}
           live
           device={DEVICE}
           gainMax={{ kp: 2, ki: 2 }}

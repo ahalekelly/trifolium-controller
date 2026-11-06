@@ -460,7 +460,7 @@ def test_a_tune_run_on_noisy_wheels_rules_out_the_overshooting_and_ranks_the_slo
     assert [(m["kp"], m["ki"]) for m in settings["motorConfig"]][1::2] == [(0.2, 1), (0.2, 1)]
 
 
-def test_a_tune_run_outlives_a_reload_paused_then_resumes_to_the_end_and_exports(page, serve):
+def test_a_tune_run_outlives_a_reload_paused_then_resumes_to_the_end_and_saves_its_json(page, serve):
     served = serve(device={"useRpmLogging": True, "rpmLogLength": 1200},
                    profiles={1: {"schemaVersion": 2, "dwellTime_ms": 0}})
     connect(open_console(page, served))
@@ -488,10 +488,11 @@ def test_a_tune_run_outlives_a_reload_paused_then_resumes_to_the_end_and_exports
     expect(page.get_by_text("The console was closed mid-run. Resume to carry on.")).to_be_visible()
     expect(page.get_by_role("button", name="Resume")).to_be_disabled()
     connect(page)
-    page.get_by_role("button", name="Resume").click()
-    finish_tune(page, 60_000)
-    with page.expect_download() as download:
-        page.get_by_role("button", name="Export JSON").click()
+    # A run saves its JSON as it finishes.
+    with page.expect_download(lambda d: d.suggested_filename.endswith(".json"),
+                              timeout=60_000) as download:
+        page.get_by_role("button", name="Resume").click()
+    finish_tune(page, 10_000)
     run = json.loads(open(download.value.path(), encoding="utf-8").read())
     assert [s["id"] for s in run["sets"]] == ["baseline"] * 3 + ["PID kp 0.2 ki 1"] * 2 + [
         "baseline"] * 3

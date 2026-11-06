@@ -340,7 +340,10 @@ export function App() {
           read: () => escIo.current.read(),
           write: (values) => escIo.current.write(values),
         },
-        (csv, name) => downloadCsv(wholeRows(csv).csv, name),
+        {
+          capture: (csv, name) => downloadCsv(wholeRows(csv).csv, name),
+          run: (run, name) => downloadJson(name, run),
+        },
       ),
     [transport],
   );

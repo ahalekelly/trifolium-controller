@@ -14,6 +14,7 @@ import {
   DEFAULT_CONFIG,
   DEFAULT_GAINS,
   plannedRun,
+  runName,
   type Run,
   type TuneConfig,
 } from "./run";
@@ -152,7 +153,10 @@ function rig() {
   };
   const saved: string[] = [];
   const runnerOn = () =>
-    (blaster.runner = new TuneRunner(transport, io, (_, name) => void saved.push(name)));
+    (blaster.runner = new TuneRunner(transport, io, {
+      capture: (_, name) => void saved.push(name),
+      run: () => {},
+    }));
   runnerOn();
   return { ...blaster, blaster, runnerOn, saved };
 }
@@ -480,6 +484,7 @@ const heldReport = { readyMs: 300, slowestMotor: 1, timedOut: false, maxThrottle
 function gainsRig(revs: Rev[]) {
   const logged: string[] = [];
   const saved: string[] = [];
+  const exported: string[] = [];
   let rpm = 0;
   let runner: TuneRunner;
   const transport = {
@@ -527,19 +532,22 @@ function gainsRig(revs: Rev[]) {
     },
   } as unknown as SerialTransport;
   const unused = () => Promise.reject(new Error("a gains run leaves the ESCs alone"));
-  runner = new TuneRunner(transport, { read: unused, write: unused }, (_, name) =>
-    void saved.push(name),
-  );
-  return { runner, logged, saved };
+  runner = new TuneRunner(transport, { read: unused, write: unused }, {
+    capture: (_, name) => void saved.push(name),
+    run: (run, name) => void exported.push(`${name} ${run.status}`),
+  });
+  return { runner, logged, saved, exported };
 }
 
 describe("a lost hold", () => {
   it("redoes the spin-up, keeping only the redo's capture", async () => {
-    const { runner, logged, saved } = gainsRig(["held", "late"]);
+    const { runner, logged, saved, exported } = gainsRig(["held", "late"]);
     void runner.start(GAINS_CONFIG, GAINS, DEVICE);
     await idle(runner);
     const run = runOf(runner);
     expect(run.status).toBe("done");
+    // The finished run saves itself, once.
+    expect(exported).toEqual([`${runName(run)}.json done`]);
     expect(run.sets.map((s) => s.spinups[0].readyMs)).toEqual(Array(8).fill(300));
     expect(saved).toHaveLength(8);
     expect(new Set(saved).size).toBe(8);
@@ -549,7 +557,7 @@ describe("a lost hold", () => {
   });
 
   it("pauses the run once three tries running lose it", async () => {
-    const { runner, logged, saved } = gainsRig(["held", "late", "late", "late"]);
+    const { runner, logged, saved, exported } = gainsRig(["held", "late", "late", "late"]);
     void runner.start(GAINS_CONFIG, GAINS, DEVICE);
     await idle(runner);
     const run = runOf(runner);
@@ -559,6 +567,7 @@ describe("a lost hold", () => {
     );
     expect(run.sets).toHaveLength(1);
     expect(saved).toHaveLength(1);
+    expect(exported).toEqual([]);
     expect(logged).toHaveLength(2);
   });
 
@@ -589,5 +598,38 @@ describe("applying a gains run's winner", () => {
     runner.applyGains(runOf(runner).candidates[0], apply);
     expect(apply).toHaveBeenCalledWith({ control: "pid", kp: 0.2, ki: 1 });
     expect(runOf(runner).applied).toBe(true);
+  });
+});
+
+describe("the run's JSON", () => {
+  it("saves a finished run once, and not again on discard", async () => {
+    const { runner, exported } = gainsRig([]);
+    void runner.start(GAINS_CONFIG, GAINS, DEVICE);
+    await idle(runner);
+    const name = `${runName(runOf(runner))}.json`;
+    await runner.discard();
+    expect(runner.getRun()).toBeNull();
+    expect(exported).toEqual([`${name} done`]);
+  });
+
+  it("saves an unfinished run on discard", async () => {
+    const { runner, exported } = gainsRig(["held", "late", "late", "late"]);
+    void runner.start(GAINS_CONFIG, GAINS, DEVICE);
+    await idle(runner);
+    const name = `${runName(runOf(runner))}.json`;
+    await runner.discard();
+    expect(exported).toEqual([`${name} paused`]);
+  });
+
+  it("says so when the discarded run is another build's", async () => {
+    localStorage.setItem("trifolium.tune", JSON.stringify({ version: 1 }));
+    const { runner, logged, exported } = gainsRig([]);
+    runner.load();
+    expect(runner.getRun()).toBe("unreadable");
+    await runner.discard();
+    expect(exported).toEqual([]);
+    expect(logged).toEqual([
+      "The discarded run was saved by another console build; no JSON saved.",
+    ]);
   });
 });

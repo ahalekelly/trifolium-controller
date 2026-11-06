@@ -14,7 +14,6 @@ import TextField from "@mui/material/TextField";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Typography from "@mui/material/Typography";
-import { downloadJson } from "../config/bundle";
 import { accepted, parseShown, shown, type EscField } from "../esc/layouts";
 import type { EscSettings } from "../esc/session";
 import {
@@ -27,7 +26,6 @@ import {
   DEFAULT_GAINS,
   gainsLabel,
   overshootLimit,
-  runName,
   plannedRun,
   rankingOf,
   startingId,
@@ -801,13 +799,6 @@ export function Tune({
                 {run.applied ? "Applied" : "Apply"} {winner.name}
               </Button>
             )}
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={() => downloadJson(`${runName(run)}.json`, run)}
-            >
-              Export JSON
-            </Button>
             {run.status !== "running" && (
               <Button
                 size="small"
