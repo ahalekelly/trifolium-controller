@@ -16,6 +16,8 @@ Per-motor hardware configuration and PID tuning, which are wiring facts rather t
 | **Test This Motor** | action | `Live` · `can lock` | Spins just this one motor at a fixed test speed for about 2 seconds, others held off. Refuses on the pusher's channel, as above. |
 | **Change Direction** | action | `Live` · `can lock` | Reverses which way this motor turns, by writing the ESC's own stored direction, then spins the wheel so you can see the result. Use it when a wheel turns the wrong way instead of swapping phase wires. The screen names what it just wrote, not what the ESC holds — nothing can read that back — so the spin is the real answer. Refuses on the pusher's channel. |
 
+The **RPM** and **ESC** rows of the [Web Console](Web-Console)'s motor table show each motor's live RPM and its ESC's voltage, current and temperature while the page is open, as the menu's ESC Dashboard does. A dash is a reading the ESC has not sent.
+
 ## When the pusher is on a motor channel
 
 Some builds drive the pusher from one of the four motor outputs instead of a FET, and that output is then the pusher's, not a flywheel's. It is usually **Motor 3**. Whether your build does this, and which channel it uses, is set on the [Web Console](Web-Console)'s Wiring page rather than decided by the PCB.
