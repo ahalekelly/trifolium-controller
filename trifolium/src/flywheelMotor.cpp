@@ -61,8 +61,11 @@ bool FlywheelMotor::readTelemetry(uint32_t& erpmOut)
         telemetryStressRaw = value;
         telemetryStressSeen = true;
         break;
+    case BidirDshotTelemetryType::DEBUG_FRAME_1:
+        telemetryDebug1Raw = value;
+        break;
     default:
-        break; // NO_PACKET/CHECKSUM_ERROR/STATUS/DEBUG_FRAME_*
+        break; // NO_PACKET/CHECKSUM_ERROR/STATUS/DEBUG_FRAME_2
     }
     return false;
 }

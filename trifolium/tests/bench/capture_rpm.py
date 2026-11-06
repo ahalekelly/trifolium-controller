@@ -5,8 +5,9 @@
     python tests/bench/capture_rpm.py socket://127.0.0.1:5333     # against serve.py, to try it
 
 A capture is the firmware's own RPM log. From the moment the wheels start to rev it records 2000
-control-loop samples - 2 s at 1 kHz - of each motor's RPM, target and throttle and the pack voltage,
-then dumps them over serial. Everything a scenario shows has to happen in the 2 s after a rev starts.
+control-loop samples - 2 s at 1 kHz - of each motor's RPM, target, throttle and raw EDT values and
+the pack voltage, then dumps them over serial. Everything a scenario shows has to happen in the 2 s
+after a rev starts.
 
 For each scenario the walk sets up the running profile, says what to do, and saves the dump. It
 changes only what the scenarios need - RPM logging, and in the running profile the fire modes,
@@ -31,7 +32,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bench_harness as H  # noqa: E402
 
 LOG_LENGTH = 2000  # the firmware's MAX_RPM_LOG_LENGTH
-HEADER_RE = re.compile(r"^Voltage_mv,(Current_mv,)?(Motor \d+,TargetRPM \d+,Throttle \d+,value \d+,)+$")
+HEADER_RE = re.compile(r"^Voltage_mv,(Current_mv,)?(Motor \d+,TargetRPM \d+,Throttle \d+,value \d+,)+"
+                       r"(EdtV \d+,EdtI \d+,EdtT \d+,EdtD1 \d+,)+$")
 WAIT_FOR_ACTION_S = 120
 PIN_NOT_USED = 255
 
