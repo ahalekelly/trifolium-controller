@@ -444,7 +444,8 @@ def test_a_tune_run_on_noisy_wheels_drops_the_overshooting_and_ranks_the_slow_th
     page.get_by_label("Pause below V a cell").fill("3")
     page.get_by_role("button", name="Start", exact=True).click()
     finish_tune(page, 120_000)
-    status = lambda name: page.get_by_role("row", name=re.compile(f"^{re.escape(name)} "))
+    # A row's name opens with its chart checkbox's label.
+    status = lambda name: page.get_by_role("row", name=re.compile(f"^Chart {re.escape(name)} "))
     expect(status("PID kp 0.2 ki 1")).to_contain_text("best")
     expect(status("PID kp 0.02 ki 1")).to_contain_text("finalist")
     expect(status("PID kp 1 ki 1")).to_contain_text("dropped in round 1")
