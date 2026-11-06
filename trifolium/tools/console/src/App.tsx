@@ -56,6 +56,7 @@ import { FlashDialog } from "./ui/FlashDialog";
 import { DEVICE_LAYOUT, PROFILE_LAYOUT } from "./ui/layout";
 import { LoadKindDialog } from "./ui/LoadKindDialog";
 import { logToText } from "./ui/LogView";
+import { LogStore } from "./ui/logStore";
 import { PinConflicts } from "./ui/PinConflicts";
 import { ProfileBar } from "./ui/ProfileBar";
 import { ProfileCopyDialog } from "./ui/ProfileCopyDialog";
@@ -177,9 +178,6 @@ class SettingsUnread extends Error {
   }
 }
 
-/** The device log keeps the newest this many lines. */
-const LOG_LINES = 1000;
-
 /** Device keys edited on the Wiring page, whose edits count there rather than under Blaster. */
 const WIRING_KEYS = new Set([
   ...(DEVICE_LAYOUT.find((s) => s.label === "Wiring")?.keys ?? []),
@@ -260,7 +258,6 @@ export function App() {
     profiles: FIXTURE_PROFILES,
   });
   const [dirty, setDirty] = React.useState<Set<string>>(new Set());
-  const [log, setLog] = React.useState<LogLine[]>([]);
   /** The RPM capture page's box: held here so a finished capture lands in it from any page. */
   const [rpmText, setRpmText] = React.useState("");
   /** Save CSV files: every finished capture downloads as it arrives, whichever page is open. */
@@ -315,10 +312,11 @@ export function App() {
 
   // The transport is built once, so it reaches state - rebuilt every render - through this.
   const onCapture = React.useRef<(capture: Capture) => void>(() => {});
+  const log = React.useMemo(() => new LogStore(), []);
   const transport = React.useMemo(
     () =>
       new SerialTransport({
-        onLog: (line) => setLog((prev) => [...prev.slice(-(LOG_LINES - 1)), line]),
+        onLog: log.push,
         onDisconnect: () => {
           setLive(false);
           setWiringByHand(false); // a different device may need the picker
@@ -328,7 +326,7 @@ export function App() {
         },
         onCapture: (capture) => onCapture.current(capture),
       }),
-    [],
+    [log],
   );
   // The runner is built once too, so it reaches escSession() through this.
   const escIo = React.useRef<EscIo>(null!);
@@ -365,8 +363,7 @@ export function App() {
     note("ok", "RPM capture finished.");
   };
 
-  const note = (kind: LogLine["kind"], text: string) =>
-    setLog((prev) => [...prev, { kind, text, at: Date.now() }]);
+  const note = (kind: LogLine["kind"], text: string) => log.push({ kind, text, at: Date.now() });
 
 
   /**
@@ -1111,7 +1108,7 @@ export function App() {
 
   const saveLogFile = () => {
     const name = `trifolium-log-${stamp()}.txt`;
-    const blob = new Blob([logToText(log)], { type: "text/plain" });
+    const blob = new Blob([logToText(log.lines())], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -2225,13 +2222,12 @@ export function App() {
           }
           log={
             <LogDrawer
-              lines={log}
+              log={log}
               open={logOpen}
               verbose={verbose}
               onToggleVerbose={live ? toggleVerbose : undefined}
               verboseDisabled={busy}
               onToggle={() => setLogOpen((v) => !v)}
-              onClear={() => setLog([])}
               onSave={saveLogFile}
               height={logHeight}
               onResize={setLogHeight}

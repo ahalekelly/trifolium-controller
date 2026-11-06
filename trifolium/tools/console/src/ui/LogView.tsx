@@ -1,14 +1,8 @@
 import React from "react";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
+import { useTheme } from "@mui/material/styles";
 import type { LogLine } from "../serial/transport";
-
-const COLOUR: Record<LogLine["kind"], string> = {
-  out: "text.secondary",
-  in: "text.primary",
-  ok: "success.main",
-  err: "error.main",
-};
 
 export const clock = (at: number) => new Date(at).toTimeString().slice(0, 8);
 
@@ -28,6 +22,15 @@ export const logToText = (lines: LogLine[]): string =>
  */
 export function Lines({ lines, dense = true }: { lines: LogLine[]; dense?: boolean }) {
   const scrollRef = React.useRef<HTMLDivElement>(null);
+  const { palette, spacing } = useTheme();
+  // Lines are plain elements: a thousand MUI Boxes take several times longer to render.
+  const colour: Record<LogLine["kind"], string> = {
+    out: palette.text.secondary,
+    in: palette.text.primary,
+    ok: palette.success.main,
+    err: palette.error.main,
+  };
+  const stampStyle = { color: palette.text.disabled, marginRight: spacing(1) };
 
   // Pin to the newest line by setting scrollTop rather than calling scrollIntoView: a plain property
   // assignment degrades to a no-op where the DOM is only partly implemented, instead of throwing and
@@ -35,7 +38,7 @@ export function Lines({ lines, dense = true }: { lines: LogLine[]; dense?: boole
   React.useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [lines.length]);
+  }, [lines]);
 
   return (
     <Box
@@ -58,12 +61,10 @@ export function Lines({ lines, dense = true }: { lines: LogLine[]; dense?: boole
         </Typography>
       ) : (
         lines.map((l, i) => (
-          <Box key={i} sx={{ color: COLOUR[l.kind] }}>
-            <Box component="span" sx={{ color: "text.disabled", mr: 1 }}>
-              {clock(l.at)}
-            </Box>
+          <div key={i} style={{ color: colour[l.kind] }}>
+            <span style={stampStyle}>{clock(l.at)}</span>
             {l.kind === "in" ? `(device) ${l.text}` : l.text}
-          </Box>
+          </div>
         ))
       )}
     </Box>
