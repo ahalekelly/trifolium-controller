@@ -11,7 +11,6 @@ import {
   BASELINE,
   DEFAULT_CONFIG,
   DEFAULT_GAINS,
-  plannedEscWrites,
   startRun,
   type Run,
   type SetRecord,
@@ -142,13 +141,32 @@ describe("the spin-up chart", () => {
     expect(onCheck).toHaveBeenCalledWith([BASELINE, "PID kp 0.2 ki 1"]);
   });
 
+  it("shows the candidate with the baseline's settings and the baseline as one row", () => {
+    const run = startRun(
+      { ...DEFAULT_CONFIG, grid: { ...DEFAULT_GAINS, kp: [0.2, 0.4], ki: [0.5] } },
+      { gains: { control: "pid", kp: 0.2, ki: 0.5 }, esc: null },
+      null,
+      null,
+      500,
+    );
+    run.sets = [set(BASELINE, [[0]]), set("PID kp 0.4 ki 0.5", [[0]])];
+    act(() => root.render(<Results run={run} checked={[]} onCheck={() => {}} />));
+    const rows = [...host.querySelectorAll("tbody tr")].map((tr) => tr.textContent);
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r!.startsWith("PID kp 0.2 ki 0.5"))).toMatch(
+      /^PID kp 0\.2 ki 0\.5 \(starting settings\).*1$/,
+    );
+    expect(rows.some((r) => r!.includes("Baseline"))).toBe(false);
+  });
+
   it("overlays every motor of every spin-up of each checked row, a colour per row", () => {
     const sets = [
       set("a", [[0, 100, 200], [0, 90, 180]]),
       set("b", [[0, 50, 100], [0, 40, 80]]),
       set("a", [[0, 120, 240], [0, 80, 160]]),
     ];
-    act(() => root.render(<SpinupTraces sets={sets} rpms={[30000]} checked={["a", "b"]} />));
+    const chart = <SpinupTraces sets={sets} rpms={[30000]} checked={["a", "b"]} same={null} />;
+    act(() => root.render(chart));
     const paths = [...host.querySelectorAll("path")];
     // One path a row, a line in it a motor a spin-up.
     expect(paths.map((p) => p.getAttribute("d")!.split("M").length - 1)).toEqual([4, 2]);
@@ -157,7 +175,7 @@ describe("the spin-up chart", () => {
   });
 
   it("asks for a row to chart when none is checked", () => {
-    act(() => root.render(<SpinupTraces sets={[]} rpms={[30000]} checked={[]} />));
+    act(() => root.render(<SpinupTraces sets={[]} rpms={[30000]} checked={[]} same={null} />));
     expect(host.textContent).toContain("Check rows to chart their spin-ups.");
   });
 });
@@ -178,16 +196,15 @@ describe("the ESC run form", () => {
     expect(text).not.toContain("Motor poles");
     expect(text).not.toContain("Brake on stop");
     expect(text).not.toContain("Overshoot limit");
-    // Rounds end on 10 and 20 spin-ups: 4 x 10, then 2 finalists x 10 more.
-    const writes = plannedEscWrites(4, 20, true);
-    expect(text).toContain(`4 candidates, about 60 spin-ups and at most ${writes} ESC writes`);
+    // Rounds end on 10 and 20 spin-ups: 4 x 10, then 2 finalists x 10 more. A write opens each
+    // candidate's block, and each baseline block but the first.
+    expect(text).toContain("4 candidates, about 60 spin-ups and about 8 ESC writes");
   });
 
   it("plans every candidate's N spin-ups without halving", async () => {
     const grid = { startup_power: "80, 120", motor_kv: "off, 3220" };
     const text = await formText(escsWith(V4_DEFAULT[25]), grid, false);
-    const writes = plannedEscWrites(4, 20, false);
-    expect(text).toContain(`4 candidates, about 80 spin-ups and at most ${writes} ESC writes`);
+    expect(text).toContain("4 candidates, about 80 spin-ups and about 6 ESC writes");
     expect(text).toContain("Spin-ups per candidate");
     expect(text).toContain("Every candidate gets N spin-ups.");
   });

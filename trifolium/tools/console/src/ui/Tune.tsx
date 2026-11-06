@@ -19,16 +19,18 @@ import type { EscSettings } from "../esc/session";
 import {
   BASELINE,
   baselineOf,
-  candidatesFor,
+  countsFor,
   DEFAULT_CONFIG,
   DEFAULT_GAINS,
   gainsLabel,
   overshootLimit,
   runName,
-  plannedEscWrites,
+  plannedRun,
+  startingId,
   scoreOf,
   scoresOf,
   settingsLabel,
+  startRun,
   TRACE_STEP,
   type EscGrid,
   type Gains,
@@ -38,7 +40,7 @@ import {
   type TuneConfig,
 } from "../tune/run";
 import { runSettings, type TuneRunner } from "../tune/runner";
-import { planned, ranking, standing, type SetScore, type Standing } from "../tune/search";
+import { ranking, standing, type SetScore, type Standing } from "../tune/search";
 import { escRows, type EscRow } from "./EscSettings";
 import { Fieldset } from "./Section";
 import { RpmChart, type Series } from "./RpmChart";
@@ -196,6 +198,7 @@ export function Results({
   const scores = scoresOf(run);
   const rows = ranking(run.search, scores, limit);
   const done = run.status === "done";
+  const same = startingId(run);
   const box = (id: string, label: string) => {
     const on = checked.includes(id);
     const colour = on ? colourOf(checked, id) : undefined;
@@ -236,7 +239,15 @@ export function Results({
         {rows.map(({ id, standing: s, droppedIn }, i) => (
           <TableRow key={id}>
             {box(id, id)}
-            <TableCell sx={cellSx}>{id}</TableCell>
+            <TableCell sx={cellSx}>
+              {id}
+              {id === same && (
+                <Typography component="span" sx={{ fontSize: "inherit", fontStyle: "italic" }}>
+                  {" "}
+                  (starting settings)
+                </Typography>
+              )}
+            </TableCell>
             <TableCell sx={{ ...cellSx, color: "text.secondary" }}>
               {droppedIn !== null
                 ? `dropped in round ${droppedIn + 1}`
@@ -249,7 +260,7 @@ export function Results({
             <StandingCells s={s} scores={scores[id] ?? []} />
           </TableRow>
         ))}
-        {scores[BASELINE] && (
+        {scores[BASELINE] && same === null && (
           <TableRow>
             {box(BASELINE, "the baseline")}
             <TableCell sx={{ ...cellSx, fontStyle: "italic" }}>
@@ -266,17 +277,20 @@ export function Results({
 
 /**
  * Every spin-up of each checked row, overlaid, a chart per target RPM: each motor's RPM, in the
- * row's colour. Memoised on the sets, which change only as a set ends, so the chart redraws once
- * a set and never while a rev is held.
+ * row's colour. The starting candidate's row has the baseline's spin-ups too, as `same` says.
+ * Memoised on the sets, which change only as a set ends, so the chart redraws once a set and never
+ * while a rev is held.
  */
 export const SpinupTraces = React.memo(function SpinupTraces({
   sets,
   rpms,
   checked,
+  same,
 }: {
   sets: SetRecord[];
   rpms: number[];
   checked: string[];
+  same: string | null;
 }) {
   if (checked.length === 0) {
     return (
@@ -291,7 +305,7 @@ export const SpinupTraces = React.memo(function SpinupTraces({
         const series: Series[] = checked.map((id) => ({
           name: id === BASELINE ? "Baseline" : id,
           colour: colourOf(checked, id),
-          lines: sets.filter((s) => s.id === id).flatMap((s) => s.spinups[k].trace),
+          lines: sets.filter((s) => countsFor(s, id, same)).flatMap((s) => s.spinups[k].trace),
         }));
         return (
           <Box key={rpm}>
@@ -386,6 +400,22 @@ export function Tune({
   const rows = React.useMemo(() => (escs ? searchableRows(escs) : []), [escs]);
   const config = configOf(draft, gainMax, rows);
   const settings = runSettings(device);
+  const baseline = baselineOf(device);
+  const current = run === null || run === "unreadable" ? null : run;
+  // Running a plan through takes a while for a big grid, so each is worked out once.
+  const draftKey = JSON.stringify([config, baseline]);
+  const draftPlan = React.useMemo(() => {
+    if (typeof config === "string" || baseline === null) return null;
+    const escNow = (name: string) => rows.find((r) => r.field.name === name)!.raws[0]!;
+    const { grid } = config;
+    const esc =
+      grid.kind === "esc"
+        ? Object.fromEntries(grid.fields.map(({ field }) => [field.name, escNow(field.name)]))
+        : null;
+    const draftRun = startRun(config, { gains: baseline, esc }, null, null, 0);
+    return { count: draftRun.candidates.length, ...plannedRun(draftRun) };
+  }, [draftKey, rows]);
+  const runPlan = React.useMemo(() => current && plannedRun(current), [current?.candidates]);
   const field = (key: keyof Form, label: string, width = 160) => (
     <TextField
       size="small"
@@ -418,12 +448,10 @@ export function Tune({
   }
 
   if (!run) {
-    const baseline = baselineOf(device);
-    const ready = typeof config !== "string" && baseline !== null;
-    const count = ready ? candidatesFor(config.grid, { gains: baseline, esc: null }).length : 0;
-    const sets = ready ? planned(count, config.n, config.halving).sets : 0;
-    const spinups = ready ? sets * config.rpms.length : 0;
-    const writes = ready && kind === "esc" ? plannedEscWrites(count, config.n, config.halving) : 0;
+    const count = draftPlan?.count ?? 0;
+    const spinups =
+      draftPlan && typeof config !== "string" ? draftPlan.sets * config.rpms.length : 0;
+    const writes = draftPlan?.writes ?? 0;
     const minutes = Math.round((spinups * SPINUP_S + writes * ESC_WRITE_S) / 60);
     const problem =
       kind === "esc" && escs === null
@@ -506,10 +534,11 @@ export function Tune({
             </Stack>
             <Typography variant="caption" color="text.secondary">
               {count} candidates, about {spinups} spin-ups
-              {kind === "esc" ? ` and at most ${writes} ESC writes` : ""} ({minutes} min), with the
+              {kind === "esc" ? ` and about ${writes} ESC writes` : ""} ({minutes} min), with the
               blaster's own settings
               {baseline && kind === "gains" ? ` (${gainsLabel(baseline)})` : ""}{" "}
-              rerun between every few to show drift. Each spin-up holds Rev from a standstill.
+              rerun between every few to show drift; a candidate with those settings counts those
+              spin-ups as its own. Each spin-up holds Rev from a standstill.
               {halving
                 ? "Halving drops the slower half after a few spin-ups each, down to two finalists. "
                 : "Every candidate gets N spin-ups. "}
@@ -569,9 +598,6 @@ export function Tune({
   // Nothing to apply when even the best overshoots past the limit.
   const winner = best?.standing.qualified ? run.candidates.find((c) => c.id === best.id)! : null;
   const escRun = run.config.grid.kind === "esc";
-  const { n, halving: halvingRun } = run.config;
-  const plannedSets = planned(run.candidates.length, n, halvingRun).sets;
-  const plannedWrites = plannedEscWrites(run.candidates.length, n, halvingRun);
   return (
     <Stack spacing={1.25}>
       <Fieldset label="Search">
@@ -582,9 +608,9 @@ export function Tune({
               : run.status === "running"
                 ? `Running round ${run.search.round + 1} of ${run.search.rounds.length}.`
                 : "Paused."}{" "}
-            {candidateSets} of about {plannedSets} candidate sets{lastSet ? `, pack ${packV.toFixed(2)} V` : ""}.
-            {escRun &&
-              ` ${run.escWrites} of ${plannedWrites} planned ESC writes.`}
+            {candidateSets} of about {runPlan!.sets} candidate sets
+            {lastSet ? `, pack ${packV.toFixed(2)} V` : ""}.
+            {escRun && ` ${run.escWrites} of about ${runPlan!.writes} planned ESC writes.`}
           </Typography>
           {activityLine}
           {run.note && (
@@ -654,7 +680,12 @@ export function Tune({
       <Fieldset label="Results">
         <Stack spacing={1} sx={{ pt: 1 }}>
           <Results run={run} checked={checked} onCheck={setChecked} />
-          <SpinupTraces sets={run.sets} rpms={run.config.rpms} checked={checked} />
+          <SpinupTraces
+            sets={run.sets}
+            rpms={run.config.rpms}
+            checked={checked}
+            same={startingId(run)}
+          />
         </Stack>
       </Fieldset>
     </Stack>

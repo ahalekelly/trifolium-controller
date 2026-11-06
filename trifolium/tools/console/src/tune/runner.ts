@@ -32,6 +32,7 @@ import {
   measure,
   nextSet,
   saveRun,
+  startingId,
   startRun,
   type Candidate,
   type EscRecord,
@@ -358,7 +359,10 @@ export class TuneRunner {
     if (failed) this.change({ note: failed });
   }
 
-  /** `loaded` is what the ESCs are known to hold: a candidate's id, BASELINE, or null for unknown. */
+  /**
+   * `loaded` is what the ESCs are known to hold: a candidate's id, BASELINE - the starting
+   * candidate's too - or null for unknown.
+   */
   private async loop(loaded: string | null, device: unknown) {
     this.setWorking(true);
     this.pauseWanted = false;
@@ -377,13 +381,15 @@ export class TuneRunner {
           return;
         }
         const trial = next === BASELINE ? run.baseline : run.candidates.find((c) => c.id === next)!;
-        if (trial.esc && loaded !== next) {
+        // The starting candidate's settings are the baseline's: ESCs holding one hold the other.
+        const holds = next === startingId(run) ? BASELINE : next;
+        if (trial.esc && loaded !== holds) {
           loaded = null;
           // Owed from before the write starts: a page closed partway leaves the ESCs in doubt.
-          if (next !== BASELINE) this.change({ restoreEscs: true });
-          await this.writeEscs(trial.esc, next === BASELINE ? "the original settings" : next);
-          loaded = next;
-          if (next === BASELINE) this.change({ restoreEscs: false });
+          if (holds !== BASELINE) this.change({ restoreEscs: true });
+          await this.writeEscs(trial.esc, holds === BASELINE ? "the original settings" : next);
+          loaded = holds;
+          if (holds === BASELINE) this.change({ restoreEscs: false });
         }
         const spinups: Spinup[] = [];
         for (const rpm of run.config.rpms) {

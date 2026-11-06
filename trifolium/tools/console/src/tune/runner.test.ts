@@ -13,7 +13,7 @@ import {
   BASELINE,
   DEFAULT_CONFIG,
   DEFAULT_GAINS,
-  plannedEscWrites,
+  plannedRun,
   type Run,
   type TuneConfig,
 } from "./run";
@@ -221,7 +221,7 @@ describe("an ESC run", () => {
     expect(blocksOf(run)).toEqual([BASELINE, C80, C120, C150, BASELINE]);
     expect(sessions(events)).toBe(5);
     expect(run.escWrites).toBe(4);
-    expect(run.escWrites).toBe(plannedEscWrites(3, 2, true));
+    expect(run.escWrites).toBe(plannedRun(run).writes);
     // Every write restarts the blaster, and it answers again before the next rev.
     events.forEach((e, i) => {
       if (e !== "ESC_PASSTHROUGH") return;
@@ -232,6 +232,23 @@ describe("an ESC run", () => {
     expect(run.restoreEscs).toBe(false);
     expect(escs.escs.map((e) => e.block)).toEqual([V4_DEFAULT, V4_DEFAULT]);
     expect(events[events.length - 1]).toBe("TUNE");
+  });
+
+  it("never writes the candidate with the ESCs' own settings, whose sets the baseline's are", async () => {
+    const { runner, events } = rig();
+    const field = LAYOUTS[4].fields.find((f) => f.name === "startup_power")!;
+    const grid = { kind: "esc" as const, fields: [{ field, values: [80, ORIGINAL_POWER] }] };
+    const config = { ...CONFIG, grid };
+    void runner.start(config, GAINS, DEVICE);
+    await idle(runner);
+
+    const run = runOf(runner);
+    expect(run.status).toBe("done");
+    // The opening baseline block gives the ESCs' own its 2 sets, so only 80 is written.
+    expect(blocksOf(run)).toEqual([BASELINE, C80, BASELINE]);
+    expect(run.escWrites).toBe(2);
+    expect(run.escWrites).toBe(plannedRun(run).writes);
+    expect(sessions(events)).toBe(3);
   });
 
   it("pauses on a write that fails, saying what the ESC said, and puts back the ESCs' own", async () => {
@@ -296,7 +313,7 @@ describe("an ESC run", () => {
     expect(run.status).toBe("done");
     expectMeasuredOnItsOwnSettings(run);
     // Pausing cost two writes: the ESCs' own back, then the candidate again.
-    expect(run.escWrites).toBe(plannedEscWrites(3, 2, true) + 2);
+    expect(run.escWrites).toBe(plannedRun(run).writes + 2);
   });
 
   it("owes the ESCs' own across a dropped link and a reload, and puts them back on connecting", async () => {

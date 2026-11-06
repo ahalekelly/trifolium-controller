@@ -14,9 +14,10 @@ import {
   measure,
   nextSet,
   overshootLimit,
-  plannedEscWrites,
+  plannedRun,
   scoreOf,
   scoresOf,
+  startingId,
   startRun,
   type EscGrid,
   type Run,
@@ -79,8 +80,10 @@ describe("a gains run", () => {
     expect(ids[0]).toBe(BASELINE);
     expect(ids[ids.length - 1]).toBe(BASELINE);
     expect(ids[9]).toBe(BASELINE);
-    // Every round ends on n = 3 sets here, so the first round spends them all.
-    expect(ids.filter((id) => id !== BASELINE)).toHaveLength(27);
+    // Every round ends on n = 3 sets here, so the first round spends them all - but kp 0.2 ki 0.5,
+    // the blaster's own, has its 3 from the baseline.
+    expect(ids.filter((id) => id !== BASELINE)).toHaveLength(24);
+    expect(ids).not.toContain("PID kp 0.2 ki 0.5");
   });
 
   it("scores a set on its summed spin-ups, a timed-out one at the rampup timeout", () => {
@@ -167,7 +170,8 @@ describe("an ESC run", () => {
 
   it("runs each candidate's round as one block, and baselines in blocks of 3 between", () => {
     const config = { ...DEFAULT_CONFIG, grid: grid({ pwm_frequency: [16, 24, 32, 48] }), n: 20 };
-    const ids = order(startRun(config, { gains: GAINS, esc: { pwm_frequency: 24 } }, null, null, 500));
+    const run = startRun(config, { gains: GAINS, esc: { pwm_frequency: 20 } }, null, null, 500);
+    const ids = order(run);
     const blocks: [string, number][] = [];
     for (const id of ids) {
       const last = blocks[blocks.length - 1];
@@ -189,7 +193,7 @@ describe("an ESC run", () => {
       [BASELINE, 3],
     ]);
     // Every block but the first is a write.
-    expect(blocks.length - 1).toBeLessThanOrEqual(plannedEscWrites(4, 20, true));
+    expect(plannedRun(run)).toEqual({ sets: 60, writes: blocks.length - 1 });
   });
 
   it("without halving, runs every candidate's n sets as one block, baselines between", () => {
@@ -199,13 +203,12 @@ describe("an ESC run", () => {
       n: 20,
       halving: false,
     };
-    const run = startRun(config, { gains: GAINS, esc: { pwm_frequency: 24 } }, null, null, 500);
+    const run = startRun(config, { gains: GAINS, esc: { pwm_frequency: 20 } }, null, null, 500);
     const ids = order(run);
     const [c16, c24, c32, c48] = run.candidates.map((c) => c.id);
     const blocks = ids.filter((id, i) => id !== ids[i - 1]);
     expect(blocks).toEqual([BASELINE, c16, c24, BASELINE, c32, c48, BASELINE]);
-    expect(ids.filter((id) => id !== BASELINE)).toHaveLength(80);
-    expect(blocks.length - 1).toBeLessThanOrEqual(plannedEscWrites(4, 20, false));
+    expect(plannedRun(run)).toEqual({ sets: 80, writes: blocks.length - 1 });
   });
 });
 
@@ -247,6 +250,57 @@ describe("the overshoot limit", () => {
       [steady, true],
       [fast, false],
     ]);
+  });
+});
+
+describe("the candidate with the baseline's settings", () => {
+  const field = LAYOUTS[4].fields.find((f) => f.name === "pwm_frequency")!;
+  const config = {
+    ...DEFAULT_CONFIG,
+    grid: { kind: "esc" as const, fields: [{ field, values: [16, 24, 32, 48] }] },
+    n: 20,
+    halving: false,
+  };
+  const runOn = (pwm: number) =>
+    startRun(config, { gains: GAINS, esc: { pwm_frequency: pwm } }, null, null, 500);
+
+  it("is one with the baseline: its sets count, so it runs fewer and is written for none", () => {
+    const run = runOn(24);
+    const [c16, c24, c32, c48] = run.candidates.map((c) => c.id);
+    expect(startingId(run)).toBe(c24);
+    expect(startingId(runOn(20))).toBeNull();
+    const ids = order(run);
+    const blocks: [string, number][] = [];
+    for (const id of ids) {
+      const last = blocks[blocks.length - 1];
+      if (last?.[0] === id) last[1]++;
+      else blocks.push([id, 1]);
+    }
+    // c24, with the most sets already, goes last, by when two baseline blocks are 6 of its 20.
+    // Baseline blocks still come every 24 candidate sets, as 3, and close the run.
+    expect(blocks).toEqual([
+      [BASELINE, 3],
+      [c16, 20],
+      [c32, 20],
+      [BASELINE, 3],
+      [c48, 20],
+      [c24, 14],
+      [BASELINE, 3],
+    ]);
+    // c24 to the baseline is no write: 5, where 6 would be.
+    expect(plannedRun(run)).toEqual({ sets: 74, writes: 5 });
+    expect(plannedRun(runOn(20))).toEqual({ sets: 80, writes: 6 });
+  });
+
+  it("ranks on exactly n of its sets, the baseline's among them", () => {
+    let run = runOn(24);
+    for (const id of order(run)) {
+      run = { ...run, sets: [...run.sets, { id, at: 0, spinups: [spinup(100)] }] };
+    }
+    const c24 = startingId(run)!;
+    expect(scoresOf(run)[c24]).toHaveLength(23);
+    const rows = ranking(run.search, scoresOf(run), null);
+    expect(rows.find((r) => r.id === c24)!.standing.sets).toBe(20);
   });
 });
 

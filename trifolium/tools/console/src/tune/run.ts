@@ -14,7 +14,7 @@ import type { EscSettings } from "../esc/session";
 import { parseRpmCsv, wholeRows } from "../rpm/parse";
 import { getByKey } from "../schema/keyPath";
 import type { Capture } from "../serial/transport";
-import { plan, planned, startSearch, type Search, type SetScore } from "./search";
+import { plan, startSearch, type Search, type SetScore } from "./search";
 
 export type Control = "pid" | "tbh";
 
@@ -138,8 +138,11 @@ export interface SetRecord {
 
 export type RunStatus = "running" | "paused" | "done";
 
-/** Changes whenever Run's shape does, so a run another build saved is refused rather than misread. */
-const RUN_VERSION = 6;
+/**
+ * Changes whenever Run's shape or how its sets count does, so a run another build saved is refused
+ * rather than misread.
+ */
+const RUN_VERSION = 7;
 
 export interface Run {
   version: typeof RUN_VERSION;
@@ -286,14 +289,38 @@ export function escOriginals(escs: EscRecord[], grid: EscGrid): EscValues {
 }
 
 /**
- * At most how many ESC writes an ESC run of `count` candidates takes: one per candidate block, and
- * one per baseline block after the first, which the run's opening read leaves the ESCs on. A
- * candidate that ends one round and opens the next is not written again, and a run that pauses
- * writes twice more: the baseline's settings back, then the candidate's again on Resume.
+ * The candidate whose settings are the baseline's, when the grid has one. It and the baseline are
+ * one row: every baseline set counts as one of its sets too, so it needs fewer of its own.
  */
-export function plannedEscWrites(count: number, n: number, halving: boolean): number {
-  const { sets, blocks } = planned(count, n, halving);
-  return blocks + Math.floor(sets / BASELINE_BLOCKS.esc.every) + 1;
+export function startingId(run: Run): string | null {
+  const id = settingsLabel(run.config.grid, run.baseline);
+  return run.candidates.some((c) => c.id === id) ? id : null;
+}
+
+/**
+ * The candidate sets a run takes, and the ESC writes an ESC run does: its plan run through on sets
+ * that all score alike. Exact without halving; with it, close, as who survives moves the baseline
+ * sets' share. The run's opening read leaves the ESCs on the baseline, a write is a change of
+ * settings, and a run that pauses writes twice more: the baseline's back, then the candidate's on
+ * Resume.
+ */
+export function plannedRun(run: Run): { sets: number; writes: number } {
+  const same = startingId(run);
+  const settingsOf = (id: string) => (id === same ? BASELINE : id);
+  const spinup: Spinup = { rpm: 0, file: "", readyMs: 0, overshootPct: 0, packMv: 0, trace: [] };
+  let current = startRun(run.config, run.baseline, run.escs, run.blaster, run.rampupTimeoutMs);
+  let loaded = BASELINE;
+  let writes = 0;
+  for (;;) {
+    const { search, next } = nextSet(current);
+    if (next === null) break;
+    if (settingsOf(next) !== loaded) writes++;
+    loaded = settingsOf(next);
+    const sets = [...current.sets, { id: next, at: 0, spinups: [spinup] }];
+    current = { ...current, search, sets };
+  }
+  const sets = current.sets.filter((s) => s.id !== BASELINE).length;
+  return { sets, writes: run.config.grid.kind === "esc" ? writes : 0 };
 }
 
 export function startRun(
@@ -334,10 +361,19 @@ export function scoreOf(set: SetRecord, rampupTimeoutMs: number): SetScore {
   };
 }
 
-/** Each candidate's set scores, in the order they ran. */
+/** Whether a set counts for `id`: its own, and for the starting candidate the baseline's too. */
+export const countsFor = (set: SetRecord, id: string, same: string | null) =>
+  set.id === id || (id === same && set.id === BASELINE);
+
+/** Each candidate's set scores and the baseline's, in the order they ran - see countsFor(). */
 export function scoresOf(run: Run): Record<string, SetScore[]> {
+  const same = startingId(run);
   const scores: Record<string, SetScore[]> = {};
-  for (const set of run.sets) (scores[set.id] ??= []).push(scoreOf(set, run.rampupTimeoutMs));
+  for (const set of run.sets) {
+    const score = scoreOf(set, run.rampupTimeoutMs);
+    (scores[set.id] ??= []).push(score);
+    if (same && set.id === BASELINE) (scores[same] ??= []).push(score);
+  }
   return scores;
 }
 

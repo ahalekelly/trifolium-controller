@@ -5,7 +5,9 @@
 // give every surviving candidate a few sets and drop the worse half on medians, which is cheap and
 // robust to a stray set; the finalists then get exactly n sets, ranked on the second-worst, which
 // for the default n = 20 is the 95th percentile: the spin-up a user can count on. Without halving,
-// the search is that last round alone: every candidate is a finalist.
+// the search is that last round alone: every candidate is a finalist. A candidate may have more
+// sets than a round asks for - one that shares the baseline's settings gets every baseline set
+// too - so each round judges every candidate on its first sets, up to the round's count.
 
 /** One set's outcome. A timed-out set never got every wheel to speed at some RPM. */
 export interface SetScore {
@@ -50,30 +52,6 @@ export function startSearch(ids: string[], n: number, halving: boolean): Search 
   if (ids.length === 0) throw new Error("a search needs at least one candidate");
   if (n < 2) throw new Error("the 95th percentile needs n of at least 2");
   return { rounds: roundTargets(ids.length, n, halving), round: 0, alive: [...ids], dropped: {} };
-}
-
-/**
- * How many sets a search of `count` candidates runs, baseline sets aside, and in how many blocks: a
- * block is one candidate's sets for one round.
- */
-export function planned(
-  count: number,
-  n: number,
-  halving: boolean,
-): { sets: number; blocks: number } {
-  let alive = count;
-  let done = 0;
-  let sets = 0;
-  let blocks = 0;
-  for (const target of roundTargets(count, n, halving)) {
-    if (target > done) {
-      sets += alive * (target - done);
-      blocks += alive;
-    }
-    done = target;
-    if (alive > FINALISTS) alive = Math.max(FINALISTS, Math.ceil(alive / 2));
-  }
-  return { sets, blocks };
 }
 
 export const finished = (search: Search): boolean => search.round >= search.rounds.length;
@@ -162,9 +140,9 @@ export function plan(
 function closeRound(search: Search, scores: Record<string, SetScore[]>, limitPct: number | null): Search {
   const last = search.round === search.rounds.length - 1;
   if (last || search.alive.length <= FINALISTS) return { ...search, round: search.round + 1 };
-  const ranked = [...search.alive].sort((a, b) =>
-    compareStandings(earlyStanding(scores[a], limitPct), earlyStanding(scores[b], limitPct)),
-  );
+  const target = search.rounds[search.round];
+  const early = (id: string) => earlyStanding(scores[id].slice(0, target), limitPct);
+  const ranked = [...search.alive].sort((a, b) => compareStandings(early(a), early(b)));
   const keep = new Set(ranked.slice(0, Math.max(FINALISTS, Math.ceil(ranked.length / 2))));
   const dropped = { ...search.dropped };
   for (const id of search.alive) if (!keep.has(id)) dropped[id] = search.round;
@@ -176,17 +154,20 @@ function closeRound(search: Search, scores: Record<string, SetScore[]>, limitPct
   };
 }
 
-/** Every candidate, best first: the finalists on their n sets, then the rest, last dropped first. */
+/**
+ * Every candidate, best first: the finalists on their first n sets, then the rest, last dropped
+ * first, each on its sets up to the round it left in.
+ */
 export function ranking(
   search: Search,
   scores: Record<string, SetScore[]>,
   limitPct: number | null,
 ): { id: string; standing: Standing; droppedIn: number | null }[] {
-  const row = (id: string) => ({
-    id,
-    standing: standing(scores[id] ?? [], limitPct),
-    droppedIn: search.dropped[id] ?? null,
-  });
+  const row = (id: string) => {
+    const droppedIn = search.dropped[id] ?? null;
+    const sets = search.rounds[droppedIn ?? search.rounds.length - 1];
+    return { id, standing: standing((scores[id] ?? []).slice(0, sets), limitPct), droppedIn };
+  };
   const finalists = search.alive.map(row).sort((a, b) => compareStandings(a.standing, b.standing));
   const dropped = Object.keys(search.dropped)
     .map(row)
