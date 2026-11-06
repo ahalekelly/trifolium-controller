@@ -6,6 +6,7 @@
 // way an unplugged Web Serial port does.
 
 import { connect } from "node:net";
+import type { EventEmitter } from "node:events";
 import type { Duplex } from "node:stream";
 import { SerialPort } from "serialport";
 import { CMD } from "../esc/fourway";
@@ -117,6 +118,41 @@ class DuplexPort implements Port {
   }
 }
 
+/**
+ * The serial port at `path`. @serialport/bindings-cpp calls into JavaScript from its poll callback
+ * without letting Node run the promise continuations that resolves (serialport/bindings-cpp#239,
+ * unreleased), so on Node 26.4 and later a read or write waiting on the poller stalls until some
+ * unrelated timer fires - a second, here. An immediate scheduled from each poller event runs them.
+ */
+export function serialPortAt(path: string, info: SerialPortInfo, trace: Trace): Port {
+  return new DuplexPort(
+    path,
+    info,
+    async (baudRate) => {
+      const port = new SerialPort({ path, baudRate, autoOpen: false });
+      await new Promise<void>((resolve, reject) => port.open((e) => (e ? reject(e) : resolve())));
+      // The Windows binding has no poller: it reads through its own threads.
+      if (process.platform !== "win32") {
+        const poller = (port.port as { poller?: EventEmitter } | undefined)?.poller;
+        if (!poller) throw new Error(`${path} opened without the poller its reads wait on`);
+        for (const event of ["readable", "writable"]) poller.on(event, () => setImmediate(() => {}));
+      }
+      // A write's callback means the kernel has the bytes, not that they went out, and closing
+      // a port opened non-blocking, as serialport opens it, throws away what has not: the 4-way
+      // reset that restarts the ESCs, last before passthrough ends. So it drains first. Both
+      // error once the device has gone, which leaves nothing to send or close.
+      const close = async () => {
+        const draining = Date.now();
+        await new Promise<void>((resolve) => port.drain(() => resolve()));
+        trace(`port: drained in ${Date.now() - draining} ms`, false);
+        await new Promise<void>((resolve) => port.close(() => resolve()));
+      };
+      return { stream: port, close };
+    },
+    trace,
+  );
+}
+
 /** What every Trifolium enumerates as, which the simulator's serial stands in for too. */
 const BLASTER = { usbVendorId: 0x2e8a, usbProductId: 0x000a };
 
@@ -132,21 +168,7 @@ export const usbSerialApi = (trace: Trace): SerialApi => ({
       .map((p) => {
         const path = p.path.replace(/^\/dev\/tty\./, "/dev/cu.");
         const info = { usbVendorId: parseInt(p.vendorId!, 16), usbProductId: parseInt(p.productId!, 16) };
-        return new DuplexPort(path, info, async (baudRate) => {
-          const port = new SerialPort({ path, baudRate, autoOpen: false });
-          await new Promise<void>((resolve, reject) => port.open((e) => (e ? reject(e) : resolve())));
-          // A write's callback means the kernel has the bytes, not that they went out, and closing
-          // a port opened non-blocking, as serialport opens it, throws away what has not: the 4-way
-          // reset that restarts the ESCs, last before passthrough ends. So it drains first. Both
-          // error once the device has gone, which leaves nothing to send or close.
-          const close = async () => {
-            const draining = Date.now();
-            await new Promise<void>((resolve) => port.drain(() => resolve()));
-            trace(`port: drained in ${Date.now() - draining} ms`, false);
-            await new Promise<void>((resolve) => port.close(() => resolve()));
-          };
-          return { stream: port, close };
-        }, trace);
+        return serialPortAt(path, info, trace);
       });
   },
   requestPort: () =>

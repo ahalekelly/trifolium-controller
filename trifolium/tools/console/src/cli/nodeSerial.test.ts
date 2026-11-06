@@ -17,7 +17,9 @@ const opened = vi.hoisted(
 
 vi.mock("serialport", async () => {
   const { PassThrough } = await import("node:stream");
+  const { EventEmitter } = await import("node:events");
   class SerialPort extends PassThrough {
+    port = { poller: new EventEmitter() };
     static list = async () => [
       { path: "/dev/tty.Bluetooth-Incoming-Port" },
       { path: "/dev/tty.usbmodem101", vendorId: "2e8a", productId: "000a" },
