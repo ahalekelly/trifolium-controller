@@ -98,10 +98,10 @@ def test_ctrl_c_pauses_a_run_on_the_blasters_own_gains_and_discard_saves_it(sim,
     out = []
     for line in cli.stdout:
         out.append(line)
-        if line.startswith("set 4 "):
+        if line.split(" ", 1)[1].startswith("set 4 "):  # past the time each line leads with
             cli.send_signal(signal.SIGINT)
     assert cli.wait(timeout=60) == 3, "".join(out)
-    assert "status: paused\n" in out
+    assert any(line.endswith(" status: paused\n") for line in out)
     sim.until_own_ki()
 
     discarded = subprocess.run(sim.tune("discard", run_dir), cwd=CONSOLE, capture_output=True,

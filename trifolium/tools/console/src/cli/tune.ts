@@ -41,7 +41,12 @@ Without --port it opens the one Trifolium plugged in over USB.`;
 /** Paused: the run is stored, waiting for resume or discard. */
 const EXIT_PAUSED = 3;
 
-const say = (text: string) => process.stdout.write(`${text}\n`);
+/** A line of output, led by the time to the millisecond, so a session's steps can be timed. */
+const say = (text: string, at = Date.now()) => {
+  const d = new Date(at);
+  const time = [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, "0"));
+  process.stdout.write(`${time.join(":")}.${String(d.getMilliseconds()).padStart(3, "0")} ${text}\n`);
+};
 
 /** The stored run, one file in the run directory, as the browser keeps it in localStorage. */
 function fileStore(file: string): RunStore {
@@ -134,8 +139,8 @@ async function main(args: string[]) {
 
   let runner: TuneRunner;
   const transport = new SerialTransport(api, {
-    onLog: ({ kind, text }) => {
-      if (kind === "ok" || kind === "err") say(`log: ${text}`);
+    onLog: ({ kind, text, at }) => {
+      if (kind !== "in") say(`log: ${text}`, at);
     },
     onCapture: (capture) => runner.capture(capture),
   });

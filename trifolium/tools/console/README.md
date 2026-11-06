@@ -16,7 +16,7 @@ It opens the one Trifolium plugged in over USB, so close any console tab that ha
 
 The run directory gets each capture's CSV as it comes in, the stored run (`stored-run.json`), and the run's JSON (`tune-<start>.json`) when it finishes or is discarded unfinished: the files the tab downloads. A directory holds one run.
 
-Progress goes to stdout: a line per finished set, per change of activity or status, and per console log result or error. The exit code says how it ended:
+Progress goes to stdout, each line led by the time: a line per finished set, per change of activity, status or note, and per console log line, the commands it sends included. The exit code says how it ended:
 
 - 0: done, with the ranking printed, or discarded.
 - 3: paused. The line before says why: a low pack, SAFE, a lost connection. Fix that, then `resume`, or `discard`.
