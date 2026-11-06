@@ -127,9 +127,6 @@ export const DEVICE_LAYOUT: SectionSpec[] = [
       "device:lowVoltageWarningPerCell_mv",
       "device:lowBattBeep",
       "device:voltageCalibrationFactor",
-      // Moved here from Device: it is the averaging window for the voltage reading, so it belongs
-      // with the thresholds it smooths rather than with unrelated device options.
-      "device:voltageAveragingWindow",
     ],
   },
   {
@@ -203,6 +200,7 @@ export const DEVICE_LAYOUT: SectionSpec[] = [
       "device:i2cSclPin",
       "device:batteryAdcPin",
       "device:speedPotPin",
+      "device:currentAdcPin",
       "device:escEnablePin",
       "device:triggerSwitchNormallyClosed",
       "device:revSwitchNormallyClosed",

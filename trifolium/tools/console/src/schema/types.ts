@@ -178,6 +178,16 @@ export interface Schema {
   tree: SchemaNode[];
 }
 
+/** A DUMP_STATS reply: lifetime records, 0 where nothing has been read yet. */
+export interface UsageStats {
+  cmd: "DUMP_STATS";
+  ok: boolean;
+  shotsFired: number;
+  /** The ESC current-sense pin's highest reading while the wheels ran. */
+  maxCurrent_mv: number;
+  maxEscTemp_C: number;
+}
+
 /** A DUMP_BOOT reply. Boot faults print before a host can attach, so this is the durable channel. */
 export interface BootStatus {
   cmd: "DUMP_BOOT";

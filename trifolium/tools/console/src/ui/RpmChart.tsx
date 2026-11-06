@@ -9,7 +9,6 @@ export interface Series {
   name: string;
   colour: string;
   values: number[];
-  dash?: string;
   /** Scaled against its own extent and labelled on the right, for signals the left axis crushes. */
   axis?: "left" | "right";
 }
@@ -160,7 +159,6 @@ export function RpmChart({
             fill="none"
             stroke={s.colour}
             strokeWidth={1.4}
-            strokeDasharray={s.dash}
           />
         ))}
 
@@ -171,7 +169,7 @@ export function RpmChart({
             y1={PAD.top}
             y2={PAD.top + plotH}
             stroke={axisText}
-            strokeDasharray="2 2"
+            strokeOpacity={0.5}
           />
         )}
       </svg>

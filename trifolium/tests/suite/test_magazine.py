@@ -173,6 +173,7 @@ def test_an_esc_driven_pusher_is_powered_for_the_same_pushes_as_a_fet(blaster):
     esc = pushes(b, b.wiring()["escPins"][2])
     assert len(esc) == len(fet) > 3
     for (esc_at, esc_len), (fet_at, fet_len) in zip(esc, fet):
-        assert abs(esc_at - fet_at) <= 5000 and abs(esc_len - fet_len) <= 1000
+        # A push ends on a control tick, so where the boot left the tick's phase moves it by one.
+        assert abs(esc_at - fet_at) <= 5000 and abs(esc_len - fet_len) <= 1500
     assert len(b.extends()) == len(esc)
     assert b.magazine_state()["launched"] == 3

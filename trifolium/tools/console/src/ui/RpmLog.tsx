@@ -44,6 +44,8 @@ import { RpmChart, type Series } from "./RpmChart";
 const CSV_ACCEPT = [".csv", ".txt", ".log", "text/plain"] as const;
 
 const COLOURS = ["#4f9dff", "#ff9f40", "#4ad991", "#e57bd8"];
+// What a motor was told (target, throttle) in its colour at half strength; what it did at full.
+const faded = (colour: string) => `${colour}80`;
 
 /** Trim ends when a capture's tail is flat for this many samples, within this fractional jitter. */
 const MIN_FLAT_RUN = 200;
@@ -51,6 +53,20 @@ const FLAT_JITTER = 0.02;
 
 /** The two capture settings, in the order you use them: arm it, then say how long for. */
 const CAPTURE_KEYS = ["device:useRpmLogging", "device:rpmLogLength"];
+
+/** Saves a capture as rpm-capture-<local date and time to the second>.csv. */
+export function downloadCsv(csv: string) {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  const date = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  const time = `${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
+  const url = URL.createObjectURL(new Blob([`${csv}\n`], { type: "text/csv" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `rpm-capture-${date}_${time}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 export interface RpmLogProps {
   schema: Schema;
@@ -62,6 +78,9 @@ export interface RpmLogProps {
   /** The box's text. Held by the app, which fills it with each capture that finishes. */
   text: string;
   onText: (text: string) => void;
+  /** Whether each finished capture downloads as a CSV file. */
+  autoSave: boolean;
+  onAutoSave: (on: boolean) => void;
   /** A held Rev button for step 2, or null where the firmware has no command for it. */
   revHold: React.ReactNode;
 }
@@ -118,6 +137,8 @@ export function RpmLog({
   capturing,
   text,
   onText: setText,
+  autoSave,
+  onAutoSave,
   revHold,
 }: RpmLogProps) {
   const [trim, setTrim] = React.useState(true);
@@ -145,45 +166,63 @@ export function RpmLog({
   }, [text]);
   const parsed = React.useMemo(() => (whole ? parseRpmCsv(whole.csv) : null), [whole]);
 
-  const series: Series[] = React.useMemo(() => {
-    if (!parsed?.motors.length) return [];
-
-    // One cut for every column: they are sampled on the same tick, so the x-axis stays aligned.
-    const cut = trim
+  // One cut for every column, and both charts: they are sampled on the same tick, so the x-axes
+  // stay aligned.
+  const cut = React.useMemo(() => {
+    if (!parsed?.motors.length) return 0;
+    return trim
       ? trailingFlatCut(parsed, MIN_FLAT_RUN, FLAT_JITTER)
       : parsed.motors[0].rpm.length;
+  }, [parsed, trim]);
 
+  const series: Series[] = React.useMemo(() => {
+    if (!parsed?.motors.length) return [];
     const out: Series[] = [];
     parsed.motors.forEach((m, i) => {
       const colour = COLOURS[i % COLOURS.length];
       out.push({ name: `M${m.index} rpm`, colour, values: m.rpm.slice(0, cut) });
       out.push({
         name: `M${m.index} target`,
-        colour,
+        colour: faded(colour),
         values: m.targetRpm.slice(0, cut),
-        dash: "4 3",
       });
-      if (showThrottle) {
-        out.push({
-          name: `M${m.index} throttle`,
-          colour,
-          values: m.throttle.slice(0, cut),
-          dash: "1 3",
-          axis: "right",
-        });
-      }
     });
     if (parsed.voltage.length) {
       out.push({
         name: "pack mV",
         colour: "#9aa0a6",
         values: parsed.voltage.slice(0, cut),
-        dash: "6 3",
         axis: "right",
       });
     }
     return out;
-  }, [parsed, trim, showThrottle]);
+  }, [parsed, cut]);
+
+  // What drives the wheels, under the speed it buys: throttle on the left, the current-sense pin's
+  // mV on the right.
+  const driveSeries: Series[] = React.useMemo(() => {
+    if (!parsed?.motors.length) return [];
+    const out: Series[] = [];
+    if (showThrottle) {
+      parsed.motors.forEach((m, i) => {
+        out.push({
+          name: `M${m.index} throttle`,
+          colour: faded(COLOURS[i % COLOURS.length]),
+          values: m.throttle.slice(0, cut),
+        });
+      });
+    }
+    if (parsed.current.length) {
+      out.push({
+        name: "current-sense mV",
+        colour: "#9aa0a6",
+        values: parsed.current.slice(0, cut),
+        // On the left when alone, else the chart draws an empty left axis.
+        axis: showThrottle ? "right" : "left",
+      });
+    }
+    return out;
+  }, [parsed, cut, showThrottle]);
 
   // Read off the samples rather than the picture: the differences worth seeing between motors are
   // tens of milliseconds, which is where the lines on the chart overlap.
@@ -227,17 +266,6 @@ export function RpmLog({
 
   /** The CSV as it would be saved: the whole rows extracted, not the raw box contents. */
   const csvOut = whole?.csv ?? null;
-
-  const saveCsv = () => {
-    if (!csvOut) return;
-    const blob = new Blob([`${csvOut}\n`], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `rpm-capture-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
 
   return (
     <Stack spacing={1} {...dropProps} sx={dropOutlineSx(over)}>
@@ -292,12 +320,25 @@ export function RpmLog({
         <Button size="small" variant="outlined" onClick={() => fileRef.current?.click()}>
           Open CSV file
         </Button>
-        <Button size="small" variant="outlined" onClick={saveCsv} disabled={!csvOut}>
-          Save CSV file
-        </Button>
         <Button size="small" variant="outlined" onClick={clear} disabled={!text && !error}>
           Clear
         </Button>
+        <FormControlLabel
+          control={
+            <Checkbox
+              size="small"
+              checked={autoSave}
+              onChange={(e) => {
+                onAutoSave(e.target.checked);
+                // Turning it on saves what is already shown; later captures save as they arrive.
+                if (e.target.checked && csvOut) downloadCsv(csvOut);
+              }}
+            />
+          }
+          disableTypography
+          label={<Typography variant="caption">Save CSV files</Typography>}
+          sx={{ m: 0, gap: 0.5 }}
+        />
         <input
           ref={fileRef}
           type="file"
@@ -356,6 +397,7 @@ export function RpmLog({
       {series.length > 0 ? (
         <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 1 }}>
           <RpmChart series={series} />
+          {driveSeries.length > 0 && <RpmChart series={driveSeries} height={180} />}
           {crossings.length > 0 && (
             <Box sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: "divider" }}>
               <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.5 }}>

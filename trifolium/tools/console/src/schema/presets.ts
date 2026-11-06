@@ -48,7 +48,7 @@ export interface PresetFile {
   diagram?: string;
   /** A board no longer offered, kept so a device that stored its id is still recognised. */
   retired?: boolean;
-  /** `telem` and `escADC`, recorded so the information is not lost. Nothing reads them. */
+  /** `telem`, recorded so the information is not lost. Nothing reads it. */
   unread?: Record<string, number>;
   schemaVersion?: number;
   /** ...and then the wiring keys, at the top level. */

@@ -5,8 +5,8 @@
 // chip to do that the chip cannot. Policy is resolution, never refusal - a device that refuses to
 // boot cannot be repaired from the console. Resolution happens in RAM only: the stored config is
 // left as the user wrote it, so the conflict re-reports on the next boot rather than being erased
-// from disk. The one exception is batteryAdcPin, which folds to unused in
-// AdcPinItem::clampToBounds() and persists like any other clamp.
+// from disk. The exceptions are the ADC pins, which fold to unused in
+// AdcPinItem::clampToBounds() and persist like any other clamp.
 namespace PinConflicts
 {
 
