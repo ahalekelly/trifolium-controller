@@ -201,6 +201,11 @@ describe("an ESC run", () => {
     const run = runOf(runner);
     expect(run.status).toBe("done");
     expect(run.baseline.esc).toEqual({ startup_power: ORIGINAL_POWER });
+    // Every field of every ESC as it started, so the export says what each candidate ran on.
+    expect(run.escs!.map((e) => e.motor)).toEqual([1, 2]);
+    expect(run.escs![1]).toMatchObject({ eepromVersion: 4, firmware: "2.21" });
+    expect(Object.keys(run.escs![1].raw)).toHaveLength(LAYOUTS[4].fields.length);
+    expect(run.escs![1].raw.startup_power).toBe(ORIGINAL_POWER);
     expectMeasuredOnItsOwnSettings(run);
     // The opening read leaves the ESCs on the baseline; every later block is one write.
     expect(blocksOf(run)).toEqual([BASELINE, C80, C120, C150, BASELINE]);

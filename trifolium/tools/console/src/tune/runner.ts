@@ -15,7 +15,7 @@
 // Whenever a run stops, the ESCs get the baseline's settings back unless they already hold them -
 // or, when the link or the page went with it, at the next connection.
 
-import type { EscSettings } from "../esc/session";
+import { escTargets, type EscSettings } from "../esc/session";
 import { getByKey } from "../schema/keyPath";
 import { sleep } from "../serial/sleep";
 import type { Capture, CommandAck, SerialTransport } from "../serial/transport";
@@ -23,12 +23,14 @@ import {
   BASELINE,
   captureFile,
   escOriginals,
+  escRecords,
   loadRun,
   measure,
   nextSet,
   saveRun,
   startRun,
   type Candidate,
+  type EscRecord,
   type EscValues,
   type Gains,
   type Run,
@@ -168,25 +170,28 @@ export class TuneRunner {
   }
 
   /**
-   * Starts a run from the blaster's own gains. An ESC run reads the ESCs first, for the settings it
-   * puts back, which leaves them known to hold the baseline. Rejects when that read does.
+   * Starts a run from the blaster's own gains. An ESC run reads the ESCs first, to record all they
+   * hold and the settings it puts back, which leaves them known to hold the baseline. Rejects when
+   * that read does.
    */
   async start(config: TuneConfig, gains: Gains, device: unknown) {
     if (this.working) throw new Error("a run is already going");
     const settings = runSettings(device);
     if (typeof settings === "string") throw new Error(settings);
+    let escs: EscRecord[] | null = null;
     let esc: EscValues | null = null;
     if (config.grid.kind === "esc") {
       this.setWorking(true);
       this.setActivity("Reading the ESCs' settings.");
       try {
-        esc = escOriginals(await this.escs.read(), config.grid);
+        escs = escRecords(await this.escs.read(), escTargets(device).motors);
+        esc = escOriginals(escs, config.grid);
       } finally {
         this.setWorking(false);
         this.setActivity(null);
       }
     }
-    this.set(startRun(config, { gains, esc }, this.transport.chipId, settings.rampupTimeoutMs));
+    this.set(startRun(config, { gains, esc }, escs, this.transport.chipId, settings.rampupTimeoutMs));
     void this.loop(esc ? BASELINE : null, device);
   }
 
