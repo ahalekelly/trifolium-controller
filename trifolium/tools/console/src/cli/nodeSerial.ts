@@ -10,15 +10,21 @@ import type { Duplex } from "node:stream";
 import { SerialPort } from "serialport";
 import type { Port, SerialApi } from "../serial/transport";
 
+/** An open connection, and what ends it: serialport's destroy() leaves the OS port open. */
+interface Opened {
+  stream: Duplex;
+  close(): Promise<void>;
+}
+
 class DuplexPort implements Port {
   readable: ReadableStream<Uint8Array> | null = null;
   writable: WritableStream<Uint8Array> | null = null;
-  private stream: Duplex | null = null;
+  private opened: Opened | null = null;
 
   constructor(
     readonly name: string,
     private info: SerialPortInfo,
-    private opener: (baudRate: number) => Promise<Duplex>,
+    private opener: (baudRate: number) => Promise<Opened>,
   ) {}
 
   getInfo(): SerialPortInfo {
@@ -26,9 +32,9 @@ class DuplexPort implements Port {
   }
 
   async open(options: SerialOptions): Promise<void> {
-    if (this.stream) throw new Error(`${this.name} is already open`);
-    const stream = await this.opener(options.baudRate);
-    this.stream = stream;
+    if (this.opened) throw new Error(`${this.name} is already open`);
+    this.opened = await this.opener(options.baudRate);
+    const { stream } = this.opened;
     let ended = false;
     this.readable = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -57,15 +63,11 @@ class DuplexPort implements Port {
   }
 
   async close(): Promise<void> {
-    const stream = this.stream;
-    this.stream = null;
+    const opened = this.opened;
+    this.opened = null;
     this.readable = null;
     this.writable = null;
-    if (!stream || stream.destroyed) return;
-    await new Promise<void>((resolve) => {
-      stream.once("close", () => resolve());
-      stream.destroy();
-    });
+    await opened?.close();
   }
 }
 
@@ -87,7 +89,9 @@ export const usbSerialApi: SerialApi = {
         return new DuplexPort(path, info, async (baudRate) => {
           const port = new SerialPort({ path, baudRate, autoOpen: false });
           await new Promise<void>((resolve, reject) => port.open((e) => (e ? reject(e) : resolve())));
-          return port;
+          // Its close() errors once the device has gone, which leaves nothing to close.
+          const close = () => new Promise<void>((resolve) => port.close(() => resolve()));
+          return { stream: port, close };
         });
       });
   },
@@ -101,11 +105,17 @@ export function tcpSerialApi(url: string): SerialApi {
   if (!match) throw new Error(`${url} is not socket://host:port`);
   const [, host, port] = match;
   const only = new DuplexPort(url, BLASTER, () =>
-    new Promise<Duplex>((resolve, reject) => {
+    new Promise<Opened>((resolve, reject) => {
       const socket = connect({ host, port: Number(port) });
+      const close = () =>
+        new Promise<void>((done) => {
+          if (socket.destroyed) return done();
+          socket.once("close", () => done());
+          socket.destroy();
+        });
       socket.once("connect", () => {
         socket.off("error", reject);
-        resolve(socket);
+        resolve({ stream: socket, close });
       });
       socket.once("error", reject);
     }),

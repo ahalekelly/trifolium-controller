@@ -1,20 +1,38 @@
 // The Node ports under the real transport: a TCP server stands in for the blaster, answering
-// DUMP_BOOT as the firmware does, and serialport's listing is faked.
+// DUMP_BOOT as the firmware does, and serialport is faked.
 
 import { createServer, type Server, type Socket } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SerialTransport } from "../serial/transport";
 import { tcpSerialApi, usbSerialApi } from "./nodeSerial";
 
-vi.mock("serialport", () => ({
-  SerialPort: {
-    list: async () => [
+/** Each serialport port opened, by path, and whether its own close() closed it. */
+const opened = vi.hoisted(() => [] as { path: string; closed: boolean }[]);
+
+vi.mock("serialport", async () => {
+  const { PassThrough } = await import("node:stream");
+  class SerialPort extends PassThrough {
+    static list = async () => [
       { path: "/dev/tty.Bluetooth-Incoming-Port" },
       { path: "/dev/tty.usbmodem101", vendorId: "2e8a", productId: "000a" },
       { path: "/dev/tty.usbserial-1", vendorId: "0403", productId: "6001" },
-    ],
-  },
-}));
+    ];
+    private record: { path: string; closed: boolean };
+    constructor({ path }: { path: string }) {
+      super();
+      this.record = { path, closed: false };
+    }
+    open(done: (e: Error | null) => void) {
+      opened.push(this.record);
+      done(null);
+    }
+    close(done: () => void) {
+      this.record.closed = true;
+      done();
+    }
+  }
+  return { SerialPort };
+});
 
 let server: Server;
 const sockets: Socket[] = [];
@@ -87,5 +105,12 @@ describe("the USB ports", () => {
       "/dev/cu.usbmodem101",
       "/dev/cu.usbserial-1",
     ]);
+  });
+
+  it("closes a port with serialport's close(), which destroy() does not do", async () => {
+    const [port] = await usbSerialApi.getPorts();
+    await port.open({ baudRate: 115200 });
+    await port.close();
+    expect(opened).toEqual([{ path: "/dev/cu.usbmodem101", closed: true }]);
   });
 });

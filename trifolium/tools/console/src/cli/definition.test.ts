@@ -24,5 +24,7 @@ describe("a run definition", () => {
     expect(() => draftFrom({ form: { spinups: "20" } })).toThrow('"form" has no "spinups"');
     expect(() => draftFrom({ esc: { advance_level: ["15"] } })).toThrow('"esc.advance_level" is text');
     expect(() => draftFrom([])).toThrow("is a JSON object");
+    expect(() => draftFrom({ kind: "ESC" })).toThrow('"kind" is one of "esc", "gains"');
+    expect(() => draftFrom({ oneAtATime: "false" })).toThrow('"oneAtATime" is one of true, false');
   });
 });

@@ -13,6 +13,14 @@ export function draftFrom(json: unknown): TuneDraft {
       throw new Error(`The run definition has no "${key}": it takes ${Object.keys(DEFAULT_DRAFT).join(", ")}.`);
     }
   }
+  const oneOf = (key: string, allowed: unknown[]) => {
+    if (key in def && !allowed.includes(def[key])) {
+      throw new Error(`"${key}" is one of ${allowed.map((a) => JSON.stringify(a)).join(", ")}.`);
+    }
+  };
+  oneOf("kind", ["esc", "gains"]);
+  oneOf("mode", ["pid", "tbh", "both"]);
+  oneOf("oneAtATime", [true, false]);
   const strings = (what: string, value: unknown, known: string[] | null) => {
     if (typeof value !== "object" || value === null) throw new Error(`"${what}" is an object.`);
     const out: Record<string, string> = {};

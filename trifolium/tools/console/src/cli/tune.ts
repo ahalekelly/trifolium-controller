@@ -7,7 +7,7 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { escRows } from "../esc/rows";
+import { parseArgs } from "node:util";
 import { escTargets, readEscSettings, writeEscSettings } from "../esc/session";
 import { wholeRows } from "../rpm/parse";
 import type { Schema } from "../schema/types";
@@ -52,11 +52,12 @@ function fileStore(file: string): RunStore {
   };
 }
 
-/** One line per finished set, and a line whenever the run's activity or status changes. */
+/** One line per finished set, and a line whenever the run's activity, status or note changes. */
 function follow(runner: TuneRunner) {
   let sets = -1;
   let activity: string | null = null;
   let status: string | null = null;
+  let note: string | null = null;
   return () => {
     const run = runner.getRun();
     if (activity !== runner.getActivity()) {
@@ -79,7 +80,11 @@ function follow(runner: TuneRunner) {
     sets = run.sets.length;
     if (status !== run.status) {
       status = run.status;
-      say(`status: ${run.status}${run.note ? ` - ${run.note}` : ""}`);
+      say(`status: ${run.status}`);
+    }
+    if (note !== run.note) {
+      note = run.note;
+      if (note) say(`note: ${note}`);
     }
   };
 }
@@ -106,13 +111,19 @@ function results(run: Run) {
 }
 
 async function main(args: string[]) {
-  const portAt = args.indexOf("--port");
-  const api: SerialApi = portAt >= 0 ? tcpSerialApi(args[portAt + 1]) : usbSerialApi;
-  const [command, dir, definition] = portAt >= 0 ? [...args.slice(0, portAt), ...args.slice(portAt + 2)] : args;
-  const wanted = command === "start" ? 3 : 2;
-  if (!["start", "resume", "discard"].includes(command) || !dir || (definition === undefined) !== (wanted === 2)) {
+  const { values, positionals } = (() => {
+    try {
+      return parseArgs({ args, allowPositionals: true, options: { port: { type: "string" } } });
+    } catch (e) {
+      throw new Error(`${(e as Error).message}\n${USAGE}`);
+    }
+  })();
+  const [command, dir, definition, ...extra] = positionals;
+  const commands = ["start", "resume", "discard"];
+  if (!commands.includes(command) || !dir || (command === "start") !== (definition !== undefined) || extra.length) {
     throw new Error(USAGE);
   }
+  const api: SerialApi = values.port === undefined ? usbSerialApi : tcpSerialApi(values.port);
   const draft = command === "start" ? draftFrom(JSON.parse(readFileSync(definition, "utf8"))) : null;
   mkdirSync(dir, { recursive: true });
   const store = fileStore(join(dir, "stored-run.json"));
@@ -153,13 +164,16 @@ async function main(args: string[]) {
   if (!device) throw new Error("The blaster did not send its settings.");
 
   // Ctrl-C pauses as the tab's Pause does: after the spin-up under way, with the blaster's own
-  // gains and ESC settings back. A second one leaves at once.
+  // gains and ESC settings back. Before the run is going, it stops the CLI from starting it. A
+  // second Ctrl-C leaves at once, the bare TUNE given a second to get out.
+  let stopping = false;
   process.once("SIGINT", () => {
     say("Pausing after this spin-up; Ctrl-C again to leave at once.");
+    stopping = true;
     runner.pause();
     process.once("SIGINT", () => {
-      runner.abandon();
-      process.exit(130);
+      setTimeout(() => process.exit(130), 1000);
+      void runner.abandon().then(() => process.exit(130));
     });
   });
 
@@ -170,7 +184,7 @@ async function main(args: string[]) {
     await runner.discard();
     if (runner.getRun() !== null) throw new Error("The ESCs' own settings could not be put back.");
   } else if (command === "resume") {
-    runner.resume(device);
+    if (!stopping) runner.resume(device);
     await idle(runner);
   } else {
     const schema = await transport.requestWhole<Schema>("DUMP_SCHEMA", TIMEOUT_SCHEMA_MS);
@@ -179,13 +193,14 @@ async function main(args: string[]) {
     if (!baseline) throw new Error("No motor is enabled.");
     const escs = draft!.kind === "esc" ? await readEscSettings(transport, escTargets(device)) : [];
     const rows = searchableRows(escs);
-    const unknown = Object.keys(draft!.esc).filter((name) => !rows.some((r) => r.field.name === name));
+    const names = rows.map((r) => r.field.name);
+    const unknown = Object.keys(draft!.esc).filter((name) => !names.includes(name));
     if (unknown.length > 0) {
-      const names = escRows(escs).filter((r) => r.field.searchable).map((r) => r.field.name);
-      throw new Error(`No searchable ESC setting is named ${unknown.join(", ")}: there are ${names.join(", ")}.`);
+      throw new Error(`No ESC setting to search is named ${unknown.join(", ")}: there are ${names.join(", ")}.`);
     }
     const config = configOf(draft!, gainMaxOf(schema), rows);
     if (typeof config === "string") throw new Error(config);
+    if (stopping) throw new Error("Stopped before the run started.");
     await runner.start(config, baseline, device);
     const run = runner.getRun() as Run;
     const plan = plannedRun(run);
@@ -206,10 +221,8 @@ async function main(args: string[]) {
   return EXIT_PAUSED;
 }
 
-main(process.argv.slice(2)).then(
-  (code) => process.exit(code),
-  (e: Error) => {
-    process.stderr.write(`error: ${e.message}\n`);
-    process.exit(1);
-  },
-);
+// Exits once stdout has taken everything written, which a slow reader of a pipe may not have yet.
+const exit = (code: number) => process.stdout.write("", () => process.exit(code));
+main(process.argv.slice(2)).then(exit, (e: Error) => {
+  process.stderr.write(`error: ${e.message}\n`, () => exit(1));
+});
