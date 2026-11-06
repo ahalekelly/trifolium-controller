@@ -4,14 +4,17 @@ import {
   SerialTransport,
   askUntilWhole,
   blasterPorts,
+  CaptureAssembler,
+  captureReport,
   configFrom,
   isReply,
   openOptionsFor,
-  rebootAnnouncement,
   repliesTo,
   serialApi,
   type SerialApi,
+  type Capture,
 } from "./transport";
+import { sleep } from "./sleep";
 import { SerialPort as UsbSerialPort, serial as usbSerial } from "../vendor/web-serial-polyfill/dist/serial.js";
 import deviceJson from "../fixtures/device.json";
 import profile0 from "../fixtures/profile0.json";
@@ -116,17 +119,63 @@ describe("repliesTo", () => {
   });
 });
 
-describe("rebootAnnouncement", () => {
-  it("names the reason a device gives for rebooting by itself", () => {
-    expect(rebootAnnouncement('{"evt":"rebooting","reason":"rpmLog"}')).toBe("rpmLog");
-    expect(rebootAnnouncement('{"evt":"rebooting"}')).toBe("");
+describe("captureReport", () => {
+  it("reads the report that closes a capture", () => {
+    expect(captureReport('{"evt":"rpmCapture","readyMs":178,"slowestMotor":3,"timedOut":false}')).toEqual(
+      { readyMs: 178, slowestMotor: 3, timedOut: false },
+    );
+    expect(captureReport('{"evt":"rpmCapture","readyMs":null,"slowestMotor":1,"timedOut":true}')).toEqual(
+      { readyMs: null, slowestMotor: 1, timedOut: true },
+    );
   });
 
-  it("ignores every other line, a rebooting ack included", () => {
-    expect(rebootAnnouncement('{"cmd":"REBOOT","ok":true,"rebooting":true}')).toBe(null);
-    expect(rebootAnnouncement('{"evt":"unconfigured"}')).toBe(null);
-    expect(rebootAnnouncement("16390,0,30000,7143,0.00,")).toBe(null);
-    expect(rebootAnnouncement('{"evt":"rebooting"')).toBe(null);
+  it("ignores every other line", () => {
+    expect(captureReport('{"evt":"unconfigured"}')).toBe(null);
+    expect(captureReport("16390,0,30000,7143,0.00,")).toBe(null);
+    expect(captureReport('{"evt":"rpmCapture","readyMs":17')).toBe(null);
+  });
+});
+
+vi.mock("./sleep", () => ({ sleep: vi.fn() }));
+
+describe("holdRev", () => {
+  it("lets go, saying why, once a renewal falls behind", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    const gaps = [0, 100, 100, 250];
+    vi.mocked(sleep).mockImplementation(async () => {
+      now += gaps.shift()!;
+    });
+    const why = await new Promise((resolve) => new SerialTransport().holdRev(0b1010, resolve));
+    expect(why).toBe("renewals fell 250 ms apart");
+    expect(gaps).toEqual([]);
+    vi.restoreAllMocks();
+  });
+});
+
+describe("CaptureAssembler", () => {
+  it("hands over a capture's rows once its report arrives, past the chatter around them", () => {
+    const got: Capture[] = [];
+    const captures = new CaptureAssembler((capture) => got.push(capture));
+    const report = '{"evt":"rpmCapture","readyMs":178,"slowestMotor":1,"timedOut":false}';
+    const lines = [
+      "[info] revving",
+      "Voltage_mv,Motor 1,TargetRPM 1,Throttle 1,value 1,",
+      "16390,0,30000,1115,0.00,",
+      "[warn] from the other core",
+      "16380,812,30000,1999,0.00,",
+      report,
+      report,
+    ];
+    expect(lines.map((line) => captures.take(line))).toEqual([
+      false, true, true, false, true, true, false,
+    ]);
+    expect(got).toEqual([
+      {
+        csv: [lines[1], lines[2], lines[4]].join("\n"),
+        report: { readyMs: 178, slowestMotor: 1, timedOut: false },
+      },
+    ]);
   });
 });
 

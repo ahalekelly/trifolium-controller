@@ -17,6 +17,7 @@
 #include "schemaDump.h"
 #include "gpioReport.h"
 #include "flywheelMotor.h"
+#include "rpmLogger.h"
 #include "enumIds.h" // kBurstModeIds - DUMP_MOTORS names the live mode rather than numbering it
 
 // Owned by main.cpp - the live config these commands read and write.
@@ -48,6 +49,11 @@ extern volatile uint8_t serialRevMask;
 extern volatile uint32_t serialRevUntil_ms;
 void runMotorTest(uint8_t motorIndex);                  // menuMotors.cpp
 void runMotorDirection(uint8_t motorIndex, bool reversed); // menuMotors.cpp
+extern volatile bool directMotorControlActive;
+extern RpmLogger rpmLogger;
+// main.cpp - TUNE's override, or why it was refused, and its end.
+const char* applyTune(uint32_t revRPM, flywheelControlType_t control, float kp, float ki);
+void clearTune();
 
 // How long one REV_HOLD keeps the rev up. The console renews it well inside this, so a closed tab or
 // a pulled cable lets go within it.
@@ -206,6 +212,12 @@ void handleSerialCommands()
     // this function's line-oriented reads don't steal bytes from that binary protocol.
     if (bootReason == BootReason::TO_ESC_PASSTHROUGH)
         return;
+
+    // A full RPM capture goes out between commands, from this core, so the control loop never
+    // waits on the port. Not while this core drives the ESCs itself (the menu's motor actions):
+    // the pause would starve them of frames.
+    if (!directMotorControlActive)
+        rpmLogger.sendIfFull();
 
     if (!Serial.available())
         return;
@@ -615,6 +627,40 @@ void handleSerialCommands()
             Serial.print('}');
         }
         Serial.println("]}");
+    }
+    else if (command == "TUNE")
+    {
+        // 'TUNE {"revRPM":30000,"control":"pid","kp":0.2,"ki":0.5}' - a rev RPM, control mode and
+        // gains for every enabled motor at once, for the console's spin-up search. RAM only, so a
+        // trial needs no flash write or reboot, and the stored settings stay what they were.
+        // TBH takes ki as its gain. A bare TUNE ends the trial once the wheels are stopped.
+        if (!hasArgument)
+        {
+            clearTune();
+            ackOk("TUNE", -1, false, false);
+            return;
+        }
+        JsonDocument doc;
+        if (deserializeJson(doc, argument))
+        {
+            ackError("TUNE", "invalid JSON");
+            return;
+        }
+        const String control = doc["control"] | "";
+        const bool tbh = control == kFlywheelControlIds[TBH_CONTROL];
+        if (!doc["revRPM"].is<uint32_t>() || (!tbh && control != kFlywheelControlIds[PID_CONTROL]) ||
+            !doc["kp"].is<float>() || !doc["ki"].is<float>())
+        {
+            ackError("TUNE", "needs revRPM, control (pid or tbh), kp and ki");
+            return;
+        }
+        if (const char* refused = applyTune(doc["revRPM"], tbh ? TBH_CONTROL : PID_CONTROL,
+                                            doc["kp"], doc["ki"]))
+        {
+            ackError("TUNE", refused);
+            return;
+        }
+        ackOk("TUNE", -1, false, false);
     }
     else if (command == "DUMP_DEVICE")
     {

@@ -6,8 +6,7 @@
 
 A capture is the firmware's own RPM log. From the moment the wheels start to rev it records 2000
 control-loop samples - 2 s at 1 kHz - of each motor's RPM, target and throttle and the pack voltage,
-dumps them over serial and restarts the blaster. Everything a scenario shows has to happen in the
-2 s after a rev starts.
+then dumps them over serial. Everything a scenario shows has to happen in the 2 s after a rev starts.
 
 For each scenario the walk sets up the running profile, says what to do, and saves the dump. It
 changes only what the scenarios need - RPM logging, and in the running profile the fire modes,
@@ -98,8 +97,7 @@ def wait_armed(link, timeout=20.0):
 
 
 def read_capture(link):
-    """Waits for the person to act, then reads the dump: a header line and LOG_LENGTH rows. The
-    blaster restarts once it is sent, which can end the read."""
+    """Waits for the person to act, then reads the dump: a header line and LOG_LENGTH rows."""
     ser = link.ser
     ser.reset_input_buffer()
     deadline = time.time() + WAIT_FOR_ACTION_S
@@ -249,7 +247,6 @@ def main():
                     print(f"    {line}")
                 session["captures"].append({"scenario": sc.name, "run": run,
                                             "file": os.path.basename(path), "profile": payload})
-                link.reconnect(wait_gone=True)
                 run += 1
     except KeyboardInterrupt:
         print("\nstopped")

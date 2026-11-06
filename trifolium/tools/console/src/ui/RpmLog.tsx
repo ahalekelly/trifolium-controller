@@ -20,6 +20,7 @@ import {
   trailingFlatCut,
   wholeRows,
 } from "../rpm/parse";
+import { captureName, downloadCsv } from "../rpm/files";
 import { getByKey } from "../schema/keyPath";
 import { walk, type Schema, type SchemaNode } from "../schema/types";
 import { DropLabel, dropOutlineSx, useFileDrop } from "./FileDrop";
@@ -29,10 +30,10 @@ import { RpmChart, type Series } from "./RpmChart";
 // Charting an RPM capture.
 //
 // Not a live feature: the firmware records a fixed-length capture into RAM during a rev and dumps the
-// whole thing as CSV afterwards, then reboots. So this reads the CSV out of whatever text is to hand -
-// the device log, a pasted block, or a dropped file - rather than streaming.
+// whole thing as CSV afterwards. So this charts whichever CSV is to hand - the newest capture the
+// blaster sent, a pasted block, or a dropped file - rather than streaming.
 //
-// `useRpmLogging` is the only switch a capture needs. RpmLogger::dumpIfReady writes the CSV to
+// `useRpmLogging` is the only switch a capture needs. RpmLogger::sendIfFull writes the CSV to
 // Serial directly rather than through the logger, precisely so that the capture a user asked for
 // cannot be silenced by a logging preference - only the "dump complete" line after it is gated.
 //
@@ -54,25 +55,10 @@ const FLAT_JITTER = 0.02;
 /** The two capture settings, in the order you use them: arm it, then say how long for. */
 const CAPTURE_KEYS = ["device:useRpmLogging", "device:rpmLogLength"];
 
-/** Saves a capture as rpm-capture-<local date and time to the second>.csv. */
-export function downloadCsv(csv: string) {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, "0");
-  const date = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-  const time = `${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
-  const url = URL.createObjectURL(new Blob([`${csv}\n`], { type: "text/csv" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `rpm-capture-${date}_${time}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 export interface RpmLogProps {
   schema: Schema;
   device: unknown;
   onEdit: (key: string, value: unknown) => void;
-  logText: string;
   /** device:useRpmLogging - whether the next rev records a capture at all. */
   capturing: boolean;
   /** The box's text. Held by the app, which fills it with each capture that finishes. */
@@ -133,7 +119,6 @@ export function RpmLog({
   schema,
   device,
   onEdit,
-  logText,
   capturing,
   text,
   onText: setText,
@@ -228,23 +213,6 @@ export function RpmLog({
   // tens of milliseconds, which is where the lines on the chart overlap.
   const crossings = React.useMemo(() => (parsed ? targetCrossings(parsed) : []), [parsed]);
 
-  const takeFromLog = () => {
-    setError(null);
-    const csv = extractRpmCsv(logText);
-    if (!csv) {
-      setError(
-        capturing
-          ? "No CSV capture in the device log yet. RPM Logging is on, so rev the blaster and wait - the device dumps the whole capture at once and reboots straight after."
-          : "No CSV capture found in the device log. RPM Logging is off: turn it on in step 1 and write it, then rev the blaster.",
-      );
-      return;
-    }
-    // The extracted block, not the whole log. The parser finds the CSV either way, but the box is
-    // also what you read, edit and save - and a capture buried in a few thousand lines of boot
-    // chatter is not something you can check by eye or hand to anyone else.
-    setText(csv);
-  };
-
   /** Picked or dropped, a file lands in the box the same way. */
   const readFile = async (file: File) => {
     setError(null);
@@ -301,18 +269,12 @@ export function RpmLog({
           )}
         </Step>
         <Step n={2} title="Rev">
-          Pull the rev or the trigger, or hold the button below. Every rev records a capture, then
-          the blaster restarts on its own and the console reconnects.
+          Pull the rev or the trigger, or hold the button below. Every rev records a capture.
           {revHold}
         </Step>
         <Step n={3} title="Read">
-          A finished capture charts here by itself, the newest if the log holds several. Rev again for
-          another, and turn logging off when you are done.
-          <Box sx={{ mt: 1 }}>
-            <Button size="small" variant="contained" onClick={takeFromLog}>
-              Take from device log
-            </Button>
-          </Box>
+          A finished capture charts here by itself. Rev again for another, and turn logging off when
+          you are done.
         </Step>
       </Box>
 
@@ -331,7 +293,7 @@ export function RpmLog({
               onChange={(e) => {
                 onAutoSave(e.target.checked);
                 // Turning it on saves what is already shown; later captures save as they arrive.
-                if (e.target.checked && csvOut) downloadCsv(csvOut);
+                if (e.target.checked && csvOut) downloadCsv(csvOut, captureName());
               }}
             />
           }
