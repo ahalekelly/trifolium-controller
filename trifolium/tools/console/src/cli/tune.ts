@@ -128,7 +128,14 @@ async function main(args: string[]) {
   if (!commands.includes(command) || !dir || (command === "start") !== (definition !== undefined) || extra.length) {
     throw new Error(USAGE);
   }
-  const api: SerialApi = values.port === undefined ? usbSerialApi : tcpSerialApi(values.port);
+  // Reads after text commands are traced only until the run starts, which times the replies the
+  // setup waits on without a line per capture chunk for hours after.
+  let setup = true;
+  const trace = (line: string, text: boolean) => {
+    if (setup || !text) say(line);
+  };
+  const api: SerialApi =
+    values.port === undefined ? usbSerialApi(trace) : tcpSerialApi(values.port, trace);
   const draft = command === "start" ? draftFrom(JSON.parse(readFileSync(definition, "utf8"))) : null;
   mkdirSync(dir, { recursive: true });
   const store = fileStore(join(dir, "stored-run.json"));
@@ -140,7 +147,8 @@ async function main(args: string[]) {
   let runner: TuneRunner;
   const transport = new SerialTransport(api, {
     onLog: ({ kind, text, at }) => {
-      if (kind !== "in") say(`log: ${text}`, at);
+      // The device's lines, cut short: a config dump is one line of kilobytes.
+      say(`log: ${kind === "in" && text.length > 100 ? `${text.slice(0, 100)}...` : text}`, at);
     },
     onCapture: (capture) => runner.capture(capture),
   });
@@ -189,6 +197,7 @@ async function main(args: string[]) {
     await runner.discard();
     if (runner.getRun() !== null) throw new Error("The ESCs' own settings could not be put back.");
   } else if (command === "resume") {
+    setup = false;
     if (!stopping) runner.resume(device);
     await idle(runner);
   } else {
@@ -207,6 +216,7 @@ async function main(args: string[]) {
     if (typeof config === "string") throw new Error(config);
     if (stopping) throw new Error("Stopped before the run started.");
     await runner.start(config, baseline, device);
+    setup = false;
     const run = runner.getRun() as Run;
     const plan = plannedRun(run);
     say(`plan: ${run.candidates.length} candidates, about ${plan.sets} candidate sets` +

@@ -81,7 +81,7 @@ describe("the TCP port", () => {
     const lines: string[] = [];
     const url = await blaster(lines);
     const disconnected: string[] = [];
-    const transport = new SerialTransport(tcpSerialApi(url), {
+    const transport = new SerialTransport(tcpSerialApi(url, () => {}), {
       onDisconnect: (why) => void disconnected.push(why),
     });
     expect(await transport.connect()).toBe(true);
@@ -96,7 +96,7 @@ describe("the TCP port", () => {
 
   it("opens again after a close, as a reboot's reopen needs", async () => {
     const url = await blaster([]);
-    const [port] = await tcpSerialApi(url).getPorts();
+    const [port] = await tcpSerialApi(url, () => {}).getPorts();
     await port.open({ baudRate: 115200 });
     await port.close();
     await port.open({ baudRate: 115200 });
@@ -105,13 +105,13 @@ describe("the TCP port", () => {
   });
 
   it("refuses a URL that is not socket://host:port", () => {
-    expect(() => tcpSerialApi("/dev/cu.usbmodem101")).toThrow("is not socket://host:port");
+    expect(() => tcpSerialApi("/dev/cu.usbmodem101", () => {})).toThrow("is not socket://host:port");
   });
 });
 
 describe("the USB ports", () => {
   it("lists every USB serial port by its call-out path and USB identity", async () => {
-    const ports = await usbSerialApi.getPorts();
+    const ports = await usbSerialApi(() => {}).getPorts();
     expect(ports.map((p) => p.getInfo())).toEqual([
       { usbVendorId: 0x2e8a, usbProductId: 0x000a },
       { usbVendorId: 0x0403, usbProductId: 0x6001 },
@@ -123,7 +123,7 @@ describe("the USB ports", () => {
   });
 
   it("sends everything written before it closes, with serialport's close()", async () => {
-    const [port] = await usbSerialApi.getPorts();
+    const [port] = await usbSerialApi(() => {}).getPorts();
     await port.open({ baudRate: 115200 });
     const writer = port.writable!.getWriter();
     await writer.write(Uint8Array.of(0x2f, 0x35)); // the end of a 4-way reset, last before close
