@@ -89,8 +89,14 @@ export const usbSerialApi: SerialApi = {
         return new DuplexPort(path, info, async (baudRate) => {
           const port = new SerialPort({ path, baudRate, autoOpen: false });
           await new Promise<void>((resolve, reject) => port.open((e) => (e ? reject(e) : resolve())));
-          // Its close() errors once the device has gone, which leaves nothing to close.
-          const close = () => new Promise<void>((resolve) => port.close(() => resolve()));
+          // A write's callback means the kernel has the bytes, not that they went out, and closing
+          // a port opened non-blocking, as serialport opens it, throws away what has not: the 4-way
+          // reset that restarts the ESCs, last before passthrough ends. So it drains first. Both
+          // error once the device has gone, which leaves nothing to send or close.
+          const close = async () => {
+            await new Promise<void>((resolve) => port.drain(() => resolve()));
+            await new Promise<void>((resolve) => port.close(() => resolve()));
+          };
           return { stream: port, close };
         });
       });

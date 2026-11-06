@@ -6,8 +6,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SerialTransport } from "../serial/transport";
 import { tcpSerialApi, usbSerialApi } from "./nodeSerial";
 
-/** Each serialport port opened, by path, and whether its own close() closed it. */
-const opened = vi.hoisted(() => [] as { path: string; closed: boolean }[]);
+/**
+ * Each serialport port opened: its path, the bytes it sent, and whether its own close() closed it.
+ * Written bytes go out only on drain(), and close() throws away the rest, as a non-blocking tty's
+ * close does on macOS.
+ */
+const opened = vi.hoisted(
+  () => [] as { path: string; sent: number[]; pending: number[]; closed: boolean }[],
+);
 
 vi.mock("serialport", async () => {
   const { PassThrough } = await import("node:stream");
@@ -17,16 +23,25 @@ vi.mock("serialport", async () => {
       { path: "/dev/tty.usbmodem101", vendorId: "2e8a", productId: "000a" },
       { path: "/dev/tty.usbserial-1", vendorId: "0403", productId: "6001" },
     ];
-    private record: { path: string; closed: boolean };
+    private record: { path: string; sent: number[]; pending: number[]; closed: boolean };
     constructor({ path }: { path: string }) {
       super();
-      this.record = { path, closed: false };
+      this.record = { path, sent: [], pending: [], closed: false };
     }
     open(done: (e: Error | null) => void) {
       opened.push(this.record);
       done(null);
     }
+    _write(chunk: Buffer, _: unknown, done: () => void) {
+      this.record.pending.push(...chunk);
+      done();
+    }
+    drain(done: () => void) {
+      this.record.sent.push(...this.record.pending.splice(0));
+      done();
+    }
     close(done: () => void) {
+      this.record.pending = [];
       this.record.closed = true;
       done();
     }
@@ -107,10 +122,15 @@ describe("the USB ports", () => {
     ]);
   });
 
-  it("closes a port with serialport's close(), which destroy() does not do", async () => {
+  it("sends everything written before it closes, with serialport's close()", async () => {
     const [port] = await usbSerialApi.getPorts();
     await port.open({ baudRate: 115200 });
+    const writer = port.writable!.getWriter();
+    await writer.write(Uint8Array.of(0x2f, 0x35)); // the end of a 4-way reset, last before close
+    writer.releaseLock();
     await port.close();
-    expect(opened).toEqual([{ path: "/dev/cu.usbmodem101", closed: true }]);
+    expect(opened).toEqual([
+      { path: "/dev/cu.usbmodem101", sent: [0x2f, 0x35], pending: [], closed: true },
+    ]);
   });
 });
