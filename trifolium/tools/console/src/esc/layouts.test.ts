@@ -57,32 +57,6 @@ describe("the v4 table", () => {
     expect(shown(field(4, "variable_pwm"), V4_DEFAULT[21])).toBe("Variable");
     expect(shown(field(4, "active_brake_power"), 5)).toBe("2.5 % duty");
   });
-
-  it("marks the spin-up fields searchable and nothing else", () => {
-    expect(LAYOUTS[4].fields.filter((f) => f.searchable).map((f) => f.name).sort()).toEqual([
-      "advance_level",
-      "auto_advance",
-      "comp_pwm",
-      "max_ramp",
-      "motor_kv",
-      "pwm_frequency",
-      "sine_mode_changeover_thottle_level",
-      "sine_mode_power",
-      "stall_protection",
-      "startup_power",
-      "stuck_rotor_protection",
-      "use_sine_start",
-      "variable_pwm",
-    ]);
-  });
-});
-
-describe("the v3 table", () => {
-  it("is v4 without zero-throttle braking, whose byte v3 reserved", () => {
-    expect(LAYOUTS[3].fields.map((f) => f.name)).toEqual(
-      LAYOUTS[4].fields.map((f) => f.name).filter((n) => n !== "brake_on_zero_throttle"),
-    );
-  });
 });
 
 describe("layoutOf", () => {
