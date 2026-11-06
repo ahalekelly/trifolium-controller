@@ -49,7 +49,7 @@ const CONFIG: TuneConfig = {
     fields: [
       {
         field: LAYOUTS[4].fields.find((f) => f.name === "startup_power")!,
-        values: [80, 120, 150],
+        values: [80, 120, 150].map((startup_power) => ({ startup_power })),
       },
     ],
   },
@@ -237,7 +237,8 @@ describe("an ESC run", () => {
   it("never writes the candidate with the ESCs' own settings, whose sets the baseline's are", async () => {
     const { runner, events } = rig();
     const field = LAYOUTS[4].fields.find((f) => f.name === "startup_power")!;
-    const grid = { kind: "esc" as const, fields: [{ field, values: [80, ORIGINAL_POWER] }] };
+    const values = [80, ORIGINAL_POWER].map((startup_power) => ({ startup_power }));
+    const grid = { kind: "esc" as const, fields: [{ field, values }] };
     const config = { ...CONFIG, grid };
     void runner.start(config, GAINS, DEVICE);
     await idle(runner);

@@ -50,6 +50,11 @@ export interface EscField {
   /** A label for each raw value from min, for a field that is a choice rather than a number. */
   options: string[] | null;
   searchable: boolean;
+  /**
+   * A setting a search may try in this field's place, made in other fields, under which AM32
+   * ignores this one. The ESCs page sets those fields themselves.
+   */
+  instead: { label: string; writes: Record<string, number> } | null;
 }
 
 export interface EscLayout {
@@ -63,6 +68,7 @@ interface Shown {
   unit?: string;
   off?: { raw: number; label: string };
   searchable?: boolean;
+  instead?: EscField["instead"];
 }
 
 const OFF = (raw: number) => ({ raw, label: "Off" });
@@ -73,7 +79,7 @@ const num = (
   label: string,
   min: number,
   max: number,
-  { scale = 1, shift = 0, unit = "", off, searchable = false }: Shown = {},
+  { scale = 1, shift = 0, unit = "", off, searchable = false, instead }: Shown = {},
 ): EscField => ({
   offset,
   name,
@@ -86,6 +92,7 @@ const num = (
   unit,
   options: null,
   searchable,
+  instead: instead ?? null,
 });
 
 const choice = (
@@ -106,6 +113,7 @@ const choice = (
   unit: "",
   options,
   searchable,
+  instead: null,
 });
 
 const OFF_ON = ["Off", "On"];
@@ -129,7 +137,12 @@ const V4: EscField[] = [
     searchable: true,
   }),
   choice(47, "auto_advance", "Auto timing advance", OFF_ON, true),
-  num(24, "pwm_frequency", "PWM frequency", 8, 144, { unit: "kHz", searchable: true }),
+  // By RPM sets the frequency from the commutation interval (about 37 to 92 kHz) and ignores this.
+  num(24, "pwm_frequency", "PWM frequency", 8, 144, {
+    unit: "kHz",
+    searchable: true,
+    instead: { label: "By RPM", writes: { variable_pwm: 2 } },
+  }),
   choice(21, "variable_pwm", "PWM type", ["Fixed", "Variable", "By RPM"], true),
   // Active freewheeling. Sine startup needs it, and AM32 turns sine startup off without it.
   choice(20, "comp_pwm", "Complementary PWM", OFF_ON, true),

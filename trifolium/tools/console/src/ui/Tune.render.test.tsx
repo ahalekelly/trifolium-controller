@@ -118,7 +118,8 @@ describe("the results table", () => {
 
   it("shows an ESC run's full matrix without overshoot, standings or a best", () => {
     const field = LAYOUTS[4].fields.find((f) => f.name === "startup_power")!;
-    const grid = { kind: "esc" as const, fields: [{ field, values: [80, 120] }] };
+    const values = [80, 120].map((startup_power) => ({ startup_power }));
+    const grid = { kind: "esc" as const, fields: [{ field, values }] };
     const run = startRun(
       { ...DEFAULT_CONFIG, grid, n: 2, halving: false },
       { gains: { control: "pid", kp: 0.2, ki: 0.5 }, esc: { startup_power: 100 } },
@@ -346,5 +347,16 @@ describe("the ESC run form", () => {
       "Startup power takes 50 % to 150 %.",
     );
     expect(await formText(escsWith(120), { startup_power: "80" })).toMatch(/Startup powerdiffer/);
+  });
+
+  it("takes By RPM as a PWM frequency to try, and not as a PWM type", async () => {
+    const escs = escsWith(V4_DEFAULT[25]);
+    expect(await formText(escs, { pwm_frequency: "32, 48, by rpm" })).toContain("3 candidates");
+    expect(await formText(escs, { pwm_frequency: "fast" })).toContain(
+      "PWM frequency takes 8 kHz to 144 kHz, or By RPM.",
+    );
+    expect(await formText(escs, { variable_pwm: "Fixed, By RPM" })).toContain(
+      "PWM type By RPM is tried as PWM frequency By RPM.",
+    );
   });
 });

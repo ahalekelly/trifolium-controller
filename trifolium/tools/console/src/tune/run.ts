@@ -9,7 +9,7 @@
 // JSON as it stands. The search itself (search.ts) sees only candidate ids and set scores.
 
 import { fileStamp } from "../rpm/files";
-import { firmwareOf, shown, type EscField } from "../esc/layouts";
+import { firmwareOf, LAYOUTS, shown, type EscField } from "../esc/layouts";
 import type { EscSettings } from "../esc/session";
 import { parseRpmCsv, wholeRows } from "../rpm/parse";
 import { getByKey } from "../schema/keyPath";
@@ -39,10 +39,13 @@ export interface GainsGrid {
   overshootLimitPct: number;
 }
 
-/** An ESC run's candidates: every combination of the values listed, raw, for each field. */
+/**
+ * An ESC run's candidates: every combination of the values listed for each field. A value is the
+ * raw writes it makes, by field name: the field's own, or what its `instead` writes.
+ */
 export interface EscGrid {
   kind: "esc";
-  fields: { field: EscField; values: number[] }[];
+  fields: { field: EscField; values: EscValues[] }[];
 }
 
 export interface TuneConfig {
@@ -206,8 +209,21 @@ export function captureFile(run: Run, id: string, rpm: number): string {
   const slug = label.replace(/[^\w.]+/g, "-").replace(/^-|-$/g, "");
   return `${runName(run)}_set${set}_${slug}_${rpm}rpm.csv`;
 }
+/** What a field holds among `values`: its `instead` when that is what they make, or its value. */
+function valueLabel(field: EscField, values: EscValues): string {
+  const writes = Object.entries(field.instead?.writes ?? {});
+  const instead = writes.length > 0 && writes.every(([name, raw]) => values[name] === raw);
+  return instead ? field.instead!.label : shown(field, values[field.name]);
+}
+
 const escLabel = (grid: EscGrid, values: EscValues) =>
-  grid.fields.map(({ field }) => `${field.label} ${shown(field, values[field.name])}`).join(", ");
+  grid.fields.map(({ field }) => `${field.label} ${valueLabel(field, values)}`).join(", ");
+
+/** Every field an ESC grid's candidates write: its own, and what any `instead` listed writes. */
+export const escNames = (grid: EscGrid): string[] => {
+  const names = grid.fields.flatMap(({ field, values }) => [field.name, ...values.flatMap(Object.keys)]);
+  return [...new Set(names)];
+};
 
 /** What a candidate or the baseline sets, as the results show it. */
 export const settingsLabel = (grid: TuneConfig["grid"], settings: Settings) =>
@@ -229,16 +245,26 @@ type MotorGains = { enabled: boolean; kp: number; ki: number };
 
 /**
  * Every candidate a grid describes. TBH candidates keep the baseline's kp, which TBH never reads,
- * and ESC candidates spin up on the baseline's gains.
+ * and ESC candidates spin up on the baseline's gains. An ESC candidate writes every field the grid
+ * does, the baseline's value where it lists none, so none keeps what the candidate before it wrote;
+ * an `instead` goes on last, over any value another field listed, as AM32 ignores that one.
  */
 export function candidatesFor(grid: TuneConfig["grid"], baseline: Settings): Candidate[] {
   const all: Settings[] = [];
   if (grid.kind === "esc") {
-    let combos: EscValues[] = [{}];
+    let combos: { own: EscValues; instead: EscValues }[] = [{ own: {}, instead: {} }];
     for (const { field, values } of grid.fields) {
-      combos = combos.flatMap((combo) => values.map((v) => ({ ...combo, [field.name]: v })));
+      combos = combos.flatMap(({ own, instead }) =>
+        values.map((v) =>
+          field.name in v
+            ? { own: { ...own, ...v }, instead }
+            : { own, instead: { ...instead, ...v } },
+        ),
+      );
     }
-    for (const esc of combos) all.push({ gains: baseline.gains, esc });
+    for (const { own, instead } of combos) {
+      all.push({ gains: baseline.gains, esc: { ...baseline.esc, ...own, ...instead } });
+    }
   } else {
     if (grid.mode !== "tbh") {
       for (const kp of grid.kp) {
@@ -267,25 +293,26 @@ export const escRecords = (escs: EscSettings[], motors: number[]): EscRecord[] =
   }));
 
 /**
- * The value every ESC holds for each field an ESC grid searches, which the run puts back. ESCs that
+ * The value every ESC holds for each field an ESC grid writes, which the run puts back. ESCs that
  * differ on one have no single value to put back, so they are refused.
  */
 export function escOriginals(escs: EscRecord[], grid: EscGrid): EscValues {
   const values: EscValues = {};
-  for (const { field } of grid.fields) {
+  for (const name of escNames(grid)) {
     const raws = escs.map(({ motor, eepromVersion, raw }) => {
-      if (!(field.name in raw)) {
-        throw new Error(`Motor ${motor}'s ESC settings layout ${eepromVersion} lacks ${field.label}.`);
+      if (!(name in raw)) {
+        throw new Error(`Motor ${motor}'s ESC settings layout ${eepromVersion} lacks ${name}.`);
       }
-      return raw[field.name];
+      return raw[name];
     });
+    const field = LAYOUTS[escs[0].eepromVersion].fields.find((f) => f.name === name)!;
     if (new Set(raws).size > 1) {
       throw new Error(
         `The ESCs differ on ${field.label} (${raws.map((r) => shown(field, r)).join(", ")}). ` +
           "Write one value to all of them on the ESCs page, so the run has one to put back.",
       );
     }
-    values[field.name] = raws[0];
+    values[name] = raws[0];
   }
   return values;
 }

@@ -10,6 +10,7 @@ import {
   DEFAULT_CONFIG,
   DEFAULT_GAINS,
   escOriginals,
+  escNames,
   escRecords,
   measure,
   nextSet,
@@ -112,7 +113,44 @@ describe("an ESC run", () => {
   const field = (name: string) => LAYOUTS[4].fields.find((f) => f.name === name)!;
   const grid = (values: Record<string, number[]>): EscGrid => ({
     kind: "esc",
-    fields: Object.entries(values).map(([name, raws]) => ({ field: field(name), values: raws })),
+    fields: Object.entries(values).map(([name, raws]) => ({
+      field: field(name),
+      values: raws.map((raw) => ({ [name]: raw })),
+    })),
+  });
+
+  it("tries By RPM in PWM frequency's place, writing both fields every time", () => {
+    const pwm = field("pwm_frequency");
+    const byRpm = pwm.instead!.writes;
+    const esc = { pwm_frequency: 24, variable_pwm: 0 };
+    const frequencies: EscGrid = {
+      kind: "esc",
+      fields: [{ field: pwm, values: [{ pwm_frequency: 32 }, byRpm] }],
+    };
+    expect(escNames(frequencies)).toEqual(["pwm_frequency", "variable_pwm"]);
+    expect(candidatesFor(frequencies, { gains: GAINS, esc })).toEqual([
+      { id: "PWM frequency 32 kHz", gains: GAINS, esc: { pwm_frequency: 32, variable_pwm: 0 } },
+      { id: "PWM frequency By RPM", gains: GAINS, esc: { pwm_frequency: 24, variable_pwm: 2 } },
+    ]);
+    // By RPM ignores the PWM type, so crossing the two leaves one By RPM candidate.
+    const crossed: EscGrid = {
+      kind: "esc",
+      fields: [
+        { field: field("variable_pwm"), values: [{ variable_pwm: 0 }, { variable_pwm: 1 }] },
+        ...frequencies.fields,
+      ],
+    };
+    expect(candidatesFor(crossed, { gains: GAINS, esc }).map((c) => c.id)).toEqual([
+      "PWM type Fixed, PWM frequency 32 kHz",
+      "PWM type By RPM, PWM frequency By RPM",
+      "PWM type Variable, PWM frequency 32 kHz",
+    ]);
+    // The run puts back the PWM type too.
+    const [record] = escRecords([{ esc: 0, layout: LAYOUTS[4], block: V4_DEFAULT }], [1]);
+    expect(escOriginals([record], frequencies)).toEqual({
+      pwm_frequency: V4_DEFAULT[24],
+      variable_pwm: V4_DEFAULT[21],
+    });
   });
 
   it("tries every combination, labelled as shown, on the blaster's own gains", () => {
@@ -229,7 +267,8 @@ describe("the overshoot limit", () => {
 
   it("lets an ESC run's fastest candidate win however far it overshoots", () => {
     const field = LAYOUTS[4].fields.find((f) => f.name === "pwm_frequency")!;
-    const grid: EscGrid = { kind: "esc", fields: [{ field, values: [48, 96] }] };
+    const values = [48, 96].map((pwm_frequency) => ({ pwm_frequency }));
+    const grid: EscGrid = { kind: "esc", fields: [{ field, values }] };
     const baseline = { gains: GAINS, esc: { pwm_frequency: 24 } };
     const run = startRun({ ...DEFAULT_CONFIG, grid, n: 3 }, baseline, null, null, 500);
     const [fast, steady] = run.candidates.map((c) => c.id);
@@ -257,7 +296,10 @@ describe("the candidate with the baseline's settings", () => {
   const field = LAYOUTS[4].fields.find((f) => f.name === "pwm_frequency")!;
   const config = {
     ...DEFAULT_CONFIG,
-    grid: { kind: "esc" as const, fields: [{ field, values: [16, 24, 32, 48] }] },
+    grid: {
+      kind: "esc" as const,
+      fields: [{ field, values: [16, 24, 32, 48].map((pwm_frequency) => ({ pwm_frequency })) }],
+    },
     n: 20,
     halving: false,
   };

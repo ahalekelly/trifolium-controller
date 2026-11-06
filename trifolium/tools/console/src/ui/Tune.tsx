@@ -15,7 +15,7 @@ import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Typography from "@mui/material/Typography";
 import { downloadJson } from "../config/bundle";
-import { accepted, parseShown, shown } from "../esc/layouts";
+import { accepted, parseShown, shown, type EscField } from "../esc/layouts";
 import type { EscSettings } from "../esc/session";
 import {
   BASELINE,
@@ -34,6 +34,7 @@ import {
   startRun,
   TRACE_STEP,
   type EscGrid,
+  type EscValues,
   type Gains,
   type GainsGrid,
   type Run,
@@ -102,6 +103,28 @@ export const DEFAULT_DRAFT: TuneDraft = {
 const searchableRows = (escs: EscSettings[]): EscRow[] =>
   escRows(escs).filter((r) => r.field.searchable && r.raws.every((raw) => raw !== null));
 
+/** What a field's values to try take: what parseShown() does, and the field's `instead`. */
+const takes = (field: EscField) =>
+  accepted(field) + (field.instead ? `, or ${field.instead.label}` : "");
+
+/**
+ * A value typed to try for `field`, as the writes it makes, or what is wrong with it. A value
+ * another field's `instead` makes is that field's to try.
+ */
+function searchValue(field: EscField, text: string, rows: EscRow[]): EscValues | string {
+  if (field.instead && text.trim().toLowerCase() === field.instead.label.toLowerCase()) {
+    return field.instead.writes;
+  }
+  const raw = parseShown(field, text);
+  if (raw === null) return `${field.label} takes ${takes(field)}.`;
+  const owner = rows.find((r) => r.field.instead?.writes[field.name] === raw)?.field;
+  if (owner) {
+    const as = `${owner.label} ${owner.instead!.label}`;
+    return `${field.label} ${shown(field, raw)} is tried as ${as}.`;
+  }
+  return { [field.name]: raw };
+}
+
 /** Comma- or space-separated numbers, or null if any is not one. */
 const listOf = (text: string): number[] | null => {
   const items = text.split(/[\s,]+/).filter(Boolean).map(Number);
@@ -119,9 +142,13 @@ function gridOf(
     for (const { field } of rows) {
       const typed = (esc[field.name] ?? "").split(",").filter((t) => t.trim());
       if (typed.length === 0) continue;
-      const values = typed.map((t) => parseShown(field, t));
-      if (values.some((v) => v === null)) return `${field.label} takes ${accepted(field)}.`;
-      fields.push({ field, values: [...new Set(values as number[])] });
+      const values: EscValues[] = [];
+      for (const text of typed) {
+        const value = searchValue(field, text, rows);
+        if (typeof value === "string") return value;
+        if (!values.some((v) => JSON.stringify(v) === JSON.stringify(value))) values.push(value);
+      }
+      fields.push({ field, values });
     }
     return fields.length > 0 ? { kind, fields } : "List values to try for at least one setting.";
   }
@@ -427,7 +454,7 @@ function EscGridForm({
                 size="small"
                 variant="standard"
                 value={esc[field.name] ?? ""}
-                placeholder={accepted(field)}
+                placeholder={takes(field)}
                 onChange={(e) => onEsc({ ...esc, [field.name]: e.target.value })}
                 sx={{ width: 260 }}
                 slotProps={{ htmlInput: { "aria-label": `${field.label} values` } }}
