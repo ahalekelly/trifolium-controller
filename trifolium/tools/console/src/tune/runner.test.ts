@@ -211,7 +211,7 @@ describe("an ESC run", () => {
     expect(blocksOf(run)).toEqual([BASELINE, C80, C120, C150, BASELINE]);
     expect(sessions(events)).toBe(5);
     expect(run.escWrites).toBe(4);
-    expect(run.escWrites).toBe(plannedEscWrites(3, 2));
+    expect(run.escWrites).toBe(plannedEscWrites(3, 2, true));
     // Every write restarts the blaster, and it answers again before the next rev.
     events.forEach((e, i) => {
       if (e !== "ESC_PASSTHROUGH") return;
@@ -286,7 +286,7 @@ describe("an ESC run", () => {
     expect(run.status).toBe("done");
     expectMeasuredOnItsOwnSettings(run);
     // Pausing cost two writes: the ESCs' own back, then the candidate again.
-    expect(run.escWrites).toBe(plannedEscWrites(3, 2) + 2);
+    expect(run.escWrites).toBe(plannedEscWrites(3, 2, true) + 2);
   });
 
   it("owes the ESCs' own across a dropped link and a reload, and puts them back on connecting", async () => {

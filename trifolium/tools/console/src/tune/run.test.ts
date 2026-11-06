@@ -184,7 +184,23 @@ describe("an ESC run", () => {
       [BASELINE, 3],
     ]);
     // Every block but the first is a write.
-    expect(blocks.length - 1).toBeLessThanOrEqual(plannedEscWrites(4, 20));
+    expect(blocks.length - 1).toBeLessThanOrEqual(plannedEscWrites(4, 20, true));
+  });
+
+  it("without halving, runs every candidate's n sets as one block, baselines between", () => {
+    const config = {
+      ...DEFAULT_CONFIG,
+      grid: grid({ pwm_frequency: [16, 24, 32, 48] }),
+      n: 20,
+      halving: false,
+    };
+    const run = startRun(config, { gains: GAINS, esc: { pwm_frequency: 24 } }, null, null, 500);
+    const ids = order(run);
+    const [c16, c24, c32, c48] = run.candidates.map((c) => c.id);
+    const blocks = ids.filter((id, i) => id !== ids[i - 1]);
+    expect(blocks).toEqual([BASELINE, c16, c24, BASELINE, c32, c48, BASELINE]);
+    expect(ids.filter((id) => id !== BASELINE)).toHaveLength(80);
+    expect(blocks.length - 1).toBeLessThanOrEqual(plannedEscWrites(4, 20, false));
   });
 });
 
