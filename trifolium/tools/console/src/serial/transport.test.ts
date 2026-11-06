@@ -139,20 +139,6 @@ describe("captureReport", () => {
 
 vi.mock("./sleep", () => ({ sleep: vi.fn() }));
 
-describe("holdRev", () => {
-  it("lets go, saying why, once a renewal falls behind", async () => {
-    let now = 0;
-    vi.spyOn(performance, "now").mockImplementation(() => now);
-    const gaps = [0, 100, 100, 250];
-    vi.mocked(sleep).mockImplementation(async () => {
-      now += gaps.shift()!;
-    });
-    const why = await new Promise((resolve) => new SerialTransport().holdRev(0b1010, resolve));
-    expect(why).toBe("renewals fell 250 ms apart");
-    expect(gaps).toEqual([]);
-    vi.restoreAllMocks();
-  });
-});
 
 describe("CaptureAssembler", () => {
   it("hands over a capture's rows once its report arrives, past the chatter around them", () => {
@@ -424,6 +410,52 @@ describe("SerialTransport over real streams", () => {
     expect(await transport.request("DUMP_DEVICE", 500)).toEqual(JSON.parse(deviceDump));
     expect(await transport.requestWhole("DUMP_DEVICE", 500)).toEqual(JSON.parse(deviceDump));
     await transport.disconnect();
+  });
+
+  /** Holds a rev through `renewals` renewals against a blaster answering `answer`. */
+  async function heldRev(renewals: number, answer: (line: string) => string) {
+    const written: string[] = [];
+    instantBlaster((line) => {
+      written.push(line);
+      return answer(line);
+    });
+    const transport = new SerialTransport();
+    expect(await transport.connect()).toBe(true);
+    let lost: { why: string; revved: boolean } | null = null;
+    let release = () => {};
+    let left = renewals;
+    vi.mocked(sleep).mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 1)); // the reply's turn to arrive, as 100 ms gives it
+      if (--left === 0) release();
+    });
+    release = transport.holdRev(0b1010, (why, revved) => (lost = { why, revved }));
+    await new Promise((r) => setTimeout(r, 20));
+    await transport.disconnect();
+    return { written, lost: lost as { why: string; revved: boolean } | null };
+  }
+
+  it("holds with REV_HOLD, keeps the lease with REV_RENEW, and lets go with REV_RELEASE", async () => {
+    const ok = (line: string) => `{"cmd":"${line.split(" ")[0]}","ok":true,"index":10}`;
+    const { written, lost } = await heldRev(3, ok);
+    expect(written).toEqual(["REV_HOLD 10", "REV_RENEW", "REV_RENEW", "REV_RELEASE"]);
+    expect(lost).toBeNull();
+  });
+
+  it("loses the hold, saying why, when the blaster refuses to rev or ends the rev", async () => {
+    const safe = await heldRev(3, () => '{"cmd":"REV_HOLD","ok":false,"err":"SAFE"}');
+    expect(safe.lost).toEqual({ why: "SAFE", revved: false });
+    expect(safe.written).toEqual(["REV_HOLD 10", "REV_RELEASE"]);
+
+    const lapsed = await heldRev(3, (line) =>
+      line === "REV_RENEW"
+        ? '{"cmd":"REV_RENEW","ok":false,"err":"no rev held - the lease ran out or it was let go"}'
+        : '{"cmd":"REV_HOLD","ok":true,"index":10}',
+    );
+    expect(lapsed.lost).toEqual({
+      why: "no rev held - the lease ran out or it was let go",
+      revved: true,
+    });
+    expect(lapsed.written).toEqual(["REV_HOLD 10", "REV_RENEW", "REV_RELEASE"]);
   });
 
   it("hands every byte to the binary link, none to the log or a capture", async () => {
