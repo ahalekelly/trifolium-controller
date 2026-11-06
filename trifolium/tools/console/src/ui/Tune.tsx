@@ -3,6 +3,7 @@ import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Checkbox from "@mui/material/Checkbox";
+import MenuItem from "@mui/material/MenuItem";
 import Stack from "@mui/material/Stack";
 import Table from "@mui/material/Table";
 import TableBody from "@mui/material/TableBody";
@@ -37,6 +38,7 @@ import {
   type GainsGrid,
   type Run,
   type SetRecord,
+  type Spinup,
   type TuneConfig,
 } from "../tune/run";
 import { runSettings, type TuneRunner } from "../tune/runner";
@@ -162,7 +164,16 @@ const cellSx = { py: 0.25, px: 1 };
 const msText = (ms: number) =>
   ms === Infinity ? "timeout" : Number.isNaN(ms) ? "—" : `${Math.round(ms)} ms`;
 
-function StandingCells({ s, scores }: { s: Standing; scores: SetScore[] }) {
+/** A row's figures. Overshoot shows for a gains run only: Trifolium's own control makes it. */
+function StandingCells({
+  s,
+  scores,
+  overshoot,
+}: {
+  s: Standing;
+  scores: SetScore[];
+  overshoot: boolean;
+}) {
   const mean = scores.reduce((sum, x) => sum + x.ms, 0) / scores.length;
   const slowest = scores.length
     ? Math.max(...scores.map((x) => (x.timedOut ? Infinity : x.ms)))
@@ -171,18 +182,29 @@ function StandingCells({ s, scores }: { s: Standing; scores: SetScore[] }) {
     <>
       <TableCell sx={cellSx}>{s.timeouts}</TableCell>
       <TableCell sx={cellSx}>{msText(mean)}</TableCell>
-      <TableCell sx={cellSx}>{msText(slowest)}</TableCell>
       <TableCell sx={cellSx}>{msText(s.ms)}</TableCell>
-      <TableCell sx={cellSx}>
-        {Number.isNaN(s.overshootPct) ? "—" : `${s.overshootPct.toFixed(1)}%`}
-      </TableCell>
+      <TableCell sx={cellSx}>{msText(slowest)}</TableCell>
+      {overshoot && (
+        <TableCell sx={cellSx}>
+          {Number.isNaN(s.overshootPct) ? "—" : `${s.overshootPct.toFixed(1)}%`}
+        </TableCell>
+      )}
       <TableCell sx={cellSx}>{s.sets}</TableCell>
     </>
   );
 }
 
-/** A row's checkbox and its chart colour, in the order rows were checked. */
-const colourOf = (checked: string[], id: string) => COLOURS[checked.indexOf(id) % COLOURS.length];
+/** The baseline's colour, and the starting candidate's, which is one row with it. */
+const BASELINE_COLOUR = "#9aa0a6";
+
+/**
+ * A row's chart and checkbox colour, from its candidate's place in the grid, so it keeps it however
+ * rows are checked.
+ */
+const colourOf = (candidates: string[], same: string | null, id: string) =>
+  id === BASELINE || id === same
+    ? BASELINE_COLOUR
+    : COLOURS[candidates.indexOf(id) % COLOURS.length];
 
 export function Results({
   run,
@@ -197,11 +219,14 @@ export function Results({
   const limit = overshootLimit(run.config.grid);
   const scores = scoresOf(run);
   const rows = ranking(run.search, scores, limit);
-  const done = run.status === "done";
   const same = startingId(run);
+  const ids = run.candidates.map((c) => c.id);
+  const overshoot = run.config.grid.kind === "gains";
+  // Without halving every candidate is a finalist, so there is no standing to show.
+  const status = run.config.halving;
   const box = (id: string, label: string) => {
     const on = checked.includes(id);
-    const colour = on ? colourOf(checked, id) : undefined;
+    const colour = on ? colourOf(ids, same, id) : undefined;
     return (
       <TableCell padding="checkbox">
         <Checkbox
@@ -221,12 +246,12 @@ export function Results({
           {[
             "Chart",
             "Candidate",
-            "",
+            ...(status ? [""] : []),
             "Timeouts",
             "Mean",
-            "Slowest",
             "2nd slowest",
-            "2nd worst overshoot",
+            "Slowest",
+            ...(overshoot ? ["2nd worst overshoot"] : []),
             "Sets",
           ].map((h) => (
             <TableCell key={h} sx={{ ...cellSx, fontWeight: 600 }}>
@@ -236,7 +261,7 @@ export function Results({
         </TableRow>
       </TableHead>
       <TableBody>
-        {rows.map(({ id, standing: s, droppedIn }, i) => (
+        {rows.map(({ id, standing: s, droppedIn }) => (
           <TableRow key={id}>
             {box(id, id)}
             <TableCell sx={cellSx}>
@@ -248,16 +273,16 @@ export function Results({
                 </Typography>
               )}
             </TableCell>
-            <TableCell sx={{ ...cellSx, color: "text.secondary" }}>
-              {droppedIn !== null
-                ? `dropped in round ${droppedIn + 1}`
-                : !s.qualified && s.sets > 0
-                  ? `overshoots past ${limit}%`
-                  : done && i === 0
-                    ? "best"
+            {status && (
+              <TableCell sx={{ ...cellSx, color: "text.secondary" }}>
+                {droppedIn !== null
+                  ? `dropped in round ${droppedIn + 1}`
+                  : !s.qualified && s.sets > 0
+                    ? `overshoots past ${limit}%`
                     : "finalist"}
-            </TableCell>
-            <StandingCells s={s} scores={scores[id] ?? []} />
+              </TableCell>
+            )}
+            <StandingCells s={s} scores={scores[id] ?? []} overshoot={overshoot} />
           </TableRow>
         ))}
         {scores[BASELINE] && same === null && (
@@ -266,8 +291,12 @@ export function Results({
             <TableCell sx={{ ...cellSx, fontStyle: "italic" }}>
               Baseline: {settingsLabel(run.config.grid, run.baseline)}
             </TableCell>
-            <TableCell sx={cellSx} />
-            <StandingCells s={standing(scores[BASELINE], limit)} scores={scores[BASELINE]} />
+            {status && <TableCell sx={cellSx} />}
+            <StandingCells
+              s={standing(scores[BASELINE], limit)}
+              scores={scores[BASELINE]}
+              overshoot={overshoot}
+            />
           </TableRow>
         )}
       </TableBody>
@@ -275,23 +304,48 @@ export function Results({
   );
 }
 
+/** Which of each checked row's spin-ups the chart draws: all, or the one at a rank. */
+type Drawn = "all" | "median" | "secondSlowest" | "slowest";
+
+const DRAWN: { value: Drawn; label: string }[] = [
+  { value: "all", label: "All spin-ups" },
+  { value: "median", label: "Median" },
+  { value: "secondSlowest", label: "2nd slowest" },
+  { value: "slowest", label: "Slowest" },
+];
+
 /**
- * Every spin-up of each checked row, overlaid, a chart per target RPM: each motor's RPM, in the
- * row's colour. The starting candidate's row has the baseline's spin-ups too, as `same` says.
- * Memoised on the sets, which change only as a set ends, so the chart redraws once a set and never
- * while a rev is held.
+ * The spin-up at `drawn`'s rank by fire-ready time, a timeout slowest: the lower median of an even
+ * count, so always one that ran.
+ */
+export function atRank(spinups: Spinup[], drawn: Exclude<Drawn, "all">): Spinup {
+  const sorted = [...spinups].sort((a, b) => (a.readyMs ?? Infinity) - (b.readyMs ?? Infinity));
+  const last = sorted.length - 1;
+  const index = { median: last >> 1, secondSlowest: Math.max(0, last - 1), slowest: last }[drawn];
+  return sorted[index];
+}
+
+/**
+ * Each checked row's spin-ups, a chart per target RPM: each motor's RPM, in the row's colour, all
+ * of them overlaid or the one at a rank, ranked within each RPM. The starting candidate's row has the
+ * baseline's spin-ups too, as `same` says. Memoised on the sets, which change only as a set ends,
+ * so the chart redraws once a set and never while a rev is held.
  */
 export const SpinupTraces = React.memo(function SpinupTraces({
   sets,
   rpms,
+  candidates,
   checked,
   same,
 }: {
   sets: SetRecord[];
   rpms: number[];
+  /** Every candidate's id, in the grid's order, which gives each its colour. */
+  candidates: string[];
   checked: string[];
   same: string | null;
 }) {
+  const [drawn, setDrawn] = React.useState<Drawn>("all");
   if (checked.length === 0) {
     return (
       <Typography variant="caption" color="text.secondary">
@@ -301,16 +355,36 @@ export const SpinupTraces = React.memo(function SpinupTraces({
   }
   return (
     <Stack spacing={1}>
+      <TextField
+        select
+        size="small"
+        label="Spin-ups to chart"
+        value={drawn}
+        onChange={(e) => setDrawn(e.target.value as Drawn)}
+        sx={{ width: 200 }}
+      >
+        {DRAWN.map((o) => (
+          <MenuItem key={o.value} value={o.value}>
+            {o.label}
+          </MenuItem>
+        ))}
+      </TextField>
       {rpms.map((rpm, k) => {
-        const series: Series[] = checked.map((id) => ({
-          name: id === BASELINE ? "Baseline" : id,
-          colour: colourOf(checked, id),
-          lines: sets.filter((s) => countsFor(s, id, same)).flatMap((s) => s.spinups[k].trace),
-        }));
+        const series: Series[] = checked.map((id) => {
+          const name = id === BASELINE ? "Baseline" : id;
+          const colour = colourOf(candidates, same, id);
+          const spinups = sets.filter((s) => countsFor(s, id, same)).map((s) => s.spinups[k]);
+          if (drawn === "all" || spinups.length === 0) {
+            return { name, colour, lines: spinups.flatMap((s) => s.trace) };
+          }
+          const one = atRank(spinups, drawn);
+          const ready = one.readyMs === null ? "timeout" : `${one.readyMs} ms`;
+          return { name: `${name} (${ready})`, colour, lines: one.trace };
+        });
         return (
           <Box key={rpm}>
             <Typography variant="caption" color="text.secondary">
-              Every spin-up at {rpm} RPM, each motor's line
+              {DRAWN.find((o) => o.value === drawn)!.label} at {rpm} RPM, each motor's line
             </Typography>
             <RpmChart series={series} height={240} xLabel="ms" sampleMs={TRACE_STEP} />
           </Box>
@@ -416,6 +490,11 @@ export function Tune({
     return { count: draftRun.candidates.length, ...plannedRun(draftRun) };
   }, [draftKey, rows]);
   const runPlan = React.useMemo(() => current && plannedRun(current), [current?.candidates]);
+  // One array for the run, so the memoised chart redraws only when its sets change.
+  const candidateIds = React.useMemo(
+    () => current?.candidates.map((c) => c.id) ?? [],
+    [current?.candidates],
+  );
   const field = (key: keyof Form, label: string, width = 160) => (
     <TextField
       size="small"
@@ -546,8 +625,7 @@ export function Tune({
               (the 95th percentile at the default N = 20), each summed over the target RPMs
               {kind === "gains"
                 ? ", and one whose second-worst overshoot passes the limit cannot win. "
-                : ". Overshoot does not rank an ESC run, since Trifolium's speed control causes " +
-                  "it, not the ESCs. "}
+                : ". "}
               Mean counts a timed-out spin-up at the rampup timeout, so it is a lower bound when
               Timeouts is not 0.{" "}
               {kind === "esc"
@@ -649,12 +727,12 @@ export function Tune({
               <Button
                 size="small"
                 variant="contained"
-                disabled={!live || driving}
+                disabled={!live || driving || run.applied}
                 onClick={() =>
                   winner.esc ? void runner.applyEsc(winner) : runner.applyGains(winner, onApply)
                 }
               >
-                Apply {winner.id}
+                {run.applied ? "Applied" : "Apply"} {winner.id}
               </Button>
             )}
             <Button
@@ -683,6 +761,7 @@ export function Tune({
           <SpinupTraces
             sets={run.sets}
             rpms={run.config.rpms}
+            candidates={candidateIds}
             checked={checked}
             same={startingId(run)}
           />

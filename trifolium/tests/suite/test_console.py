@@ -446,7 +446,10 @@ def test_a_tune_run_on_noisy_wheels_drops_the_overshooting_and_ranks_the_slow_th
     finish_tune(page, 120_000)
     # A row's name opens with its chart checkbox's label.
     status = lambda name: page.get_by_role("row", name=re.compile(f"^Chart {re.escape(name)} "))
-    expect(status("PID kp 0.2 ki 1")).to_contain_text("best")
+    # The finalists rank best first.
+    rows = page.get_by_role("row", name=re.compile("^Chart PID kp"))
+    expect(rows.first).to_have_accessible_name(re.compile(r"^Chart PID kp 0\.2 ki 1 "))
+    expect(status("PID kp 0.2 ki 1")).to_contain_text("finalist")
     expect(status("PID kp 0.02 ki 1")).to_contain_text("finalist")
     expect(status("PID kp 1 ki 1")).to_contain_text("dropped in round 1")
     # Nothing stored until the winner is applied, which writes it to every motor.

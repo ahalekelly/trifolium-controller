@@ -16,7 +16,7 @@ import {
   type SetRecord,
 } from "../tune/run";
 import { TuneRunner } from "../tune/runner";
-import { DEFAULT_DRAFT, Results, SpinupTraces, Tune } from "./Tune";
+import { atRank, DEFAULT_DRAFT, Results, SpinupTraces, Tune } from "./Tune";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -97,12 +97,51 @@ describe("the results table", () => {
 
   it("shows the mean, the slowest and the second slowest set", () => {
     act(() => root.render(results(runOf([100, 300, 200, 110]))));
-    expect(cells().slice(3)).toEqual(["0", "178 ms", "300 ms", "200 ms", "0.5%", "4"]);
+    expect(cells().slice(3)).toEqual(["0", "178 ms", "200 ms", "300 ms", "0.5%", "4"]);
+  });
+
+  it("orders its columns, the 2nd slowest before the slowest", () => {
+    act(() => root.render(results(runOf([100]))));
+    const heads = [...host.querySelectorAll("thead th")].map((th) => th.textContent);
+    expect(heads).toEqual([
+      "Chart",
+      "Candidate",
+      "",
+      "Timeouts",
+      "Mean",
+      "2nd slowest",
+      "Slowest",
+      "2nd worst overshoot",
+      "Sets",
+    ]);
+  });
+
+  it("shows an ESC run's full matrix without overshoot, standings or a best", () => {
+    const field = LAYOUTS[4].fields.find((f) => f.name === "startup_power")!;
+    const grid = { kind: "esc" as const, fields: [{ field, values: [80, 120] }] };
+    const run = startRun(
+      { ...DEFAULT_CONFIG, grid, n: 2, halving: false },
+      { gains: { control: "pid", kp: 0.2, ki: 0.5 }, esc: { startup_power: 100 } },
+      null,
+      null,
+      500,
+    );
+    const spinup = { rpm: 30000, file: "", readyMs: 100, overshootPct: 9, packMv: 16000, trace: [] };
+    run.sets = ["Startup power 80 %", "Startup power 120 %"].map((id) => ({
+      id,
+      at: 0,
+      spinups: [spinup],
+    }));
+    run.status = "done";
+    act(() => root.render(results(run)));
+    const heads = [...host.querySelectorAll("thead th")].map((th) => th.textContent);
+    expect(heads).toEqual(["Chart", "Candidate", "Timeouts", "Mean", "2nd slowest", "Slowest", "Sets"]);
+    expect(host.textContent).not.toMatch(/best|finalist|9\.0%/);
   });
 
   it("shows the slowest as a timeout once any set timed out, counted at the timeout in the mean", () => {
     act(() => root.render(results(runOf([100, null, 200]))));
-    expect(cells().slice(3)).toEqual(["1", "267 ms", "timeout", "200 ms", "0.5%", "3"]);
+    expect(cells().slice(3)).toEqual(["1", "267 ms", "200 ms", "timeout", "0.5%", "3"]);
   });
 });
 
@@ -114,6 +153,10 @@ describe("the spin-up chart", () => {
     root = createRoot(host);
   });
   afterEach(() => act(() => root.unmount()));
+
+  const chart = (sets: SetRecord[], checked: string[]) => (
+    <SpinupTraces sets={sets} rpms={[30000]} candidates={["a", "b"]} checked={checked} same={null} />
+  );
 
   const set = (id: string, trace: number[][]): SetRecord => ({
     id,
@@ -165,18 +208,107 @@ describe("the spin-up chart", () => {
       set("b", [[0, 50, 100], [0, 40, 80]]),
       set("a", [[0, 120, 240], [0, 80, 160]]),
     ];
-    const chart = <SpinupTraces sets={sets} rpms={[30000]} checked={["a", "b"]} same={null} />;
-    act(() => root.render(chart));
-    const paths = [...host.querySelectorAll("path")];
+    act(() => root.render(chart(sets, ["a", "b"])));
+    const paths = [...host.querySelectorAll("path[stroke]")];
     // One path a row, a line in it a motor a spin-up.
     expect(paths.map((p) => p.getAttribute("d")!.split("M").length - 1)).toEqual([4, 2]);
     expect(new Set(paths.map((p) => p.getAttribute("stroke"))).size).toBe(2);
-    expect(host.textContent).toContain("Every spin-up at 30000 RPM");
+    expect(host.textContent).toContain("All spin-ups at 30000 RPM");
+  });
+
+  it("colours a row by its place in the grid, whatever order rows were checked in", () => {
+    const sets = [set("a", [[0, 1]]), set("b", [[0, 1]])];
+    const strokes = () =>
+      Object.fromEntries(
+        [...host.querySelectorAll("path[stroke]")].map((p, i) => [i, p.getAttribute("stroke")]),
+      );
+    act(() => root.render(chart(sets, ["a", "b"])));
+    const [a, b] = Object.values(strokes());
+    act(() => root.render(chart(sets, ["b", "a"])));
+    expect(Object.values(strokes())).toEqual([b, a]);
+    act(() => root.render(chart(sets, ["b"])));
+    expect(Object.values(strokes())).toEqual([b]);
+  });
+
+  it("draws one spin-up a row at the rank chosen, timeouts slowest and the lower median", () => {
+    const at = (readyMs: number | null, rpm = 1): SetRecord => ({
+      id: "a",
+      at: 0,
+      spinups: [{ rpm: 30000, file: "", readyMs, overshootPct: 0, packMv: 0, trace: [[0, rpm]] }],
+    });
+    const sets = [at(300, 3), at(null, 9), at(100, 1), at(200, 2)];
+    const spinups = sets.map((s) => s.spinups[0]);
+    expect(atRank(spinups, "median").readyMs).toBe(200);
+    expect(atRank(spinups, "secondSlowest").readyMs).toBe(300);
+    expect(atRank(spinups, "slowest").readyMs).toBeNull();
+
+    act(() => root.render(chart(sets, ["a"])));
+    act(() => {
+      host.querySelector("[role=combobox]")!.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, button: 0 }),
+      );
+    });
+    const option = [...document.querySelectorAll("[role=option]")].find(
+      (o) => o.textContent === "2nd slowest",
+    ) as HTMLElement;
+    act(() => option.click());
+    expect(host.querySelectorAll("path[stroke]")[0].getAttribute("d")!.split("M")).toHaveLength(2);
+    expect(host.textContent).toContain("a (300 ms)");
+    expect(host.textContent).toContain("2nd slowest at 30000 RPM");
   });
 
   it("asks for a row to chart when none is checked", () => {
-    act(() => root.render(<SpinupTraces sets={[]} rpms={[30000]} checked={[]} same={null} />));
+    act(() => root.render(chart([], [])));
     expect(host.textContent).toContain("Check rows to chart their spin-ups.");
+  });
+});
+
+describe("the Apply button", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** The finished run page's Apply button, for a run saved as `applied`. */
+  async function applyButton(applied: boolean) {
+    const grid = { ...DEFAULT_GAINS, kp: [0.4], ki: [1] };
+    const run = startRun(
+      { ...DEFAULT_CONFIG, grid },
+      { gains: { control: "pid", kp: 0.2, ki: 0.5 }, esc: null },
+      null,
+      null,
+      500,
+    );
+    const spinup = { rpm: 30000, file: "", readyMs: 100, overshootPct: 0, packMv: 16000, trace: [] };
+    run.sets = [{ id: "PID kp 0.4 ki 1", at: 0, spinups: [spinup] }];
+    Object.assign(run, { status: "done", applied });
+    vi.stubGlobal("localStorage", { getItem: () => JSON.stringify(run) });
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const unused = () => Promise.reject(new Error("not in this test"));
+    const transport = { connected: true, chipId: null } as unknown as SerialTransport;
+    await act(async () =>
+      root.render(
+        <Tune
+          runner={new TuneRunner(transport, { read: unused, write: unused }, unused)}
+          live
+          device={DEVICE}
+          gainMax={{ kp: 2, ki: 2 }}
+          escs={null}
+          draft={DEFAULT_DRAFT}
+          onDraft={() => {}}
+          onApply={() => {}}
+        />,
+      ),
+    );
+    const button = [...host.querySelectorAll("button")].find((b) =>
+      b.textContent!.endsWith("PID kp 0.4 ki 1"),
+    )!;
+    const state = { text: button.textContent, disabled: button.disabled };
+    await act(async () => root.unmount());
+    return state;
+  }
+
+  it("is greyed out as Applied once the run's winner is applied, and only then", async () => {
+    expect(await applyButton(false)).toEqual({ text: "Apply PID kp 0.4 ki 1", disabled: false });
+    expect(await applyButton(true)).toEqual({ text: "Applied PID kp 0.4 ki 1", disabled: true });
   });
 });
 
