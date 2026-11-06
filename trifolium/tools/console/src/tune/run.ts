@@ -550,12 +550,15 @@ const STORAGE_KEY = "trifolium.tune";
 /** The run left in this browser: none, or one another build saved and this one cannot read. */
 export type Saved = Run | null | "unreadable";
 
+/** Where the run is kept between visits: the browser's localStorage, or the tune CLI's file. */
+export type RunStore = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
 /**
  * The run left in this browser. One that was running when the page went away comes back paused:
  * nothing is driving the blaster now.
  */
-export function loadRun(): Saved {
-  const text = localStorage.getItem(STORAGE_KEY);
+export function loadRun(store: RunStore): Saved {
+  const text = store.getItem(STORAGE_KEY);
   if (!text) return null;
   const run = JSON.parse(text) as Run | null;
   if (run?.version !== RUN_VERSION) return "unreadable";
@@ -564,7 +567,7 @@ export function loadRun(): Saved {
     : run;
 }
 
-export function saveRun(run: Run | null) {
-  if (run) localStorage.setItem(STORAGE_KEY, JSON.stringify(run));
-  else localStorage.removeItem(STORAGE_KEY);
+export function saveRun(store: RunStore, run: Run | null) {
+  if (run) store.setItem(STORAGE_KEY, JSON.stringify(run));
+  else store.removeItem(STORAGE_KEY);
 }

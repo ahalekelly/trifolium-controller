@@ -41,6 +41,7 @@ import {
   type EscValues,
   type Gains,
   type Run,
+  type RunStore,
   type Saved,
   type Spinup,
   type TuneConfig,
@@ -122,6 +123,7 @@ export class TuneRunner {
     private transport: SerialTransport,
     private escs: EscIo,
     private files: RunFiles,
+    private store: RunStore,
   ) {}
 
   subscribe = (listener: () => void) => {
@@ -140,12 +142,12 @@ export class TuneRunner {
   load() {
     if (this.loaded) return;
     this.loaded = true;
-    this.run = loadRun();
+    this.run = loadRun(this.store);
   }
 
   private set(run: Run | null) {
     this.run = run;
-    saveRun(run);
+    saveRun(this.store, run);
     this.notify();
   }
 
@@ -282,7 +284,7 @@ export class TuneRunner {
    * A blaster just connected: whatever TUNE a dropped link left on it goes, and so do ESC settings a
    * run that lost its link or its page owes back.
    */
-  connected() {
+  async connected() {
     this.load();
     if (this.working) return;
     const other = this.otherBlaster();
@@ -290,10 +292,10 @@ export class TuneRunner {
       if (this.run.restoreEscs || this.run.status === "paused") this.change({ note: other });
     }
     if (other || this.run === null || this.run === "unreadable" || !this.run.restoreEscs) {
-      void this.untune();
+      await this.untune();
       return;
     }
-    void this.drive(async () => {
+    await this.drive(async () => {
       await this.untune();
       await this.settle();
     });

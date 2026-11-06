@@ -15,9 +15,9 @@ import {
 } from "./schema/presets";
 import { needsPresetPicker } from "./schema/wiring";
 import { diagramForBoardId } from "./schema/wiringDiagrams";
-import { asBound, boundsToReal } from "./schema/grid";
 import { buildPatch, getByKey, setByKey } from "./schema/keyPath";
 import {
+  nodeFor,
   walk,
   type BootStatus,
   type Schema,
@@ -27,6 +27,7 @@ import {
 import { resolveVisibility } from "./schema/visibility";
 import {
   configFrom,
+  serialApi,
   SerialTransport,
   TIMEOUT_SCHEMA_MS,
   type Capture,
@@ -76,7 +77,8 @@ import { ConsoleFooter } from "./ui/ConsoleFooter";
 import { Section, type Payloads } from "./ui/Section";
 import { countFields, deriveSections, pruneToStore, type Store } from "./ui/sections";
 import { Splash, type DeviceSplash } from "./ui/Splash";
-import { DEFAULT_DRAFT, Tune } from "./ui/Tune";
+import { DEFAULT_DRAFT, gainMaxOf } from "./tune/draft";
+import { Tune } from "./ui/Tune";
 import { TuneRunner, type EscIo } from "./tune/runner";
 import { gainsLabel, type Gains } from "./tune/run";
 import {
@@ -117,14 +119,6 @@ function enabledMotors(device: unknown): number[] {
   const config = (getByKey(device as never, "device:motorConfig") as { enabled?: boolean }[]) ?? [];
   const pins = (getByKey(device as never, "device:escPins") as number[]) ?? [];
   return config.flatMap((m, i) => (m?.enabled && pins[i] !== undefined && pins[i] !== 255 ? [i] : []));
-}
-
-function nodeFor(schema: Schema, key: string): SchemaNode | undefined {
-  let found: SchemaNode | undefined;
-  walk(schema.tree, (node) => {
-    if (node.key === key && !found) found = node;
-  });
-  return found;
 }
 
 const BLASTER_NAME_KEY = "device:blasterName";
@@ -315,7 +309,7 @@ export function App() {
   const log = React.useMemo(() => new LogStore(), []);
   const transport = React.useMemo(
     () =>
-      new SerialTransport({
+      new SerialTransport(serialApi(), {
         onLog: log.push,
         onDisconnect: () => {
           setLive(false);
@@ -342,6 +336,7 @@ export function App() {
           capture: (csv, name) => downloadCsv(wholeRows(csv).csv, name),
           run: (run, name) => downloadJson(name, run),
         },
+        localStorage,
       ),
     [transport],
   );
@@ -514,7 +509,7 @@ export function App() {
     if (!(await readSchemaAndValues())) return;
     // A connection the user made, not a reboot the console caused: whatever a run that lost its
     // link or its page left on the blaster goes now.
-    tuneRunner.connected();
+    void tuneRunner.connected();
     if (bootProblem.current) setView("overview");
   };
 
@@ -729,13 +724,7 @@ export function App() {
   );
 
   /** The largest kp and ki the device takes, off its own schema rows. */
-  const gainMax = React.useMemo(() => {
-    const max = (key: string) => {
-      const node = nodeFor(schema, key);
-      return node?.hi === undefined ? NaN : boundsToReal(asBound(node.hi), node.decimals);
-    };
-    return { kp: max("device:motorConfig[0].kp"), ki: max("device:motorConfig[0].ki") };
-  }, [schema]);
+  const gainMax = React.useMemo(() => gainMaxOf(schema), [schema]);
 
   /**
    * Stores a tuning run's winner: its control mode, and its gains on every enabled motor - TBH
@@ -2151,8 +2140,8 @@ export function App() {
               live={live}
               busy={busy}
               fw={live ? schema.fw : null}
-              supported={SerialTransport.supported}
-              asksEveryTime={SerialTransport.asksEveryTime}
+              supported={transport.supported}
+              asksEveryTime={transport.asksEveryTime}
               blasterName={String(getByKey(device, BLASTER_NAME_KEY) ?? "")}
               nameMaxLen={blasterNameNode?.maxLen}
               nameCharset={blasterNameNode?.charset}

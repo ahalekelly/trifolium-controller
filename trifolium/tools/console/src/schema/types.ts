@@ -250,6 +250,15 @@ export const fireModeIndexOf = (key: string | undefined): number | null => {
 /** The property a fire-mode row edits, with the mode subscript stripped off. */
 export const fireModeLeafOf = (key: string | undefined): string => key?.split(".").pop() ?? "";
 
+/** The first node with `key`, depth-first. */
+export function nodeFor(schema: Schema, key: string): SchemaNode | undefined {
+  let found: SchemaNode | undefined;
+  walk(schema.tree, (node) => {
+    if (node.key === key && !found) found = node;
+  });
+  return found;
+}
+
 /** Depth-first walk over the tree, parents before children. */
 export function walk(
   nodes: SchemaNode[],

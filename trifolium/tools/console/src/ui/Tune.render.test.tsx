@@ -17,7 +17,8 @@ import {
   type SetRecord,
 } from "../tune/run";
 import { TuneRunner } from "../tune/runner";
-import { atRank, DEFAULT_DRAFT, Results, SpinupTraces, Tune, type TuneDraft } from "./Tune";
+import { DEFAULT_DRAFT, type TuneDraft } from "../tune/draft";
+import { atRank, Results, SpinupTraces, Tune } from "./Tune";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -51,7 +52,7 @@ async function formText(
   await act(async () =>
     root.render(
       <Tune
-        runner={new TuneRunner({} as SerialTransport, { read: unused, write: unused }, { capture: unused, run: unused })}
+        runner={new TuneRunner({} as SerialTransport, { read: unused, write: unused }, { capture: unused, run: unused }, localStorage)}
         live
         device={DEVICE}
         gainMax={{ kp: 2, ki: 2 }}
@@ -369,7 +370,7 @@ describe("the Apply button", () => {
     await act(async () =>
       root.render(
         <Tune
-          runner={new TuneRunner(transport, { read: unused, write: unused }, { capture: unused, run: unused })}
+          runner={new TuneRunner(transport, { read: unused, write: unused }, { capture: unused, run: unused }, localStorage)}
           live
           device={DEVICE}
           gainMax={{ kp: 2, ki: 2 }}

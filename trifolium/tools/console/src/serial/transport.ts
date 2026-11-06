@@ -62,7 +62,7 @@ export function openOptionsFor(api: SerialApi | null): SerialOptions {
 const BLASTER_USB = { usbVendorId: 0x2e8a, usbProductId: 0x000a };
 
 /** What the transport uses of a port, which the WebUSB polyfill's ports provide too. */
-type Port = Pick<SerialPort, "readable" | "writable" | "open" | "close" | "getInfo">;
+export type Port = Pick<SerialPort, "readable" | "writable" | "open" | "close" | "getInfo">;
 
 export interface SerialApi {
   requestPort(): Promise<Port>;
@@ -343,15 +343,19 @@ export class SerialTransport {
   private reconnectWaiter: ((ok: boolean) => void) | null = null;
   private captures = new CaptureAssembler((capture) => this.events.onCapture?.(capture));
 
-  constructor(private events: TransportEvents = {}) {}
+  /** `api` is where ports come from: serialApi() in a browser, null where there is none. */
+  constructor(
+    private api: SerialApi | null,
+    private events: TransportEvents = {},
+  ) {}
 
-  static get supported(): boolean {
-    return serialApi() !== null;
+  get supported(): boolean {
+    return this.api !== null;
   }
 
   /** Android keeps no WebUSB permission from one connection to the next, so it asks every time. */
-  static get asksEveryTime(): boolean {
-    return serialApi() === usbSerial && isAndroid();
+  get asksEveryTime(): boolean {
+    return this.api === usbSerial && isAndroid();
   }
 
   get connected(): boolean {
@@ -384,7 +388,7 @@ export class SerialTransport {
    * both go to the picker. `choose` goes there regardless, for a blaster this browser has not seen.
    */
   async connect(choose = false): Promise<boolean> {
-    const api = serialApi();
+    const api = this.api;
     if (!api) {
       this.log(
         "err",
@@ -395,7 +399,7 @@ export class SerialTransport {
     }
     // On Android a known device may be the one a reboot just disconnected, and only the picker can
     // be granted the one that came back.
-    const allowed = choose || SerialTransport.asksEveryTime ? null : await this.onlyAllowedPort(api);
+    const allowed = choose || this.asksEveryTime ? null : await this.onlyAllowedPort(api);
     try {
       this.port = allowed ?? (await api.requestPort());
       await this.port.open(openOptionsFor(api));
@@ -479,7 +483,7 @@ export class SerialTransport {
   private async reconnectCandidates(remembered: Port): Promise<Port[]> {
     const out = [remembered];
     try {
-      for (const port of (await serialApi()?.getPorts()) ?? []) {
+      for (const port of (await this.api?.getPorts()) ?? []) {
         if (port !== remembered && SerialTransport.sameDevice(port, remembered)) out.push(port);
       }
     } catch {
@@ -502,7 +506,7 @@ export class SerialTransport {
     this.rebootedPort = null;
     if (!remembered) return false;
 
-    if (SerialTransport.asksEveryTime) {
+    if (this.asksEveryTime) {
       this.log(
         "out",
         "The blaster restarted. Android asks permission again after a restart: press Connect to carry on.",
@@ -521,7 +525,7 @@ export class SerialTransport {
       listedAgain ||= candidates.length > 1;
       for (const port of candidates) {
         try {
-          await port.open(openOptionsFor(serialApi()));
+          await port.open(openOptionsFor(this.api));
         } catch (e) {
           lastError = (e as Error).message; // not enumerated yet, still claimed by the OS, or already open
           continue;

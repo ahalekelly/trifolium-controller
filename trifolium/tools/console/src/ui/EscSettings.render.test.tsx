@@ -9,7 +9,8 @@ import { createRoot } from "react-dom/client";
 import { LAYOUTS } from "../esc/layouts";
 import type { EscSettings } from "../esc/session";
 import { V4_DEFAULT } from "../esc/testdata";
-import { EscSettingsPanel, editedValues, escRows } from "./EscSettings";
+import { escRows } from "../esc/rows";
+import { EscSettingsPanel, editedValues } from "./EscSettings";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

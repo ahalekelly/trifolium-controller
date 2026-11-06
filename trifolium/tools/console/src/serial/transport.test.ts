@@ -254,7 +254,7 @@ describe("serialApi", () => {
   it("takes Web Serial on a desktop browser that also has WebUSB", () => {
     vi.stubGlobal("navigator", { userAgent: DESKTOP, serial: native, usb });
     expect(serialApi()).toBe(native);
-    expect(SerialTransport.supported).toBe(true);
+    expect(new SerialTransport(serialApi()).supported).toBe(true);
   });
 
   it("takes the WebUSB polyfill where there is no Web Serial", () => {
@@ -271,16 +271,16 @@ describe("serialApi", () => {
     const desktopSite = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0";
     vi.stubGlobal("navigator", { userAgent: desktopSite, serial: native, usb, contacts: {} });
     expect(serialApi()).toBe(usbSerial);
-    expect(SerialTransport.asksEveryTime).toBe(true);
+    expect(new SerialTransport(serialApi()).asksEveryTime).toBe(true);
   });
 
   it("remembers a blaster everywhere but Android over WebUSB", () => {
     vi.stubGlobal("navigator", { userAgent: ANDROID, serial: native, usb });
-    expect(SerialTransport.asksEveryTime).toBe(true);
+    expect(new SerialTransport(serialApi()).asksEveryTime).toBe(true);
     vi.stubGlobal("navigator", { userAgent: DESKTOP, serial: native, usb });
-    expect(SerialTransport.asksEveryTime).toBe(false);
+    expect(new SerialTransport(serialApi()).asksEveryTime).toBe(false);
     vi.stubGlobal("navigator", { userAgent: DESKTOP, usb }); // WebUSB, but a desktop keeps permission
-    expect(SerialTransport.asksEveryTime).toBe(false);
+    expect(new SerialTransport(serialApi()).asksEveryTime).toBe(false);
   });
 
   it("falls back to Android's Web Serial when there is no WebUSB", () => {
@@ -291,7 +291,7 @@ describe("serialApi", () => {
   it("reports unsupported with neither", () => {
     vi.stubGlobal("navigator", { userAgent: DESKTOP });
     expect(serialApi()).toBeNull();
-    expect(SerialTransport.supported).toBe(false);
+    expect(new SerialTransport(serialApi()).supported).toBe(false);
   });
 });
 
@@ -353,7 +353,7 @@ describe("a reboot on Android", () => {
 
   it("waits for Connect instead of polling, then carries on through the picker", async () => {
     const usb = phone();
-    const transport = new SerialTransport();
+    const transport = new SerialTransport(serialApi());
     expect(await transport.connect(false)).toBe(true);
     await transport.disconnect("Rebooting.", true);
 
@@ -403,7 +403,7 @@ describe("SerialTransport over real streams", () => {
     instantBlaster((line) =>
       line === "DUMP_BOOT" ? '{"cmd":"DUMP_BOOT","chipId":"E6614103E7345B2F"}' : deviceDump,
     );
-    const transport = new SerialTransport();
+    const transport = new SerialTransport(serialApi());
     expect(await transport.connect()).toBe(true);
     expect(await transport.waitReady(1, 500)).toBe(true);
     expect(transport.chipId).toBe("E6614103E7345B2F");
@@ -419,7 +419,7 @@ describe("SerialTransport over real streams", () => {
       written.push(line);
       return answer(line);
     });
-    const transport = new SerialTransport();
+    const transport = new SerialTransport(serialApi());
     expect(await transport.connect()).toBe(true);
     let lost: { why: string; revved: boolean } | null = null;
     let release = () => {};
@@ -462,7 +462,7 @@ describe("SerialTransport over real streams", () => {
     instantBlaster((line) => line); // echoes, so what is written comes back as device output
     const logged: LogLine[] = [];
     const captured: Capture[] = [];
-    const transport = new SerialTransport({
+    const transport = new SerialTransport(serialApi(), {
       onLog: (line) => logged.push(line),
       onCapture: (capture) => captured.push(capture),
     });

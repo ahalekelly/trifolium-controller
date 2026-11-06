@@ -160,7 +160,7 @@ function rig() {
     (blaster.runner = new TuneRunner(transport, io, {
       capture: (_, name) => void saved.push(name),
       run: () => {},
-    }));
+    }, localStorage));
   runnerOn();
   return { ...blaster, blaster, runnerOn, saved };
 }
@@ -535,7 +535,7 @@ function gainsRig(revs: Rev[]) {
   runner = new TuneRunner(transport, { read: unused, write: unused }, {
     capture: (_, name) => void saved.push(name),
     run: (run, name) => void exported.push(`${name} ${run.status}`),
-  });
+  }, localStorage);
   return { runner, logged, saved, exported };
 }
 
