@@ -442,6 +442,21 @@ def test_the_motor_test_button_spins_that_motor(page, serve):
     expect(motors.get_by_role("button", name="Set motor 4 to Reversed")).to_be_disabled()
 
 
+def test_the_motor_table_shows_each_motors_live_rpm_and_esc_telemetry(page, serve):
+    served = serve()
+    connect(open_console(page, served))
+    served.wait_armed()
+    go(page, "Blaster settings")
+    motors = page.get_by_role("group", name="Motors & PID")
+    rpm = motors.get_by_role("row").filter(has_text=re.compile(r"^RPM"))
+    served.bench("press", role="rev")
+    expect(rpm).to_contain_text(re.compile(r"\d{5}"), timeout=5000)
+    served.bench("release", role="rev")
+    # The simulated ESCs send no extended telemetry.
+    esc = motors.get_by_role("row").filter(has_text=re.compile(r"^ESC"))
+    expect(esc).to_contain_text("- V  - A  - °C")
+
+
 def test_a_setting_that_governs_others_shows_and_hides_them_as_it_is_edited(page, serve):
     """The console evaluates the schema's visibleWhen itself, so the rows move before any write."""
     served = serve()
