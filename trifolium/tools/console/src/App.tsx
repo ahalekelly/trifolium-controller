@@ -80,7 +80,7 @@ import { Splash, type DeviceSplash } from "./ui/Splash";
 import { DEFAULT_DRAFT, gainMaxOf } from "./tune/draft";
 import { Tune } from "./ui/Tune";
 import { TuneRunner, type EscIo } from "./tune/runner";
-import { gainsLabel, type Gains } from "./tune/run";
+import { gainsLabel, type Gains, type RunStore } from "./tune/run";
 import {
   CONFIG_ACCEPT,
   Chip,
@@ -229,6 +229,13 @@ const remembered = (key: string, fallback: string): string => {
   }
 };
 
+/** The browser's localStorage, reached only once a run is read or saved, not as the page opens. */
+const BROWSER_STORE: RunStore = {
+  getItem: (key) => localStorage.getItem(key),
+  setItem: (key, value) => localStorage.setItem(key, value),
+  removeItem: (key) => localStorage.removeItem(key),
+};
+
 const onPhone = () =>
   typeof window !== "undefined" && !!window.matchMedia?.("(max-width: 599.95px)").matches;
 
@@ -336,7 +343,7 @@ export function App() {
           capture: (csv, name) => downloadCsv(wholeRows(csv).csv, name),
           run: (run, name) => downloadJson(name, run),
         },
-        localStorage,
+        BROWSER_STORE,
       ),
     [transport],
   );
