@@ -11,7 +11,8 @@
     "check": "tsc --noEmit",
     "test": "vitest run",
     "smoke": "node scripts/smoke.mjs dist/index.html",
-    "verify": "npm run test && npm run build && npm run smoke"
+    "verify": "npm run test && npm run build && npm run smoke",
+    "tune": "vite-node src/cli/tune.ts --"
   },
   "dependencies": {
     "@emotion/react": "^11.11.4",
@@ -27,6 +28,7 @@
     "@types/w3c-web-serial": "^1.0.6",
     "@vitejs/plugin-react": "^6.1.0",
     "jsdom": "^26.1.0",
+    "serialport": "^13.0.0",
     "typescript": "^5.9.3",
     "vite": "^8.2.2",
     "vite-plugin-singlefile": "^2.3.3",
