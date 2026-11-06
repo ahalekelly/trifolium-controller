@@ -307,7 +307,8 @@ export class SerialTransport {
     return this.reconnectWaiter !== null;
   }
 
-  private log(kind: LogKind, text: string) {
+  /** A line in the console's log, for this transport and for protocols run over it. */
+  log(kind: LogKind, text: string) {
     this.events.onLog?.({ kind, text, at: Date.now() });
   }
 

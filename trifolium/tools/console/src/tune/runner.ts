@@ -7,6 +7,10 @@
 // were, and a reboot mid-run (a pack swap) costs nothing: every spin-up sends it again. A run that
 // stops for any reason sends a bare TUNE, which puts the blaster's own settings back once its
 // wheels stop - or, when a dropped link stopped it, the next connection does.
+//
+// A browser's timers run late under load, and a renewal that comes late loses the hold. A spin-up
+// whose hold is lost - other than by its rampup timeout, which scores it - measures nothing, so its
+// capture goes and the spin-up runs again.
 
 import { getByKey } from "../schema/keyPath";
 import { sleep } from "../serial/sleep";
@@ -33,6 +37,12 @@ const REST_MS = 2000;
 /** The longest the wheels may take to stop: dwell, idle and the spin-down ramp. */
 const STOP_TIMEOUT_MS = 30000;
 const STOP_POLL_MS = 250;
+/**
+ * The run pauses once this many tries at one spin-up in a row lose the hold. A loaded machine loses
+ * one now and then; one that loses three running - a background tab, whose timers the browser slows
+ * to once a second, or a hung page - will lose them all.
+ */
+const LOST_HOLDS = 3;
 /** DUMP_MOTORS' flywheelState for flywheelState_t's STATE_IDLE. */
 const STATE_IDLE = 0;
 
@@ -212,7 +222,20 @@ export class TuneRunner {
     }
   }
 
+  /** One spin-up, tried again while the hold is lost, up to LOST_HOLDS times. */
   private async spinup(gains: Gains, rpm: number, file: string, holdMs: number, captureMs: number) {
+    for (let tries = 1; ; tries++) {
+      const result = await this.attempt(gains, rpm, file, holdMs, captureMs);
+      if (typeof result !== "string") return result;
+      if (tries === LOST_HOLDS) {
+        throw new Error(`The console let go of Rev ${LOST_HOLDS} times running: ${result}.`);
+      }
+      this.transport.log("err", `The console let go of Rev (${result}); redoing the spin-up.`);
+    }
+  }
+
+  /** One try at a spin-up: what it measured, or why the console lost the hold. */
+  private async attempt(gains: Gains, rpm: number, file: string, holdMs: number, captureMs: number) {
     const enabled = await this.waitStopped();
     await sleep(REST_MS);
 
@@ -242,8 +265,8 @@ export class TuneRunner {
     });
     const got = await capture;
     this.captureWaiter = null;
+    if (lost && !got?.report.timedOut) return lost as string;
     if (got) this.save(got.csv, file);
-    if (lost && !got?.report.timedOut) throw new Error(`The console let go of Rev: ${lost}.`);
 
     if (!got) {
       throw new Error(
