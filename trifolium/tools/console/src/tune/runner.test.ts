@@ -292,6 +292,17 @@ describe("an ESC run", () => {
     expect(run.candidates.find((c) => c.id === C80)).toBeDefined();
   });
 
+  it("holds a pause asked for while the ESCs are read at Start, before any spin-up", async () => {
+    const { runner } = rig();
+    const started = runner.start(CONFIG, GAINS, DEVICE);
+    runner.pause();
+    await started;
+    await idle(runner);
+    const run = runOf(runner);
+    expect(run.status).toBe("paused");
+    expect(run.sets).toEqual([]);
+  });
+
   it("pauses at once when the blaster refuses to rev, without waiting for a capture", async () => {
     const { blaster, runner, events } = rig();
     blaster.refusesRev = "SAFE";

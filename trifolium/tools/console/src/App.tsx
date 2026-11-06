@@ -344,7 +344,7 @@ export function App() {
   const [tuneDraft, setTuneDraft] = React.useState(DEFAULT_DRAFT);
   // Closing or reloading the page stops a run too, as far as one last write can get out.
   React.useEffect(() => {
-    const abandon = () => tuneRunner.abandon();
+    const abandon = () => void tuneRunner.abandon();
     window.addEventListener("pagehide", abandon);
     return () => window.removeEventListener("pagehide", abandon);
   }, [tuneRunner]);

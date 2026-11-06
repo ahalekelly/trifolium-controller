@@ -193,6 +193,8 @@ export class TuneRunner {
    */
   async start(config: TuneConfig, gains: Gains, device: unknown) {
     if (this.working) throw new Error("a run is already going");
+    // Cleared here rather than in loop(), so a pause asked for while the ESCs are read holds.
+    this.pauseWanted = false;
     const settings = runSettings(device);
     if (typeof settings === "string") throw new Error(settings);
     let escs: EscRecord[] | null = null;
@@ -219,6 +221,7 @@ export class TuneRunner {
       this.change({ note: other });
       return;
     }
+    this.pauseWanted = false;
     this.change({ status: "running", note: null });
     void this.loop(null, device);
   }
@@ -305,9 +308,9 @@ export class TuneRunner {
    * The page is going: the bare TUNE goes out with no time to hear the answer - unless an ESC
    * session has the port, where a line would land in the ESCs' passthrough.
    */
-  abandon() {
+  async abandon() {
     if (this.working && this.activity === null && this.transport.connected) {
-      void this.transport.sendLine("TUNE");
+      await this.transport.sendLine("TUNE");
     }
   }
 
@@ -383,7 +386,6 @@ export class TuneRunner {
    */
   private async loop(loaded: string | null, device: unknown) {
     this.setWorking(true);
-    this.pauseWanted = false;
     try {
       const settings = runSettings(device);
       if (typeof settings === "string") throw new Error(settings);
