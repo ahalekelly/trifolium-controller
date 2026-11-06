@@ -122,11 +122,11 @@ describe("repliesTo", () => {
 
 describe("captureReport", () => {
   it("reads the report that closes a capture", () => {
-    expect(captureReport('{"evt":"rpmCapture","readyMs":178,"slowestMotor":3,"timedOut":false}')).toEqual(
-      { readyMs: 178, slowestMotor: 3, timedOut: false },
+    expect(captureReport('{"evt":"rpmCapture","readyMs":178,"slowestMotor":3,"timedOut":false,"maxThrottle":1999}')).toEqual(
+      { readyMs: 178, slowestMotor: 3, timedOut: false, maxThrottle: 1999 },
     );
-    expect(captureReport('{"evt":"rpmCapture","readyMs":null,"slowestMotor":1,"timedOut":true}')).toEqual(
-      { readyMs: null, slowestMotor: 1, timedOut: true },
+    expect(captureReport('{"evt":"rpmCapture","readyMs":null,"slowestMotor":1,"timedOut":true,"maxThrottle":1999}')).toEqual(
+      { readyMs: null, slowestMotor: 1, timedOut: true, maxThrottle: 1999 },
     );
   });
 
@@ -158,7 +158,7 @@ describe("CaptureAssembler", () => {
   it("hands over a capture's rows once its report arrives, past the chatter around them", () => {
     const got: Capture[] = [];
     const captures = new CaptureAssembler((capture) => got.push(capture));
-    const report = '{"evt":"rpmCapture","readyMs":178,"slowestMotor":1,"timedOut":false}';
+    const report = '{"evt":"rpmCapture","readyMs":178,"slowestMotor":1,"timedOut":false,"maxThrottle":1999}';
     const lines = [
       "[info] revving",
       "Voltage_mv,Motor 1,TargetRPM 1,Throttle 1,value 1,",
@@ -174,7 +174,7 @@ describe("CaptureAssembler", () => {
     expect(got).toEqual([
       {
         csv: [lines[1], lines[2], lines[4]].join("\n"),
-        report: { readyMs: 178, slowestMotor: 1, timedOut: false },
+        report: { readyMs: 178, slowestMotor: 1, timedOut: false, maxThrottle: 1999 },
       },
     ]);
   });
@@ -439,7 +439,7 @@ describe("SerialTransport over real streams", () => {
     const lines = [
       "Voltage_mv,Motor 1,TargetRPM 1,Throttle 1,value 1,",
       "16390,0,30000,1115,0.00,",
-      '{"evt":"rpmCapture","readyMs":178,"slowestMotor":1,"timedOut":false}',
+      '{"evt":"rpmCapture","readyMs":178,"slowestMotor":1,"timedOut":false,"maxThrottle":1999}',
       "[info] chatter",
     ].join("\n");
     await link.write(new TextEncoder().encode(lines));

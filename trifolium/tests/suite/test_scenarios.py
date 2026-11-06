@@ -135,7 +135,7 @@ def test_an_rpm_log_captures_the_rev_then_prints_it_and_when_the_wheels_were_rea
     assert {row[1] for row in rows} == {1000}
     report = json.loads(lines[300])
     assert report == {"evt": "rpmCapture", "readyMs": report["readyMs"], "slowestMotor": 3,
-                      "timedOut": False}
+                      "timedOut": False, "maxThrottle": 1999}
     # The firmware's own test, both wheels past target less firingRPMTolerance, reads each sample
     # on the tick after it, and the clock runs a little past one tick a sample.
     ready = next(i for i, row in enumerate(rows) if min(row[motor1], row[motor3]) > 29500)

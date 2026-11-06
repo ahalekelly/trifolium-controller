@@ -145,7 +145,7 @@ int16_t buzzPulsesRequested_ = 0;
 
 BatteryMonitor* batteryMonitor; // constructed in setup(), once activeProfile is loaded
 
-const int32_t maxThrottle = 1999;
+extern const int32_t maxThrottle = 1999; // extern: rpmLogger.h reports it with each capture
 uint32_t half =
     0; // 1 << (deviceSettings.EMAFilter - 1); computed in setup(), once activeProfile is loaded
 Driver* pusher;

@@ -146,12 +146,13 @@ export const repliesTo = (command: string): ((line: string) => boolean) => {
  * What the firmware's fire-ready test made of a capture's rev, printed after its rows: when it first
  * passed in ms from the rev's start, the motor that got there last, and whether the rampup timeout
  * ended the rev first. `readyMs` is null when the rev or the capture ended before the wheels were at
- * speed.
+ * speed. `maxThrottle` is the Throttle columns' full throttle.
  */
 export interface CaptureReport {
   readyMs: number | null;
   slowestMotor: number | null;
   timedOut: boolean;
+  maxThrottle: number;
 }
 
 /** An RPM capture as the device dumped it: the CSV, then the report. */
@@ -164,8 +165,8 @@ export interface Capture {
 export const captureReport = (line: string): CaptureReport | null => {
   if (!line.startsWith('{"evt":"rpmCapture"')) return null;
   try {
-    const { readyMs, slowestMotor, timedOut } = JSON.parse(line) as CaptureReport;
-    return { readyMs, slowestMotor, timedOut };
+    const { readyMs, slowestMotor, timedOut, maxThrottle } = JSON.parse(line) as CaptureReport;
+    return { readyMs, slowestMotor, timedOut, maxThrottle };
   } catch {
     return null;
   }
