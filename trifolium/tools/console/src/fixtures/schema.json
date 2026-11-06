@@ -1,6 +1,6 @@
 {
   "cmd": "DUMP_SCHEMA",
-  "fw": "2.3.0",
+  "fw": "2.4.0",
   "boardId": "trifolium_v1_2",
   "wiringConfigured": true,
   "deviceSchemaVersion": 3,
@@ -3159,6 +3159,17 @@
                   "step": 1
                 },
                 {
+                  "label": "Current ADC Pin",
+                  "kind": "int",
+                  "key": "device:currentAdcPin",
+                  "reboot": true,
+                  "onDevice": false,
+                  "display": "pin",
+                  "lo": 0,
+                  "hi": 255,
+                  "step": 1
+                },
+                {
                   "label": "ESC Enable Pin",
                   "kind": "int",
                   "key": "device:escEnablePin",
@@ -4217,14 +4228,6 @@
               "step": 500
             },
             {
-              "label": "Volt Avg Window",
-              "kind": "int",
-              "key": "device:voltageAveragingWindow",
-              "lo": 1,
-              "hi": 20,
-              "step": 1
-            },
-            {
               "label": "RPM Shot Counter",
               "kind": "bool",
               "key": "device:useRpmBaseShotCounter"
@@ -4294,6 +4297,10 @@
                   "kind": "action"
                 }
               ]
+            },
+            {
+              "label": "Usage Stats",
+              "kind": "action"
             },
             {
               "label": "About",

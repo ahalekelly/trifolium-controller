@@ -2,7 +2,7 @@ import React from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import { getByKey } from "../../schema/keyPath";
-import type { BootStatus, Schema } from "../../schema/types";
+import type { BootStatus, Schema, UsageStats } from "../../schema/types";
 import { BootFaults } from "../BootFaults";
 import { CONFIG_ACCEPT, Chip, type LoadIntent } from "../TopBar";
 import { dropOutlineSx, useFileDrop } from "../FileDrop";
@@ -87,10 +87,14 @@ function HealthRow({ ok, title, detail }: { ok: boolean; title: string; detail: 
   );
 }
 
+/** The first firmware that answers DUMP_STATS. */
+export const FW_USAGE_STATS = "2.4.0";
+
 export interface OverviewProps {
   live: boolean;
   schema: Schema;
   boot: BootStatus | null;
+  stats: UsageStats | null;
   device: unknown;
   profiles: unknown[];
   profileName: (slot: number) => string;
@@ -107,7 +111,8 @@ export interface OverviewProps {
 }
 
 export function Overview(props: OverviewProps) {
-  const { live, schema, boot, device, profiles, profileName, wiringLabel, slot, onGo } = props;
+  const { live, schema, boot, stats, device, profiles, profileName, wiringLabel, slot, onGo } =
+    props;
 
   const motors =
     (getByKey(device as never, "device:motorConfig") as { enabled?: boolean }[] | undefined) ?? [];
@@ -177,6 +182,21 @@ export function Overview(props: OverviewProps) {
                 : undefined
           }
         />
+        {stats && (
+          <>
+            <Stat k="Darts fired" v={stats.shotsFired.toLocaleString()} s="Lifetime, until RESET_STATS" />
+            <Stat
+              k="Peak current"
+              v={stats.maxCurrent_mv ? `${stats.maxCurrent_mv} mV` : "—"}
+              s="ESC current-sense output while the wheels ran"
+            />
+            <Stat
+              k="Peak ESC temp"
+              v={stats.maxEscTemp_C ? `${stats.maxEscTemp_C} °C` : "—"}
+              s="Highest temperature any ESC reported"
+            />
+          </>
+        )}
       </Box>
 
       <Panel

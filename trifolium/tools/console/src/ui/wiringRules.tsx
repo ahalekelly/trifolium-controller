@@ -47,6 +47,10 @@ export const WIRING_RULES: WiringRule[] = [
       "On a pin the battery divider also uses, the battery keeps it.",
   },
   {
+    field: "device:currentAdcPin",
+    text: "The ESC current pin must be GPIO 26-29 too. Anything else is folded to unused.",
+  },
+  {
     field: "device:i2cSdaPin",
     text:
       "SDA and SCL have to be a servable pair. A GPIO's I2C role is fixed in silicon by pin % 4: " +

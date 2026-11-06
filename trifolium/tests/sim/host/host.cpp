@@ -63,7 +63,8 @@ extern bool batteryFlat;
 extern bool firing;
 extern BatteryMonitor* batteryMonitor;
 extern uint8_t menuButtonPin, triggerSwitchPin, revSwitchPin, cycleSwitchPin, dartSwitchPin,
-    idleSwitchPin, safetySwitchPin, ledDataPin, batteryAdcPin, speedPotPin, escEnablePin;
+    idleSwitchPin, safetySwitchPin, ledDataPin, batteryAdcPin, speedPotPin, currentAdcPin,
+    escEnablePin;
 extern uint8_t selectPins[3];
 extern bool dartPresent, breechEmptiedSincePush;
 extern uint32_t dartWaitSince_ms;
@@ -577,9 +578,10 @@ class Host
         out["pin"] = pin;
     }
 
-    // BatteryMonitor: pack = adc_mv * 11, adc_mv = raw * 3300 / 1023. On every ADC pin but the
-    // speed pot's, because before boot nothing has read which one the wiring uses. A pack reading
-    // left on the pot's pin from before it was the pot's is cleared: a pot left alone reads 0.
+    // BatteryMonitor: pack = adc_mv * 11, adc_mv = raw * 3300 / 1023. Before boot nothing has read
+    // which pin the wiring uses, so every ADC pin but the speed pot's; after, only the battery's,
+    // leaving the ESC current pin the value a test gave it. A pack reading left on the pot's pin
+    // from before it was the pot's is cleared: a pot left alone reads 0.
     void setPack(int32_t mv)
     {
         packMv_ = mv;
@@ -587,10 +589,13 @@ class Host
         const uint8_t pot = wiring().speedPotPin;
         for (uint8_t pin = 26; pin <= 29; pin++)
         {
-            if (pin != pot)
+            if (pin == pot)
+            {
+                if (hal::analogRises(pin))
+                    hal::setAnalog(pin, 0);
+            }
+            else if (batteryAdcPin == PIN_NOT_USED || pin == batteryAdcPin)
                 hal::setAnalog(pin, raw, true);
-            else if (hal::analogRises(pin))
-                hal::setAnalog(pin, 0);
         }
         for (SimFlywheel& w : wheels_)
         {
@@ -1031,6 +1036,7 @@ class Host
             v["ledData"] = ledDataPin;
             v["batteryAdc"] = batteryAdcPin;
             v["speedPot"] = speedPotPin;
+            v["currentAdc"] = currentAdcPin;
             v["escEnable"] = escEnablePin;
         }
         else if (name == "pinConflicts")

@@ -11,6 +11,7 @@
 #include "deviceSettings.h"
 #include "deviceStore.h"
 #include "splashStore.h"
+#include "usageStats.h"
 #include "bitmaps.h" // splash - what DUMP_SPLASH reports when no custom one is set
 #include "bootStatus.h"
 #include "schemaDump.h"
@@ -521,6 +522,16 @@ void handleSerialCommands()
     else if (command == "DUMP_BOOT")
     {
         BootStatus::writeJson(Serial);
+    }
+    else if (command == "DUMP_STATS")
+    {
+        UsageStats::writeJson(Serial);
+    }
+    else if (command == "RESET_STATS")
+    {
+        // Saved with the next idle save, like any other change to the records.
+        UsageStats::reset();
+        ackOk("RESET_STATS", -1, false, false);
     }
     else if (command == "DUMP_GPIO")
     {
