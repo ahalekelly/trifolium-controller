@@ -4,7 +4,6 @@ import {
   plannedSets,
   ranking,
   roundTargets,
-  secondWorst,
   startSearch,
   type Search,
   type SetScore,
@@ -52,14 +51,6 @@ describe("roundTargets", () => {
     // 32 x 3, then 8 more x 2, 4 x 5, 2 x 10.
     expect(plannedSets(32, 20)).toBe(96 + 16 + 20 + 20);
     expect(plannedSets(1, 20)).toBe(20);
-  });
-});
-
-describe("secondWorst", () => {
-  it("is the 95th percentile of 20", () => {
-    expect(secondWorst([...Array(20).keys()])).toBe(18);
-    expect(secondWorst([5])).toBe(5);
-    expect(secondWorst([])).toBeNaN();
   });
 });
 

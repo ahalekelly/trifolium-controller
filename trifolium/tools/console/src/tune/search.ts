@@ -75,7 +75,7 @@ const median = (values: number[]) => {
 };
 
 /** The 95th percentile of n = 20: the second-worst. The worst with fewer than two, NaN with none. */
-export const secondWorst = (values: number[]): number => {
+const secondWorst = (values: number[]): number => {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.max(0, sorted.length - 2)] ?? NaN;
 };
