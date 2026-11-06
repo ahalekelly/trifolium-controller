@@ -103,6 +103,12 @@ export interface Candidate extends Settings {
   id: string;
 }
 
+/**
+ * A spin-up's trace keeps one capture sample in this many: 5 ms apart, a few hundred points a motor,
+ * so a run's every trace fits in localStorage. Its CSV file has them all.
+ */
+export const TRACE_STEP = 5;
+
 /** One spin-up, at one RPM. readyMs is null when the rampup timeout ended it. */
 export interface Spinup {
   rpm: number;
@@ -112,6 +118,8 @@ export interface Spinup {
   overshootPct: number;
   /** At the rev's start, so the pack at rest. */
   packMv: number;
+  /** Each motor's RPM from the rev's start, one sample in TRACE_STEP. */
+  trace: number[][];
 }
 
 /** The id of the settings the blaster started with, run between candidates to show drift. */
@@ -148,8 +156,6 @@ export interface Run {
   candidates: Candidate[];
   search: Search;
   sets: SetRecord[];
-  /** Per candidate, its latest set's slowest motor's RPM at each target, for the finalists chart. */
-  traces: Record<string, number[][]>;
   status: RunStatus;
   /** Why it is paused. */
   note: string | null;
@@ -305,7 +311,6 @@ export function startRun(
       config.halving,
     ),
     sets: [],
-    traces: {},
     status: "running",
     note: null,
     escWrites: 0,
@@ -356,8 +361,8 @@ const REST_RPM = 500;
 
 /**
  * Reads a spin-up off its capture: the firmware's own fire-ready time, and how far the worst motor
- * went past `rpm` once it first got there, as % of `rpm`. `traceMs` is how much of the slowest
- * motor's RPM to keep for the chart. A capture that did not start from rest at `rpm` is some other
+ * went past `rpm` once it first got there, as % of `rpm`. `traceMs` is how much of each motor's RPM
+ * to keep for the chart. A capture that did not start from rest at `rpm` is some other
  * rev's - the trigger, the Rev switch, a hold that lapsed and came back - and is refused.
  */
 export function measure(
@@ -365,7 +370,7 @@ export function measure(
   rpm: number,
   file: string,
   traceMs: number,
-): { spinup: Spinup; trace: number[] } {
+): Spinup {
   const log = parseRpmCsv(wholeRows(capture.csv).csv);
   if (!log.motors.length || !log.voltage.length) {
     throw new Error("The capture has no motor or pack voltage columns.");
@@ -386,17 +391,15 @@ export function measure(
     const peak = Math.max(...motor.rpm.slice(reached));
     overshootPct = Math.max(overshootPct, ((peak - rpm) / rpm) * 100);
   }
-  const slowest =
-    log.motors.find((m) => m.index === capture.report.slowestMotor) ?? log.motors[0];
   return {
-    spinup: {
-      rpm,
-      file,
-      readyMs: capture.report.readyMs,
-      overshootPct,
-      packMv: log.voltage[0],
-    },
-    trace: slowest.rpm.slice(0, traceMs),
+    rpm,
+    file,
+    readyMs: capture.report.readyMs,
+    overshootPct,
+    packMv: log.voltage[0],
+    trace: log.motors.map((m) =>
+      m.rpm.slice(0, traceMs).filter((_, i) => i % TRACE_STEP === 0),
+    ),
   };
 }
 

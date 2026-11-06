@@ -207,6 +207,8 @@ describe("an ESC run", () => {
     expect(Object.keys(run.escs![1].raw)).toHaveLength(LAYOUTS[4].fields.length);
     expect(run.escs![1].raw.startup_power).toBe(ORIGINAL_POWER);
     expectMeasuredOnItsOwnSettings(run);
+    // Each spin-up keeps its own trace: the fake capture's one motor, its first sample.
+    expect(run.sets.every((s) => JSON.stringify(s.spinups[0].trace) === "[[0]]")).toBe(true);
     // The opening read leaves the ESCs on the baseline; every later block is one write.
     expect(blocksOf(run)).toEqual([BASELINE, C80, C120, C150, BASELINE]);
     expect(sessions(events)).toBe(5);

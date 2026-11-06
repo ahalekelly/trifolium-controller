@@ -17,6 +17,7 @@ import {
   startRun,
   type EscGrid,
   type Run,
+  TRACE_STEP,
   type Spinup,
 } from "./run";
 
@@ -29,6 +30,7 @@ const spinup = (readyMs: number | null): Spinup => ({
   readyMs,
   overshootPct: 1,
   packMv: 16000,
+  trace: [],
 });
 
 /** Runs every set nextSet() asks for, returning the ids in order. */
@@ -215,14 +217,27 @@ describe("measure", () => {
   ].join("\n");
 
   it("takes the worst motor's overshoot past target once there, and the pack at the start", () => {
-    const { spinup: s, trace } = measure(
+    const s = measure(
       { csv, report: { readyMs: 3, slowestMotor: 3, timedOut: false } },
       30000,
       "a.csv",
       3,
     );
-    expect(s).toEqual({ rpm: 30000, file: "a.csv", readyMs: 3, overshootPct: 2, packMv: 16400 });
-    expect(trace).toEqual([0, 28000, 29900]);
+    expect(s).toMatchObject({ rpm: 30000, readyMs: 3, overshootPct: 2, packMv: 16400 });
+  });
+
+  it("keeps each motor's RPM over the first traceMs, one sample in TRACE_STEP", () => {
+    const rows = Array.from(
+      { length: 12 },
+      (_, i) => `16400,${i * 100},30000,1999,0.00,${i * 90},30000,1999,0.00,`,
+    );
+    const long = [csv.split("\n")[0], ...rows].join("\n");
+    const report = { readyMs: 3, slowestMotor: 3, timedOut: false };
+    expect(TRACE_STEP).toBe(5);
+    expect(measure({ csv: long, report }, 30000, "a.csv", 11).trace).toEqual([
+      [0, 500, 1000],
+      [0, 450, 900],
+    ]);
   });
 
   it("refuses a capture that did not start from rest at the RPM asked for", () => {
