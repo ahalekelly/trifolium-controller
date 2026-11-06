@@ -135,7 +135,7 @@ def test_a_tool_on_the_serial_port_loads_a_preset_and_finds_the_board_armed_afte
             ser.read(4096)
     ser.close()
 
-    time.sleep(3)  # the ESC arm loop comes before the device answers again
+    wait_armed(control_port)  # the ESC arm loop comes before the device answers again
     ser = open_serial(serial_port)
     ser.write(b"DUMP_BOOT\n")
     boot = reply(ser, "DUMP_BOOT")
@@ -201,6 +201,7 @@ def test_a_host_slow_to_read_still_gets_a_whole_capture_dump(capturing):
         asked = time.time()
         bench(control_port, op="state")
         slowest = max(slowest, time.time() - asked)
+        time.sleep(0.01)  # each ask is a new connection: unpaced, they use up the local ports
     assert slowest < 1.0
 
     received = b""
