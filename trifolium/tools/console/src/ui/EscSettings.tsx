@@ -9,7 +9,7 @@ import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
-import { firmwareOf, rawFrom, shown, type EscField } from "../esc/layouts";
+import { accepted, firmwareOf, parseShown, shown, type EscField } from "../esc/layouts";
 import type { EscSettings } from "../esc/session";
 import { Para } from "./Help";
 
@@ -46,11 +46,7 @@ export function escRows(escs: EscSettings[]): EscRow[] {
   });
 }
 
-/**
- * Typed edits as the raw values a write takes, or why one cannot be written. A number is typed as
- * shown (with its scale and shift) and goes to the nearest raw step, which must be in range; "off"
- * is Off where the field has one.
- */
+/** Typed edits (see parseShown()) as the raw values a write takes, or why one cannot be written. */
 export function editedValues(
   rows: EscRow[],
   edits: Record<string, string>,
@@ -59,17 +55,9 @@ export function editedValues(
   const errors: Record<string, string> = {};
   for (const [name, text] of Object.entries(edits)) {
     const field = rows.find((r) => r.field.name === name)!.field;
-    if (field.off && text.trim().toLowerCase() === "off") {
-      values[name] = field.off.raw;
-      continue;
-    }
-    const raw = field.options ? Number(text) : rawFrom(field, Number(text));
-    if (!Number.isInteger(raw) || raw < field.min || raw > field.max) {
-      const range = `${shown(field, field.min)} to ${shown(field, field.max)}`;
-      errors[name] = field.off ? `${range}, or Off` : range;
-    } else {
-      values[name] = raw;
-    }
+    const raw = parseShown(field, text);
+    if (raw === null) errors[name] = accepted(field);
+    else values[name] = raw;
   }
   return { values, errors };
 }
@@ -193,8 +181,8 @@ export function EscSettingsPanel({
                     helperText={errors[field.name]}
                     onChange={(e) => edit(field.name, e.target.value === "" ? null : e.target.value)}
                   >
-                    {field.options?.map((label, i) => (
-                      <MenuItem key={label} value={String(field.min + i)}>
+                    {field.options?.map((label) => (
+                      <MenuItem key={label} value={label}>
                         {label}
                       </MenuItem>
                     ))}

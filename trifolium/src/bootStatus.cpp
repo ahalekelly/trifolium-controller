@@ -110,7 +110,10 @@ void recordEscArming(const int32_t answeredAt_ms[4], uint32_t duration_ms, bool 
 
 void writeJson(Print& out)
 {
-    out.print("{\"cmd\":\"DUMP_BOOT\",\"ok\":true,\"display\":{\"probed\":");
+    // The RP2040's unique ID, from its flash chip: which blaster this is, whatever its settings say.
+    out.print("{\"cmd\":\"DUMP_BOOT\",\"ok\":true,\"chipId\":\"");
+    out.print(rp2040.getChipID());
+    out.print("\",\"display\":{\"probed\":");
     out.print(displayProbed_ ? "true" : "false");
     out.print(",\"ok\":");
     out.print(displayOk_ ? "true" : "false");

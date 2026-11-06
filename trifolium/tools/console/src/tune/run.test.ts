@@ -1,19 +1,31 @@
 import { describe, expect, it } from "vitest";
+import { LAYOUTS } from "../esc/layouts";
+import { V4_DEFAULT } from "../esc/testdata";
+import { ranking } from "./search";
 import {
   BASELINE,
   baselineOf,
   candidatesFor,
   captureFile,
   DEFAULT_CONFIG,
+  DEFAULT_GAINS,
+  escOriginals,
+  escRecords,
   measure,
   nextSet,
+  overshootLimit,
+  plannedEscWrites,
   scoreOf,
+  scoresOf,
   startRun,
+  type EscGrid,
   type Run,
+  TRACE_STEP,
   type Spinup,
 } from "./run";
 
-const BASE = { control: "pid" as const, kp: 0.2, ki: 0.5 };
+const GAINS = { control: "pid" as const, kp: 0.2, ki: 0.5 };
+const BASE = { gains: GAINS, esc: null };
 
 const spinup = (readyMs: number | null): Spinup => ({
   rpm: 30000,
@@ -21,6 +33,7 @@ const spinup = (readyMs: number | null): Spinup => ({
   readyMs,
   overshootPct: 1,
   packMv: 16000,
+  trace: [],
 });
 
 /** Runs every set nextSet() asks for, returning the ids in order. */
@@ -41,17 +54,11 @@ function order(run: Run): string[] {
 
 describe("a gains run", () => {
   it("grids PID's kp with ki, and gives TBH its gains on ki, each value once", () => {
-    const both = {
-      ...DEFAULT_CONFIG,
-      mode: "both" as const,
-      kp: [0.1, 0.2, 0.1],
-      ki: [0.5],
-      tbh: [0.05],
-    };
+    const both = { ...DEFAULT_GAINS, mode: "both" as const, kp: [0.1, 0.2, 0.1], ki: [0.5], tbh: [0.05] };
     expect(candidatesFor(both, BASE)).toEqual([
-      { id: "PID kp 0.1 ki 0.5", gains: { control: "pid", kp: 0.1, ki: 0.5 } },
-      { id: "PID kp 0.2 ki 0.5", gains: { control: "pid", kp: 0.2, ki: 0.5 } },
-      { id: "TBH gain 0.05", gains: { control: "tbh", kp: 0.2, ki: 0.05 } },
+      { id: "PID kp 0.1 ki 0.5", gains: { control: "pid", kp: 0.1, ki: 0.5 }, esc: null },
+      { id: "PID kp 0.2 ki 0.5", gains: { control: "pid", kp: 0.2, ki: 0.5 }, esc: null },
+      { id: "TBH gain 0.05", gains: { control: "tbh", kp: 0.2, ki: 0.05 }, esc: null },
     ]);
   });
 
@@ -67,8 +74,8 @@ describe("a gains run", () => {
   });
 
   it("opens and closes on the baseline, with one every eight candidate sets between", () => {
-    const config = { ...DEFAULT_CONFIG, kp: [0.1, 0.2, 0.4], ki: [0.25, 0.5, 1], n: 3 };
-    const ids = order(startRun(config, BASE, 500));
+    const grid = { ...DEFAULT_GAINS, kp: [0.1, 0.2, 0.4], ki: [0.25, 0.5, 1] };
+    const ids = order(startRun({ ...DEFAULT_CONFIG, grid, n: 3 }, BASE, null, null, 500));
     expect(ids[0]).toBe(BASELINE);
     expect(ids[ids.length - 1]).toBe(BASELINE);
     expect(ids[9]).toBe(BASELINE);
@@ -86,7 +93,7 @@ describe("a gains run", () => {
 
 describe("captureFile", () => {
   it("names a capture by its run's start, set index, label and RPM", () => {
-    const run = startRun(DEFAULT_CONFIG, BASE, 500);
+    const run = startRun(DEFAULT_CONFIG, BASE, null, null, 500);
     run.startedAt = new Date(2026, 10, 5, 14, 50, 37).getTime();
     expect(captureFile(run, BASELINE, 30000)).toBe(
       "tune-2026-11-05_14-50-37_set000_baseline-PID-kp-0.2-ki-0.5_30000rpm.csv",
@@ -95,6 +102,151 @@ describe("captureFile", () => {
     expect(captureFile(run, "TBH gain 0.05", 25000)).toBe(
       "tune-2026-11-05_14-50-37_set001_TBH-gain-0.05_25000rpm.csv",
     );
+  });
+});
+
+describe("an ESC run", () => {
+  const field = (name: string) => LAYOUTS[4].fields.find((f) => f.name === name)!;
+  const grid = (values: Record<string, number[]>): EscGrid => ({
+    kind: "esc",
+    fields: Object.entries(values).map(([name, raws]) => ({ field: field(name), values: raws })),
+  });
+
+  it("tries every combination, labelled as shown, on the blaster's own gains", () => {
+    const esc = { pwm_frequency: 24, motor_kv: 0 };
+    const candidates = candidatesFor(grid({ pwm_frequency: [16, 48], motor_kv: [0, 80] }), {
+      gains: GAINS,
+      esc,
+    });
+    expect(candidates.map((c) => c.id)).toEqual([
+      "PWM frequency 16 kHz, Motor Kv Off (low-RPM power protection disabled)",
+      "PWM frequency 16 kHz, Motor Kv 3220 Kv",
+      "PWM frequency 48 kHz, Motor Kv Off (low-RPM power protection disabled)",
+      "PWM frequency 48 kHz, Motor Kv 3220 Kv",
+    ]);
+    expect(candidates[1]).toMatchObject({ gains: GAINS, esc: { pwm_frequency: 16, motor_kv: 80 } });
+  });
+
+  it("records every field each ESC holds, raw and as shown, by the motor it drives", () => {
+    const [record] = escRecords([{ esc: 0, layout: LAYOUTS[4], block: V4_DEFAULT }], [3]);
+    expect(record).toMatchObject({ motor: 3, eepromVersion: 4, firmware: "2.21" });
+    expect(Object.keys(record.raw)).toEqual(LAYOUTS[4].fields.map((f) => f.name));
+    expect(record.raw.startup_power).toBe(V4_DEFAULT[25]);
+    expect(record.shown.startup_power).toBe(`${V4_DEFAULT[25]} %`);
+  });
+
+  it("puts back the value every ESC holds, and refuses ESCs that differ", () => {
+    const other = V4_DEFAULT.slice();
+    other[25] = 120; // startup_power
+    const escs = escRecords(
+      [V4_DEFAULT, other].map((block, esc) => ({ esc, layout: LAYOUTS[4], block })),
+      [1, 2],
+    );
+    expect(escOriginals(escs, grid({ advance_level: [10] }))).toEqual({
+      advance_level: V4_DEFAULT[23],
+    });
+    expect(() => escOriginals(escs, grid({ startup_power: [100] }))).toThrow(
+      /The ESCs differ on Startup power \(100 %, 120 %\)/,
+    );
+  });
+
+  it("names a capture file for the baseline's and the candidate's ESC settings", () => {
+    const run = startRun(
+      { ...DEFAULT_CONFIG, grid: grid({ startup_power: [80] }) },
+      { gains: GAINS, esc: { startup_power: 100 } },
+      null,
+      null,
+      500,
+    );
+    run.startedAt = new Date(2026, 10, 5, 14, 50, 37).getTime();
+    expect(captureFile(run, BASELINE, 30000)).toBe(
+      "tune-2026-11-05_14-50-37_set000_baseline-Startup-power-100_30000rpm.csv",
+    );
+    expect(captureFile(run, run.candidates[0].id, 30000)).toMatch(/_Startup-power-80_30000rpm\.csv$/);
+  });
+
+  it("runs each candidate's round as one block, and baselines in blocks of 3 between", () => {
+    const config = { ...DEFAULT_CONFIG, grid: grid({ pwm_frequency: [16, 24, 32, 48] }), n: 20 };
+    const ids = order(startRun(config, { gains: GAINS, esc: { pwm_frequency: 24 } }, null, null, 500));
+    const blocks: [string, number][] = [];
+    for (const id of ids) {
+      const last = blocks[blocks.length - 1];
+      if (last?.[0] === id) last[1]++;
+      else blocks.push([id, 1]);
+    }
+    const [c16, c24, c32, c48] = startRun(config, BASE, null, null, 500).candidates.map((c) => c.id);
+    // Rounds end on 10 and 20 sets. A baseline block comes at the first block's end after 24
+    // candidate sets, and the last one leaves the ESCs on the settings the run started with.
+    expect(blocks).toEqual([
+      [BASELINE, 3],
+      [c16, 10],
+      [c24, 10],
+      [c32, 10],
+      [BASELINE, 3],
+      [c48, 10],
+      [c16, 10],
+      [c24, 10],
+      [BASELINE, 3],
+    ]);
+    // Every block but the first is a write.
+    expect(blocks.length - 1).toBeLessThanOrEqual(plannedEscWrites(4, 20, true));
+  });
+
+  it("without halving, runs every candidate's n sets as one block, baselines between", () => {
+    const config = {
+      ...DEFAULT_CONFIG,
+      grid: grid({ pwm_frequency: [16, 24, 32, 48] }),
+      n: 20,
+      halving: false,
+    };
+    const run = startRun(config, { gains: GAINS, esc: { pwm_frequency: 24 } }, null, null, 500);
+    const ids = order(run);
+    const [c16, c24, c32, c48] = run.candidates.map((c) => c.id);
+    const blocks = ids.filter((id, i) => id !== ids[i - 1]);
+    expect(blocks).toEqual([BASELINE, c16, c24, BASELINE, c32, c48, BASELINE]);
+    expect(ids.filter((id) => id !== BASELINE)).toHaveLength(80);
+    expect(blocks.length - 1).toBeLessThanOrEqual(plannedEscWrites(4, 20, false));
+  });
+});
+
+describe("the overshoot limit", () => {
+  /** The run's ranking once every set it asks for has run, a candidate's sets all alike. */
+  function ranked(run: Run, outcome: (id: string) => [readyMs: number, overshootPct: number]) {
+    let current = run;
+    for (;;) {
+      const { search, next } = nextSet(current);
+      current = { ...current, search };
+      if (next === null) break;
+      const [readyMs, overshootPct] = next === BASELINE ? [300, 0] : outcome(next);
+      const spinups = [{ ...spinup(readyMs), overshootPct }];
+      current = { ...current, sets: [...current.sets, { id: next, at: 0, spinups }] };
+    }
+    return ranking(current.search, scoresOf(current), overshootLimit(current.config.grid));
+  }
+
+  it("lets an ESC run's fastest candidate win however far it overshoots", () => {
+    const field = LAYOUTS[4].fields.find((f) => f.name === "pwm_frequency")!;
+    const grid: EscGrid = { kind: "esc", fields: [{ field, values: [48, 96] }] };
+    const baseline = { gains: GAINS, esc: { pwm_frequency: 24 } };
+    const run = startRun({ ...DEFAULT_CONFIG, grid, n: 3 }, baseline, null, null, 500);
+    const [fast, steady] = run.candidates.map((c) => c.id);
+    const rows = ranked(run, (id) => (id === fast ? [112, 4.5] : [248, 2.4]));
+    expect(rows.map((r) => [r.id, r.standing.qualified])).toEqual([
+      [fast, true],
+      [steady, true],
+    ]);
+    expect(rows[0].standing.overshootPct).toBe(4.5);
+  });
+
+  it("rules out a gains candidate whose overshoot passes the limit", () => {
+    const grid = { ...DEFAULT_GAINS, kp: [0.1, 0.2], ki: [1], overshootLimitPct: 3 };
+    const run = startRun({ ...DEFAULT_CONFIG, grid, n: 3 }, BASE, null, null, 500);
+    const [fast, steady] = run.candidates.map((c) => c.id);
+    const rows = ranked(run, (id) => (id === fast ? [112, 4.5] : [248, 2.4]));
+    expect(rows.map((r) => [r.id, r.standing.qualified])).toEqual([
+      [steady, true],
+      [fast, false],
+    ]);
   });
 });
 
@@ -109,14 +261,27 @@ describe("measure", () => {
   ].join("\n");
 
   it("takes the worst motor's overshoot past target once there, and the pack at the start", () => {
-    const { spinup: s, trace } = measure(
+    const s = measure(
       { csv, report: { readyMs: 3, slowestMotor: 3, timedOut: false } },
       30000,
       "a.csv",
       3,
     );
-    expect(s).toEqual({ rpm: 30000, file: "a.csv", readyMs: 3, overshootPct: 2, packMv: 16400 });
-    expect(trace).toEqual([0, 28000, 29900]);
+    expect(s).toMatchObject({ rpm: 30000, readyMs: 3, overshootPct: 2, packMv: 16400 });
+  });
+
+  it("keeps each motor's RPM over the first traceMs, one sample in TRACE_STEP", () => {
+    const rows = Array.from(
+      { length: 12 },
+      (_, i) => `16400,${i * 100},30000,1999,0.00,${i * 90},30000,1999,0.00,`,
+    );
+    const long = [csv.split("\n")[0], ...rows].join("\n");
+    const report = { readyMs: 3, slowestMotor: 3, timedOut: false };
+    expect(TRACE_STEP).toBe(5);
+    expect(measure({ csv: long, report }, 30000, "a.csv", 11).trace).toEqual([
+      [0, 500, 1000],
+      [0, 450, 900],
+    ]);
   });
 
   it("refuses a capture that did not start from rest at the RPM asked for", () => {

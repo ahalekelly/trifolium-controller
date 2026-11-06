@@ -3,12 +3,13 @@ import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { useTheme } from "@mui/material/styles";
-import { extentOf, niceStep } from "../rpm/parse";
+import { extentOf, MS_PER_SAMPLE, niceStep } from "../rpm/parse";
 
+/** Lines drawn in one colour under one name: one signal, or many spin-ups of one candidate. */
 export interface Series {
   name: string;
   colour: string;
-  values: number[];
+  lines: number[][];
   /** Scaled against its own extent and labelled on the right, for signals the left axis crushes. */
   axis?: "left" | "right";
 }
@@ -26,10 +27,13 @@ export function RpmChart({
   series,
   height = 260,
   xLabel = "sample (≈ms)",
+  sampleMs = MS_PER_SAMPLE,
 }: {
   series: Series[];
   height?: number;
   xLabel?: string;
+  /** How far apart the samples are. */
+  sampleMs?: number;
 }) {
   const theme = useTheme();
   const [hover, setHover] = React.useState<number | null>(null);
@@ -46,7 +50,7 @@ export function RpmChart({
 
   const left = series.filter((s) => s.axis !== "right");
   const right = series.filter((s) => s.axis === "right");
-  const sampleCount = Math.max(0, ...series.map((s) => s.values.length));
+  const sampleCount = Math.max(0, ...series.flatMap((s) => s.lines.map((l) => l.length)));
 
   if (!series.length || sampleCount === 0) {
     return (
@@ -59,8 +63,8 @@ export function RpmChart({
   const plotW = Math.max(80, width - PAD.left - PAD.right);
   const plotH = height - PAD.top - PAD.bottom;
 
-  const leftExtent = extentOf(left.map((s) => s.values));
-  const rightExtent = extentOf(right.map((s) => s.values));
+  const leftExtent = extentOf(left.flatMap((s) => s.lines));
+  const rightExtent = extentOf(right.flatMap((s) => s.lines));
 
   const x = (i: number) => PAD.left + (sampleCount <= 1 ? 0 : (i / (sampleCount - 1)) * plotW);
   const yFor = (v: number, e: { min: number; max: number }) =>
@@ -69,16 +73,26 @@ export function RpmChart({
   const path = (s: Series) => {
     const e = s.axis === "right" ? rightExtent : leftExtent;
     let d = "";
-    let penDown = false;
-    s.values.forEach((v, i) => {
-      if (!Number.isFinite(v)) {
-        penDown = false;
-        return;
-      }
-      d += `${penDown ? "L" : "M"}${x(i).toFixed(1)} ${yFor(v, e).toFixed(1)} `;
-      penDown = true;
-    });
+    for (const line of s.lines) {
+      let penDown = false;
+      line.forEach((v, i) => {
+        if (!Number.isFinite(v)) {
+          penDown = false;
+          return;
+        }
+        d += `${penDown ? "L" : "M"}${x(i).toFixed(1)} ${yFor(v, e).toFixed(1)} `;
+        penDown = true;
+      });
+    }
     return d;
+  };
+
+  /** The value at the hover, or the range its lines span there. */
+  const readout = (s: Series, i: number) => {
+    const at = s.lines.map((l) => l[i]).filter(Number.isFinite);
+    if (at.length === 0) return "";
+    const [lo, hi] = [Math.min(...at), Math.max(...at)].map(Math.round);
+    return lo === hi ? `: ${lo}` : `: ${lo}-${hi}`;
   };
 
   const ticks = (e: { min: number; max: number }) => {
@@ -180,16 +194,14 @@ export function RpmChart({
             <Box sx={{ width: 14, height: 2, bgcolor: s.colour, flexShrink: 0 }} />
             <Typography sx={{ fontSize: 11 }} color="text.secondary">
               {s.name}
-              {hover !== null && Number.isFinite(s.values[hover])
-                ? `: ${Math.round(s.values[hover])}`
-                : ""}
+              {hover !== null && readout(s, hover)}
               {s.axis === "right" ? " (right)" : ""}
             </Typography>
           </Stack>
         ))}
         {hover !== null && (
           <Typography sx={{ fontSize: 11 }} color="text.disabled">
-            sample {hover}
+            {hover * sampleMs} ms
           </Typography>
         )}
       </Stack>

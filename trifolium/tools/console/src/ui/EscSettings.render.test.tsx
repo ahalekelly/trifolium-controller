@@ -48,7 +48,7 @@ describe("editedValues", () => {
       motor_kv: "3220",
       advance_level: "15",
       max_ramp: "2.5",
-      variable_pwm: "2",
+      variable_pwm: "by rpm",
     });
     expect(errors).toEqual({});
     expect(values).toEqual({ motor_kv: 80, advance_level: 26, max_ramp: 25, variable_pwm: 2 });

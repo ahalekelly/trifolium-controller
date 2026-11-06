@@ -1,10 +1,11 @@
-// Successive halving over candidates scored by repeated trials.
+// Successive halving over candidates scored by repeated trials, or the full matrix.
 //
 // A trial is one "set": a candidate's spin-up at every target RPM. This module knows nothing of
 // what a candidate changes - flywheel gains or ESC settings - only each set's score. Early rounds
 // give every surviving candidate a few sets and drop the worse half on medians, which is cheap and
 // robust to a stray set; the finalists then get exactly n sets, ranked on the second-worst, which
-// for the default n = 20 is the 95th percentile: the spin-up a user can count on.
+// for the default n = 20 is the 95th percentile: the spin-up a user can count on. Without halving,
+// the search is that last round alone: every candidate is a finalist.
 
 /** One set's outcome. A timed-out set never got every wheel to speed at some RPM. */
 export interface SetScore {
@@ -34,7 +35,8 @@ const EARLY_SETS = 3;
  * The set counts the rounds end on: each halving round doubles the last, ending at n. The first
  * starts at EARLY_SETS, so a short search may spend no extra sets on its last halving.
  */
-export function roundTargets(count: number, n: number): number[] {
+export function roundTargets(count: number, n: number, halving: boolean): number[] {
+  if (!halving) return [n];
   let halvings = 0;
   for (let alive = count; alive > FINALISTS; alive = Math.ceil(alive / 2)) halvings++;
   const targets: number[] = [];
@@ -44,23 +46,34 @@ export function roundTargets(count: number, n: number): number[] {
   return [...targets, n];
 }
 
-export function startSearch(ids: string[], n: number): Search {
+export function startSearch(ids: string[], n: number, halving: boolean): Search {
   if (ids.length === 0) throw new Error("a search needs at least one candidate");
   if (n < 2) throw new Error("the 95th percentile needs n of at least 2");
-  return { rounds: roundTargets(ids.length, n), round: 0, alive: [...ids], dropped: {} };
+  return { rounds: roundTargets(ids.length, n, halving), round: 0, alive: [...ids], dropped: {} };
 }
 
-/** How many sets a search of `count` candidates runs, baseline sets aside. */
-export function plannedSets(count: number, n: number): number {
+/**
+ * How many sets a search of `count` candidates runs, baseline sets aside, and in how many blocks: a
+ * block is one candidate's sets for one round.
+ */
+export function planned(
+  count: number,
+  n: number,
+  halving: boolean,
+): { sets: number; blocks: number } {
   let alive = count;
   let done = 0;
-  let total = 0;
-  for (const target of roundTargets(count, n)) {
-    total += alive * (target - done);
+  let sets = 0;
+  let blocks = 0;
+  for (const target of roundTargets(count, n, halving)) {
+    if (target > done) {
+      sets += alive * (target - done);
+      blocks += alive;
+    }
     done = target;
     if (alive > FINALISTS) alive = Math.max(FINALISTS, Math.ceil(alive / 2));
   }
-  return total;
+  return { sets, blocks };
 }
 
 export const finished = (search: Search): boolean => search.round >= search.rounds.length;
@@ -80,7 +93,10 @@ const secondWorst = (values: number[]): number => {
   return sorted[Math.max(0, sorted.length - 2)] ?? NaN;
 };
 
-/** A candidate's standing: overshoot past the limit rules it out, then timeouts and time rank it. */
+/**
+ * A candidate's standing: overshoot past the limit, where there is one, rules it out, then timeouts
+ * and time rank it.
+ */
 export interface Standing {
   timeouts: number;
   overshootPct: number;
@@ -90,25 +106,25 @@ export interface Standing {
 }
 
 /** On medians, for the early rounds. */
-function earlyStanding(scores: SetScore[], limitPct: number): Standing {
+function earlyStanding(scores: SetScore[], limitPct: number | null): Standing {
   const overshootPct = median(scores.map((s) => s.overshootPct));
   return {
     timeouts: scores.filter((s) => s.timedOut).length / scores.length,
     overshootPct,
     ms: median(scores.map(msOf)),
-    qualified: overshootPct <= limitPct,
+    qualified: limitPct === null || overshootPct <= limitPct,
     sets: scores.length,
   };
 }
 
 /** On the second-worst set, for the finalists and the results. */
-export function standing(scores: SetScore[], limitPct: number): Standing {
+export function standing(scores: SetScore[], limitPct: number | null): Standing {
   const overshootPct = secondWorst(scores.map((s) => s.overshootPct));
   return {
     timeouts: scores.filter((s) => s.timedOut).length,
     overshootPct,
     ms: secondWorst(scores.map(msOf)),
-    qualified: overshootPct <= limitPct,
+    qualified: limitPct === null || overshootPct <= limitPct,
     sets: scores.length,
   };
 }
@@ -118,18 +134,24 @@ export const compareStandings = (a: Standing, b: Standing): number =>
 
 /**
  * The candidate to run a set of next, closing whichever rounds its candidates have finished; null
- * once the search is over. The one with the fewest sets goes first, so a round runs its candidates
- * in turn rather than one after another, and drift over the run spreads across all of them.
+ * once the search is over. `stay` goes again while it is still in and short of the round's sets, so
+ * a search whose candidates are costly to switch between runs each one's sets for a round as one
+ * block - and a candidate that ends one round and is first into the next keeps going. Otherwise the
+ * one with the fewest sets goes first, so a round runs its candidates in turn rather than one after
+ * another, and drift over the run spreads across all of them.
  */
 export function plan(
   search: Search,
   scores: Record<string, SetScore[]>,
-  limitPct: number,
+  limitPct: number | null,
+  stay: string | null,
 ): { search: Search; next: string | null } {
   let current = search;
   while (!finished(current)) {
     const target = current.rounds[current.round];
     const counts = current.alive.map((id) => scores[id]?.length ?? 0);
+    const stays = stay === null ? -1 : current.alive.indexOf(stay);
+    if (stays >= 0 && counts[stays] < target) return { search: current, next: stay };
     const fewest = Math.min(...counts);
     if (fewest < target) return { search: current, next: current.alive[counts.indexOf(fewest)] };
     current = closeRound(current, scores, limitPct);
@@ -137,7 +159,7 @@ export function plan(
   return { search: current, next: null };
 }
 
-function closeRound(search: Search, scores: Record<string, SetScore[]>, limitPct: number): Search {
+function closeRound(search: Search, scores: Record<string, SetScore[]>, limitPct: number | null): Search {
   const last = search.round === search.rounds.length - 1;
   if (last || search.alive.length <= FINALISTS) return { ...search, round: search.round + 1 };
   const ranked = [...search.alive].sort((a, b) =>
@@ -158,7 +180,7 @@ function closeRound(search: Search, scores: Record<string, SetScore[]>, limitPct
 export function ranking(
   search: Search,
   scores: Record<string, SetScore[]>,
-  limitPct: number,
+  limitPct: number | null,
 ): { id: string; standing: Standing; droppedIn: number | null }[] {
   const row = (id: string) => ({
     id,

@@ -529,3 +529,8 @@ void RP2040::rebootToBootloader()
 
 void RP2040::idleOtherCore() {}
 void RP2040::resumeOtherCore() {}
+
+const char* RP2040::getChipID()
+{
+    return "E6614103E7345B2F";
+}

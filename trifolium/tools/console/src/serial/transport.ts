@@ -325,6 +325,11 @@ export interface TransportEvents {
   onCapture?: (capture: Capture) => void;
 }
 
+/** The part of DUMP_BOOT the transport reads. */
+interface BootReply {
+  chipId?: string;
+}
+
 export class SerialTransport {
   private port: Port | null = null;
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
@@ -356,6 +361,12 @@ export class SerialTransport {
   get connected(): boolean {
     return this.port !== null;
   }
+
+  /**
+   * The connected blaster's chip ID, from its DUMP_BOOT as waitReady() last read it: which Trifolium
+   * this is. Null while disconnected, or from firmware that does not report one.
+   */
+  chipId: string | null = null;
 
   /** A rebooted device is waiting for Connect, which carries on whatever the reboot interrupted. */
   get awaitingReconnect(): boolean {
@@ -576,6 +587,7 @@ export class SerialTransport {
       this.reader = null;
       this.writer = null;
       this.port = null;
+      this.chipId = null;
       this.captures.reset();
       this.binary = null;
       this.log("err", reason);
@@ -856,7 +868,13 @@ export class SerialTransport {
       const pending = this.waitForLine(repliesTo("DUMP_BOOT"), timeoutMs);
       await this.write("DUMP_BOOT\n");
       const line = await pending;
-      if (line !== null) return true;
+      if (line === null) continue;
+      try {
+        this.chipId = (JSON.parse(line) as BootReply).chipId ?? null;
+        return true;
+      } catch {
+        // Garbled by the other core's log lines: asking again does not repeat that.
+      }
     }
     // Not "reconnected": connect() calls this too, and on a USB-only board that is the common
     // case rather than the rare one.
