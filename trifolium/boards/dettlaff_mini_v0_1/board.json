@@ -1,0 +1,39 @@
+{
+  "kind": "trifolium-wiring-preset",
+  "presetVersion": 1,
+  "id": "dettlaff_mini_v0_1",
+  "name": "Dettlaff Mini v0.1",
+  "notes": [
+    "Uses the Trifolium v1.4 connectors and pins, so v1.4 harnesses plug in unchanged.",
+    "No pusher driver. Run the pusher on an ESC channel, or set Pusher Driver to FET on GPIO 27 for an external FET board on the pusher header.",
+    "Re-pin Betaflight-order and NewBeeDrone Cricket ESC harnesses before use: their reversed power order destroys the DShot inputs."
+  ],
+  "unread": {
+    "telem": 4,
+    "escADC": 26
+  },
+  "schemaVersion": 3,
+  "boardId": "dettlaff_mini_v0_1",
+  "wiringConfigured": true,
+  "escPins": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "i2cSdaPin": 14,
+  "i2cSclPin": 15,
+  "batteryAdcPin": 28,
+  "escEnablePin": 255,
+  "menuButtonPin": 19,
+  "triggerSwitchPin": 21,
+  "revSwitchPin": 18,
+  "cycleSwitchPin": 255,
+  "idleSwitchPin": 255,
+  "select0Pin": 9,
+  "select1Pin": 255,
+  "select2Pin": 10,
+  "pusherDrive": "fet",
+  "pusherFetPin": 255,
+  "ledDataPin": 12
+}
