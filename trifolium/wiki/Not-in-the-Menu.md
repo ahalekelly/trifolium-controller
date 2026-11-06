@@ -47,4 +47,6 @@ Only ceilings remain, and none of them is a per-blaster choice:
 
 A capture is CSV: a `Voltage_mv` column, then `Motor N, TargetRPM N, Throttle N, value N` repeated per enabled motor, one row per control-loop tick.
 
+After the rows comes one `{"evt":"rpmCapture",...}` line: `readyMs`, when the wheels were first at firing speed, in ms from the rev's start (`null` if they never were); `slowestMotor`, the one that got there last; and `timedOut`, whether the rampup timeout ended the rev first.
+
 Paste it into the console's **RPM capture** page to chart it, or process it yourself.

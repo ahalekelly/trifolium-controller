@@ -59,6 +59,19 @@ def test_pid_holds_the_integral_at_zero_until_the_first_crossing(blaster):
     pytest.fail("no first crossing within a second of rev")
 
 
+def test_a_rev_starts_the_ema_from_the_wheel_not_from_where_the_last_rev_left_it(blaster):
+    """Spin-down reads RPM straight, past the EMA, which would otherwise hold the last rev's speed
+    into the next one's first ticks."""
+    b = armed_v12(blaster, display=False)
+    b.press("rev")
+    b.run_ms(1000)
+    b.release("rev")
+    assert b.run_until(lambda: motor(b)["motorRPM"] == 0 and b.peek("flywheelState") == IDLE, 15000)
+    b.press("rev")
+    assert b.run_until(lambda: b.peek("flywheelState") != IDLE, 100)
+    assert motor(b)["motorRPM"] < 500
+
+
 def test_pid_stale_telemetry_mid_ramp_does_not_count_as_settling(blaster):
     """Without the PIDErrorPrior != PIDError clause, a tick with no new eRPM frame repeats the last
     error exactly, which reads as settled and starts the integral mid-ramp."""

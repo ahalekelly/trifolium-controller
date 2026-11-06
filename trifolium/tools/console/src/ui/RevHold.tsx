@@ -6,14 +6,13 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import * as React from "react";
 
-// A rev held from the console, for an RPM capture. Held only while the button is: each REV_HOLD
-// keeps the rev up for 300 ms and this renews it every RENEW_MS, so a frozen tab or a pulled cable
-// lets go on its own. Letting go of the button, moving off it, the window losing focus or the tab
-// being hidden all release it at once. There is no fire: the firmware has no command for it.
+// A rev held from the console, for an RPM capture. Held only while the button is: the transport
+// renews REV_HOLD's 300 ms lease while it holds, so a frozen tab or a pulled cable lets go on its
+// own. Letting go of the button, moving off it, the window losing focus or the tab being hidden all
+// release it at once. There is no fire: the firmware has no command for it.
 
 /** The firmware these commands arrived in. */
 export const FW_CONSOLE_CONTROLS = "2.3.0";
-export const RENEW_MS = 100;
 /** How often the blaster is asked whether a rev would be refused, while nothing is held. */
 export const POLL_MS = 1000;
 
@@ -25,22 +24,24 @@ export interface MotorsStatus {
 }
 
 export interface RevHoldApi {
-  hold: (mask: number) => void;
-  release: () => void;
+  /** Revs the motors in `mask` until the returned function lets go. onLost: the blaster refused. */
+  hold: (mask: number, onLost: () => void) => () => void;
   status: () => Promise<MotorsStatus | null>;
 }
 
 export interface RevHoldProps {
   api: RevHoldApi;
   live: boolean;
+  /** A tune run is driving the blaster: it revs by itself, and another rev would spoil a capture. */
+  tuning: boolean;
 }
 
-export function RevHold({ api, live }: RevHoldProps) {
+export function RevHold({ api, live, tuning }: RevHoldProps) {
   const [status, setStatus] = React.useState<MotorsStatus | null>(null);
   /** Motors unticked by hand. Every enabled motor starts ticked. */
   const [unticked, setUnticked] = React.useState<Set<number>>(new Set());
   const [holding, setHolding] = React.useState(false);
-  const renewal = React.useRef<ReturnType<typeof setInterval> | null>(null);
+  const release = React.useRef<(() => void) | null>(null);
 
   React.useEffect(() => {
     if (!live) {
@@ -49,7 +50,7 @@ export function RevHold({ api, live }: RevHoldProps) {
     }
     let stopped = false;
     const poll = async () => {
-      if (renewal.current) return; // the renewals' refusals say it while holding
+      if (release.current) return; // the renewals' refusals say it while holding
       const next = await api.status();
       if (!stopped) setStatus(next);
     };
@@ -66,31 +67,31 @@ export function RevHold({ api, live }: RevHoldProps) {
 
   const blocked = !live
     ? "Connect a blaster to rev it from here."
-    : !status
-      ? "Reading the blaster..."
-      : status.menuOpen
-        ? "The blaster's menu is open."
-        : status.burstMode === "safe"
-          ? "The blaster is in SAFE."
-          : !mask
-            ? "Tick a motor to rev."
-            : null;
+    : tuning
+      ? "A tune run is driving the blaster."
+      : !status
+        ? "Reading the blaster..."
+        : status.menuOpen
+          ? "The blaster's menu is open."
+          : status.burstMode === "safe"
+            ? "The blaster is in SAFE."
+            : !mask
+              ? "Tick a motor to rev."
+              : null;
 
-  const stop = React.useCallback(
-    (send = true) => {
-      if (!renewal.current) return;
-      clearInterval(renewal.current);
-      renewal.current = null;
-      setHolding(false);
-      if (send) api.release();
-    },
-    [api],
-  );
+  const stop = React.useCallback(() => {
+    if (!release.current) return;
+    release.current();
+    release.current = null;
+    setHolding(false);
+  }, []);
 
   const start = () => {
-    if (blocked || renewal.current) return;
-    api.hold(mask);
-    renewal.current = setInterval(() => api.hold(mask), RENEW_MS);
+    if (blocked || release.current) return;
+    release.current = api.hold(mask, () => {
+      release.current = null;
+      setHolding(false);
+    });
     setHolding(true);
   };
 
@@ -109,9 +110,8 @@ export function RevHold({ api, live }: RevHoldProps) {
     };
   }, [stop]);
 
-  // A capture restarts the blaster when it is done: the port is gone, so there is nobody to tell.
   React.useEffect(() => {
-    if (!live) stop(false);
+    if (!live) stop();
   }, [live, stop]);
 
   const toggle = (i: number) =>

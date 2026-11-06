@@ -1,12 +1,12 @@
-// Parsing the CSV that RpmLogger::dumpIfReady() writes (src/rpmLogger.h).
+// Parsing the CSV that RpmLogger::sendIfFull() writes (src/rpmLogger.h).
 //
 // Ported from tools/serial-config.html, which is proven against real captures. The shape is an
 // optional leading "Voltage_mv" column, an optional "Current_mv" column after it, then
 // "Motor N,TargetRPM N,Throttle N,value N," repeated per enabled motor, then one row per captured
 // control-loop tick in the same column order.
 //
-// The log arrives interleaved with ordinary device chatter, so it has to be found inside a larger
-// blob of text rather than parsed from a clean file.
+// A pasted or dropped capture may come with the device chatter around it, so it has to be found
+// inside a larger blob of text rather than parsed from a clean file.
 
 export interface MotorSeries {
   index: number;
@@ -23,35 +23,28 @@ export interface RpmLog {
   current: number[];
 }
 
-/**
- * How many device lines the console's log must keep for a capture to remain readable.
- *
- * Sized here rather than in the log view, because it is this parser that imposes it: a capture is
- * one header line plus one row per sample, extractRpmCsv() finds the block by its *header*, and the
- * firmware's ceiling is 2000 samples. A smaller buffer keeps only the tail of a default-length
- * capture, the header having been evicted, so "Take from device log" can never work - which is
- * exactly how it failed on the bench. Keep this above the largest rpmLogLength the firmware allows.
- */
-export const LOG_LINE_CAP = 4000;
-
 // The Voltage_mv prefix is optional so older logs still parse.
 const HEADER_RE = /^(?:Voltage_mv,(?:Current_mv,)?)?(?:Motor \d+,TargetRPM \d+,Throttle \d+,value \d+,?)+$/;
 const DATA_ROW_RE = /^[\d.\-,]+$/;
 
+/** A capture's first line, as the device prints it. */
+export const isCaptureHeader = (line: string): boolean => HEADER_RE.test(line);
+/** One of its rows. */
+export const isCaptureRow = (line: string): boolean => DATA_ROW_RE.test(line);
+
 /**
- * Pulls the CSV block out of arbitrary log text, stripping the console's "(device) " prefix. A log
- * that holds several captures gives the newest: each rev dumps one and restarts the blaster.
+ * Pulls the newest CSV block out of arbitrary log text.
  *
  * Returns null when there is no header with rows under it - a header alone is not a capture.
  */
 export function extractRpmCsv(rawText: string): string | null {
-  const lines = rawText.split(/\r?\n/).map((l) => l.replace(/^\s*\(device\)\s*/, "").trim());
+  const lines = rawText.split(/\r?\n/).map((l) => l.trim());
 
   for (let headerIdx = lines.length - 1; headerIdx >= 0; headerIdx--) {
-    if (!HEADER_RE.test(lines[headerIdx])) continue;
+    if (!isCaptureHeader(lines[headerIdx])) continue;
     const csv = [lines[headerIdx]];
     for (let i = headerIdx + 1; i < lines.length; i++) {
-      if (!DATA_ROW_RE.test(lines[i])) break;
+      if (!isCaptureRow(lines[i])) break;
       csv.push(lines[i]);
     }
     if (csv.length > 1) return csv.join("\n");

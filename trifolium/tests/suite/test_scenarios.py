@@ -2,6 +2,8 @@
 boot actions, the battery cutoff, pin conflicts at boot, the RPM log, a charged mode, the timeouts
 and the solenoid's timing."""
 
+import json
+
 import pytest
 from helpers import armed_v12, close_menu, open_menu, schema
 from test_dart_sensing import pulses
@@ -112,22 +114,43 @@ def test_a_menu_button_that_collides_with_a_higher_priority_input_is_lost_and_sa
     assert "the on-device menu cannot be opened" in b.transcript
 
 
-def test_an_rpm_log_captures_the_rev_then_prints_it_and_reboots(blaster):
-    b = armed_v12(blaster, {"useRpmLogging": True, "rpmLogLength": 150}, display=False)
+def test_an_rpm_log_captures_the_rev_then_prints_it_and_when_the_wheels_were_ready(blaster):
+    b = armed_v12(blaster, {"useRpmLogging": True, "rpmLogLength": 300}, display=False)
     b.analog(26, 310)  # the ESC's current-sense output at 1000 mV
     mark = len(b.transcript)
+    boots = len(b.history)
     b.press("rev")
-    assert b.run_until_stopped(3000)
-    assert b.last_stop == "reboot"
+    # The console reading the device all the while keeps the port busy: every tick still gets its
+    # row.
+    deadline = b.now_us + 1_000_000
+    while '"evt":"rpmCapture"' not in b.transcript[mark:]:
+        assert b.now_us < deadline
+        assert b.command("DUMP_DEVICE")
 
     log = b.transcript[mark:]
     header = log.find("Voltage_mv,Current_mv,Motor 1,TargetRPM 1,Throttle 1,value 1,Motor 3,")
     assert header >= 0
-    rows = [row.split(",") for row in log[log.find("\n", header) + 1:].splitlines()[:150]]
-    rpms = [int(row[2]) for row in rows]
-    assert len(rpms) == 150
-    assert rpms[-1] > rpms[0] + 10000  # 150 ms of a spin-up
-    assert {row[1] for row in rows} == {"1000"}
+    columns = log[header:log.find("\n", header)].split(",")
+    lines = log[log.find("\n", header) + 1:].splitlines()
+    rows = [[int(float(cell)) for cell in line.rstrip(",").split(",")] for line in lines[:300]]
+    motor1, motor3 = columns.index("Motor 1"), columns.index("Motor 3")
+    assert rows[-1][motor1] > rows[0][motor1] + 10000  # 300 ms of a spin-up
+    assert {row[1] for row in rows} == {1000}
+    report = json.loads(lines[300])
+    assert report == {"evt": "rpmCapture", "readyMs": report["readyMs"], "slowestMotor": 3,
+                      "timedOut": False}
+    # The firmware's own test, both wheels past target less firingRPMTolerance, reads each sample
+    # on the tick after it, and the clock runs a little past one tick a sample.
+    ready = next(i for i, row in enumerate(rows) if min(row[motor1], row[motor3]) > 29500)
+    assert ready < report["readyMs"] <= ready + 5
+
+    # No reboot after it, and the next rev captures again.
+    b.release("rev")
+    b.run_ms(3000)
+    mark = len(b.transcript)
+    b.press("rev")
+    assert b.run_until(lambda: '"evt":"rpmCapture"' in b.transcript[mark:], 1000)
+    assert len(b.history) == boots
 
 
 def test_an_rpm_log_leaves_out_the_current_column_when_no_pin_reads_it(blaster):
@@ -135,8 +158,49 @@ def test_an_rpm_log_leaves_out_the_current_column_when_no_pin_reads_it(blaster):
                   display=False)
     mark = len(b.transcript)
     b.press("rev")
-    assert b.run_until_stopped(3000)
+    assert b.run_until(lambda: '"evt":"rpmCapture"' in b.transcript[mark:], 1000)
     assert "Voltage_mv,Motor 1,TargetRPM 1," in b.transcript[mark:]
+
+
+def test_a_rev_whose_capture_will_not_fit_goes_uncaptured_and_the_next_one_is(blaster):
+    """A rev again before the last capture filled starts a fresh one in its place, which may not
+    fit."""
+    b = armed_v12(blaster, {"useRpmLogging": True, "rpmLogLength": 2000}, display=False)
+    b.press("rev")
+    b.run_ms(300)
+    b.release("rev")
+    b.run_ms(100)
+    b.set_heap_limit(b.heap()["live"] - 1000)
+    mark = len(b.transcript)
+    b.press("rev")
+    b.run_ms(2500)
+    b.release("rev")
+    assert "RPM logging: the capture buffers would not fit in memory" in b.transcript[mark:]
+    assert '"evt":"rpmCapture"' not in b.transcript[mark:]
+
+    b.set_heap_limit(0)
+    b.run_ms(3000)
+    mark = len(b.transcript)
+    b.press("rev")
+    assert b.run_until(lambda: '"evt":"rpmCapture"' in b.transcript[mark:], 3000)
+
+
+def test_the_drive_keeps_getting_frames_while_a_capture_goes_out(blaster):
+    """A full-length capture is over 100 KB of CSV, a tenth of a second or more on the port. Rev is
+    still held when it goes out, so the wheels are under drive throughout, and an ESC that missed
+    its frames for that long would take it as signal loss."""
+    b = armed_v12(blaster, {"useRpmLogging": True, "rpmLogLength": 2000}, display=False)
+    mark = len(b.transcript)
+    b.press("rev")
+    b.run_ms(1900)
+    frames = lambda: [b.escs()[pin]["frames"] for pin in (1, 3)]
+    last = frames()
+    for _ in range(100):
+        b.run_ms(5)
+        now = frames()
+        assert all(n > l for n, l in zip(now, last))
+        last = now
+    assert '"evt":"rpmCapture"' in b.transcript[mark:]
 
 
 def test_plasma_through_the_real_loop_the_wheels_follow_the_charge_and_release_fires_the_slots(blaster):

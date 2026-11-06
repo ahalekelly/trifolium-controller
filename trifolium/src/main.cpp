@@ -294,6 +294,24 @@ FlywheelMotor motorArr[4] = {FlywheelMotor(&motorsObj[0]), FlywheelMotor(&motors
 
 RpmLogger rpmLogger;
 
+// The console's TUNE (serialCommands.cpp): one control mode and pair of gains for every motor, and
+// with them a rev RPM, written straight into motorArr[].revRPM. RAM alone - the stored settings never
+// see it, so no save carries it to flash. A bare TUNE, the menu opening or a reboot drops it.
+static struct
+{
+    bool active = false;
+    flywheelControlType_t control = PID_CONTROL;
+    float kp = 0;
+    float ki = 0;
+} tune;
+// Set on core 1; core 0 drops the override once the drive train is stopped.
+static volatile bool tuneClearWanted = false;
+
+static flywheelControlType_t flywheelControl()
+{
+    return tune.active ? tune.control : deviceSettings.flywheelControl;
+}
+
 void updateFiringMode();
 void cycleFiringMode();
 uint8_t selectShotProfileAtBoot();
@@ -382,11 +400,28 @@ static bool wheelsAtSpeed()
     return true;
 }
 
+// The enabled motor furthest short of its at-speed RPM, or -1 when none is.
+static int8_t laggingMotor()
+{
+    int8_t lagging = -1;
+    int32_t worstShortfall = 0;
+    for (int i = 0; i < 4; i++)
+    {
+        const int32_t shortfall = atSpeedRpm(i) - (int32_t)motorArr[i].motorRPM;
+        if (motorsEnabled[i] && revsMotor(i) && shortfall >= worstShortfall)
+        {
+            lagging = i;
+            worstShortfall = shortfall;
+        }
+    }
+    return lagging;
+}
+
 void logData()
 {
-    // record() is a no-op unless a capture is currently armed (startCapture() succeeded and
-    // hasn't been dumped yet) - no separate deviceSettings.useRpmLogging check needed here.
-    rpmLogger.record(motorArr, motorsEnabled, batteryMonitor->getVoltage_mv());
+    // record() is a no-op unless a capture is recording (startCapture() succeeded and it is not
+    // full yet) - no separate deviceSettings.useRpmLogging check needed here.
+    rpmLogger.record(motorArr, batteryMonitor->getVoltage_mv());
 }
 
 // call this whenever a shot is detected/fired, regardless of which detection method triggered it
@@ -402,15 +437,73 @@ void registerShot()
     updateRuntimeNow = true;
 }
 
-// Rebuilds motorsObj[i] from the device's PID gains/Kv/poles/voltage limit. Safe to call live.
+// Rebuilds motorsObj[i] from the device's PID gains/Kv/poles/voltage limit, TUNE's gains standing in
+// while it is active. Safe to call live.
 void applyMotorConfig()
 {
     for (int i = 0; i < 4; i++)
     {
-        motorsObj[i] = Motor(deviceSettings.motorConfig[i].kp, deviceSettings.motorConfig[i].ki,
-                             deviceSettings.motorConfig[i].motorKv,
-                             deviceSettings.motorConfig[i].motorPolesDiv2,
-                             deviceSettings.motorConfig[i].spinupTorqueLimit_mv);
+        const MotorConfig& mc = deviceSettings.motorConfig[i];
+        motorsObj[i] = Motor(tune.active ? tune.kp : mc.kp, tune.active ? tune.ki : mc.ki,
+                             mc.motorKv, mc.motorPolesDiv2, mc.spinupTorqueLimit_mv);
+    }
+}
+
+// TUNE's override, applied only while the wheels are stopped. directMotorControlActive keeps a rev
+// from starting meanwhile, as it does for the motor actions. Returns why it was refused, or nullptr.
+const char* applyTune(uint32_t revRPM, flywheelControlType_t control, float kp, float ki)
+{
+    if (!wiringLive)
+        return "no wiring configured";
+    if (!(kp >= 0 && kp <= KP_MAX && ki >= 0 && ki <= KI_MAX))
+        return "gain out of range";
+    for (int i = 0; i < 4; i++)
+    {
+        if (motorsEnabled[i] &&
+            ((int32_t)revRPM < motorRpmFloor(i) || (int32_t)revRPM > motorRpmCeiling(i)))
+            return "revRPM out of range";
+    }
+    if (menuIsOpen())
+        return "menu is open"; // it is editing the settings TUNE would stand over
+    if (directMotorControlActive)
+        return "a motor action is running";
+    directMotorControlActive = true;
+    if (!driveTrainStopped())
+    {
+        directMotorControlActive = false;
+        return "flywheels are running";
+    }
+    tune = {true, control, kp, ki};
+    tuneClearWanted = false;
+    applyMotorConfig();
+    for (int i = 0; i < 4; i++)
+    {
+        if (motorsEnabled[i])
+            motorArr[i].revRPM = revRPM;
+    }
+    directMotorControlActive = false;
+    return nullptr;
+}
+
+// A bare TUNE, or the menu opening: the blaster's own settings come back once the wheels are
+// stopped, so a console that stops a run mid-spin-up, or closes, can ask at once.
+void clearTune()
+{
+    if (tune.active)
+        tuneClearWanted = true;
+}
+
+static void dropTuneWhenStopped()
+{
+    if (!tuneClearWanted || !driveTrainStopped())
+        return;
+    tuneClearWanted = false;
+    tune.active = false;
+    applyMotorConfig();
+    for (int i = 0; i < 4; i++)
+    {
+        if (motorsEnabled[i])
+            motorArr[i].revRPM = activeProfile.revRPM[i];
     }
 }
 
@@ -1548,7 +1641,8 @@ void updateSpeedPot()
             activeProfile.revRPM[i] = rpm;
             changed = true;
         }
-        motorArr[i].revRPM = rpm;
+        if (!tune.active)
+            motorArr[i].revRPM = rpm;
     }
     if (changed)
     {
@@ -1876,6 +1970,7 @@ bool fwControlLoop()
             logger.info("State transition: ACCELERATING to IDLE, rev not allowed");
         }
     }
+    dropTuneWhenStopped();
 
     switch (flywheelState)
     {
@@ -1908,9 +2003,9 @@ bool fwControlLoop()
             resetFWControl();
             if (deviceSettings.useRpmLogging)
             {
-                if (!rpmLogger.startCapture(deviceSettings.rpmLogLength, currentAdcPin))
-                    logger.error(
-                        "RPM logging: capture buffer allocation failed, skipping this rev");
+                if (const char* skipped = rpmLogger.startCapture(deviceSettings.rpmLogLength,
+                                                                 currentAdcPin, motorsEnabled))
+                    logger.error("RPM logging: ", skipped, ", skipping this rev");
             }
         }
         else if ((time_ms < lastRevTime_ms + dwellTime_ms && lastRevTime_ms > 0) ||
@@ -1999,6 +2094,11 @@ bool fwControlLoop()
                                     : (rpmScale_ >= 0.0f) ? (uint32_t)(motorArr[i].revRPM * rpmScale_)
                                                           : motorArr[i].revRPM;
 
+        // A capture records when the wheels got to speed, and which got there last.
+        if (rpmLogger.recording())
+            rpmLogger.noteSpinup(wheelsAtSpeed(), laggingMotor(),
+                                 (loopStartTimer_us - revStartTime_us) / 1000);
+
         // If all motors are at target RPM, update the blaster's state to FULLSPEED.
         if (wheelsAtSpeed()) {
             flywheelState = STATE_FULLSPEED;
@@ -2012,6 +2112,7 @@ bool fwControlLoop()
                     logger.warn("Motor ", i + 1, " failed to reach target speed! motorRPM=", motorArr[i].motorRPM, " firingRPM=", atSpeedRpm(i));
                 }
             }
+            rpmLogger.noteTimeout();
         }
 
         break;
@@ -2125,7 +2226,7 @@ bool fwControlLoop()
 
     if (enableFwControl)
     {
-        switch (deviceSettings.flywheelControl)
+        switch (flywheelControl())
         {
         case PID_CONTROL:
             for (int i = 0; i < 4; i++)
@@ -2175,21 +2276,6 @@ bool fwControlLoop()
 
     logData();
 
-    // Held off while the port is busy with a reply. Skipping a tick is free - the capture waits.
-    if (rpmLogger.armed() && SerialLock::tryHold())
-    {
-        const bool dumped = rpmLogger.dumpIfReady(motorsEnabled);
-        SerialLock::release();
-        if (dumped)
-        {
-            logger.info("RPM log dump complete, rebooting now as part of normal RPM logging - this "
-                        "is expected");
-            SerialLock::hold();
-            Serial.println("{\"evt\":\"rebooting\",\"reason\":\"rpmLog\"}");
-            Serial.flush();
-            rp2040.reboot();
-        }
-    }
     // update pusher driver
     pusher->update();
 
@@ -2350,7 +2436,7 @@ void resetFWControl()
     {
         if (motorsEnabled[i])
         {
-            motorArr[i].resetControl(deviceSettings.flywheelControl);
+            motorArr[i].resetControl(flywheelControl(), deviceSettings.EMAFilter);
         }
     }
 }

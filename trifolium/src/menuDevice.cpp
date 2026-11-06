@@ -293,8 +293,8 @@ static constexpr VisibilityTerm kUsesRpmShotCounterTerms[] = {
     {"device:useRpmBaseShotCounter", "true", false}};
 static constexpr VisibilityCondition kUsesRpmShotCounter = {kUsesRpmShotCounterTerms, 1};
 
-// The RPM capture: a rev fills a fixed-length buffer, dumps it as CSV and then reboots (main.cpp).
-// The toggle has an OLED row so that reboot-every-rev loop is escapable without a host.
+// The RPM capture: a rev fills a fixed-length buffer, which then goes out as CSV (rpmLogger.h).
+// The toggle has an OLED row so logging can be turned off without a host.
 // Non-static: menuMotors.cpp puts this row in the Motors & PID submenu.
 ToggleItem rpmLoggingItem("RPM Logging", "device:useRpmLogging",
                                  &deviceSettings.useRpmLogging);

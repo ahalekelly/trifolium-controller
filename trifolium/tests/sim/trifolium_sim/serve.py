@@ -39,13 +39,18 @@ from .host import PROJECT
 
 SLICE_MS = 5
 CATCH_UP_MS = 20
+# The furthest the blaster's clock falls behind the wall clock. A machine too busy for more stops it
+# instead: a stall up to this long is caught up on, its writes delivered as they were sent (see
+# Server._deliver()), but time queued past it would hold every reply up behind it, past a host's
+# timeout.
+LAG_LIMIT_MS = 1000
 ENUMERATION_S = 0.8  # after a reboot, how long before the port can be opened again
 # The line the firmware prints as it goes to reboot. A blaster is off the bus within milliseconds
 # of saying so, where the simulator, paced to the wall clock on a busy machine, can take longer than
 # a host's first retry - which would then find the old boot still answering. Matched only once the
 # line ends: running ahead from part of it would reboot before the rest was sent, leaving the host a
 # line that never ends.
-REBOOT_ANNOUNCED = re.compile(r'(?:"rebooting":true|"evt":"rebooting")[^\n]*\n')
+REBOOT_ANNOUNCED = re.compile(r'"rebooting":true[^\n]*\n')
 ANNOUNCED_REBOOT_MS = 2000  # how far to run ahead for it, in simulated time
 
 WS_GUID = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -146,6 +151,9 @@ def control(b, req):
                 else {req["names"][0]: b.peek(req["names"][0])}}
     if op == "wheels":
         return {"wheels": b.wheels()}
+    if op == "wheel":
+        b.wheel(req["index"], **{k: v for k, v in req.items() if k not in ("op", "index")})
+        return {}
     if op == "extends":
         return {"at_us": b.extends()}
     if op == "wiring":
@@ -174,8 +182,8 @@ def control(b, req):
     raise ValueError(f"unknown op {op!r}")
 
 
-CONTROL = ("press release tap pack pot magazine reload panel peek wheels extends wiring power_cycle "
-           "power_on state flash snapshot speed").split()
+CONTROL = ("press release tap pack pot magazine reload panel peek wheels wheel extends wiring "
+           "power_cycle power_on state flash snapshot speed").split()
 
 
 class Host:
@@ -184,14 +192,18 @@ class Host:
     nothing is lost to a slow reader, and nothing waits on one."""
 
     ready = True
+    # The host closed the connection, after the stream fed so far.
+    closed = False
 
     def __init__(self, sock):
         self.sock = sock
         self.out = bytearray()
 
     def feed(self, data):
-        """Bytes from the host: the serial stream in them, or None if the host has gone."""
-        return data
+        """Bytes from the host: the serial stream in them, as (wall-clock time sent, bytes) pairs, or
+        None if the host has gone. pyserial says nothing of when it sent them, so they count as sent
+        now."""
+        return [(time.time(), data)]
 
     def send(self, data):
         self.out += data
@@ -211,7 +223,7 @@ class Host:
 
 class WebSocketHost(Host):
     """RFC 6455, as much of it as a browser's serial bridge uses: the handshake, then one binary
-    message per write each way."""
+    message per write each way, each of the browser's led by when it sent it (webserial_shim.js)."""
 
     ready = False
 
@@ -224,19 +236,21 @@ class WebSocketHost(Host):
         self.buf += data
         if not self.ready:
             if HEADERS_END not in self.buf:
-                return b""
+                return []
             head, self.buf = self.buf.split(HEADERS_END, 1)
             return self._handshake(head)
-        stream = b""
+        sent = []
         while True:
             frame = self._frame()
             if frame is None:
-                return stream
+                return sent
             opcode, payload = frame
-            if opcode in (0x1, 0x2):
-                stream += payload
+            if opcode == 0x2:
+                sent.append((struct.unpack(">d", payload[:8])[0] / 1000, payload[8:]))
             elif opcode == 0x8:
-                return None
+                # A page going away sends its last writes and the close together; the writes count.
+                self.closed = True
+                return sent
             elif opcode == 0x9:
                 self._queue_frame(0xA, payload)
 
@@ -337,7 +351,7 @@ class Server:
     def __init__(self, blaster, serial_port, control_port, speed=1.0, ws_port=None, http_port=None):
         self.b = blaster
         self.speed = speed
-        self.rebase = False  # the speed changed: measure wall-clock time from now
+        self.paced_from = None  # serving starts, or the speed changed: measure wall-clock time from now
         self.sel = selectors.DefaultSelector()
         self.serial_listener = self._listen(serial_port)
         self.control_listener = self._listen(control_port)
@@ -498,19 +512,19 @@ class Server:
 
     def _from_host(self, sock):
         data = self._recv(sock)
-        stream = None if data is None else self.host.feed(data)
-        if stream is None:
+        sent = None if data is None else self.host.feed(data)
+        if sent:
+            self._deliver(sent)
+        if sent is None or self.host.closed:
             self._drop_host()
             return
-        if stream:
-            self.b.send(stream)
         self._flush_host()  # a pong, if the browser pinged
 
     def _handshake(self, sock):
         ws = self.pending[sock]
         data = self._recv(sock)
-        stream = None if data is None else ws.feed(data)
-        if stream is None:
+        sent = None if data is None else ws.feed(data)
+        if sent is None:
             ws.flush()  # the refusal, if there is one
             del self.pending[sock]
             self._close(sock)
@@ -518,9 +532,12 @@ class Server:
             del self.pending[sock]
             self._become_host(ws)
             ws.hello(self.b.boot_count)
-            if stream:
-                self.b.send(stream)
-            self._flush_host()
+            if sent:
+                self._deliver(sent)
+            if ws.closed:
+                self._drop_host()
+            else:
+                self._flush_host()
 
     @staticmethod
     def _recv(sock):
@@ -538,7 +555,7 @@ class Server:
             if req.get("op") == "speed":
                 if not float(req["speed"]) > 0:
                     raise ValueError("speed must be above 0")
-                self.speed, self.rebase = float(req["speed"]), True
+                self.speed, self.paced_from = float(req["speed"]), None
                 return {"ok": True, "speed": self.speed}
             reply = control(self.b, req)
             if req.get("op") == "snapshot":
@@ -625,14 +642,32 @@ class Server:
             self._drop_host(drain=True)  # re-enumeration: the host has to open the port again
             self.enumerated_at = time.monotonic() + ENUMERATION_S / self.speed
 
+    def _behind_us(self, wall):
+        """How far the blaster's clock is short of where wall-clock time `wall` puts it. time.time()
+        rather than a monotonic clock, since the browser stamps what it sends with the wall clock."""
+        if self.paced_from is None:
+            self.paced_from = (time.time(), self.b.now_us)
+        start_wall, start_sim = self.paced_from
+        return start_sim + (wall - start_wall) * 1e6 * self.speed - self.b.now_us
+
+    def _deliver(self, sent):
+        """Hands the host's bytes to the blaster at the moment of its clock each was sent. A busy
+        machine can hold this process up while they queue; given all at once, then caught up on,
+        they would leave the blaster longer gaps than the host did - long enough for a hold to
+        lapse between renewals sent on time."""
+        for at, data in sent:
+            behind = self._behind_us(at)
+            if self.b.state == "running" and behind > 0:
+                self.b.run_us(int(behind))
+            self.b.send(data)
+
     def serve_forever(self, stop=lambda: False):
-        start_wall = time.monotonic()
-        start_sim = self.b.now_us
         while not stop():
-            if self.rebase:
-                start_wall, start_sim, self.rebase = time.monotonic(), self.b.now_us, False
-            due = start_sim + (time.monotonic() - start_wall) * 1e6 * self.speed
-            behind = due - self.b.now_us
+            behind = self._behind_us(time.time())
+            if behind > LAG_LIMIT_MS * 1000:
+                start_wall, start_sim = self.paced_from
+                self.paced_from = (start_wall, start_sim - (behind - LAG_LIMIT_MS * 1000))
+                behind = LAG_LIMIT_MS * 1000
             if self.b.state == "running" and behind > 0:
                 self.b.run_us(int(min(behind, CATCH_UP_MS * 1000)))
                 # Not a moment's sleep while behind: Windows rounds a short select() up to ~15 ms.
