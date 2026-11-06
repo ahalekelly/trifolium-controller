@@ -45,7 +45,7 @@ const GAINS = { control: "pid" as const, kp: 0.2, ki: 0.5 };
 const CONFIG: TuneConfig = {
   ...DEFAULT_CONFIG,
   grid: {
-    kind: "esc",
+    kind: "esc", oneAtATime: false,
     fields: [
       {
         field: LAYOUTS[4].fields.find((f) => f.name === "startup_power")!,
@@ -238,7 +238,7 @@ describe("an ESC run", () => {
     const { runner, events } = rig();
     const field = LAYOUTS[4].fields.find((f) => f.name === "startup_power")!;
     const values = [80, ORIGINAL_POWER].map((startup_power) => ({ startup_power }));
-    const grid = { kind: "esc" as const, fields: [{ field, values }] };
+    const grid = { kind: "esc" as const, oneAtATime: false, fields: [{ field, values }] };
     const config = { ...CONFIG, grid };
     void runner.start(config, GAINS, DEVICE);
     await idle(runner);

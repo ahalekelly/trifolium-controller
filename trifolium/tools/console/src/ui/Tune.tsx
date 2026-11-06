@@ -81,6 +81,8 @@ export interface TuneDraft {
   kind: TuneConfig["grid"]["kind"];
   mode: GainsGrid["mode"];
   halving: boolean;
+  /** An ESC grid's: one setting changed at a time, or every combination. */
+  oneAtATime: boolean;
   form: Form;
   /** Each ESC setting's values to try, as typed, by AM32 field name. */
   esc: Record<string, string>;
@@ -90,6 +92,7 @@ export const DEFAULT_DRAFT: TuneDraft = {
   kind: "gains",
   mode: DEFAULT_GAINS.mode,
   halving: DEFAULT_CONFIG.halving,
+  oneAtATime: false,
   form: {
     kp: DEFAULT_GAINS.kp.join(", "),
     ki: DEFAULT_GAINS.ki.join(", "),
@@ -136,7 +139,7 @@ const listOf = (text: string): number[] | null => {
 
 /** The grid the form describes, or what is wrong with it. */
 function gridOf(
-  { kind, mode, form, esc }: TuneDraft,
+  { kind, mode, oneAtATime, form, esc }: TuneDraft,
   gainMax: { kp: number; ki: number },
   rows: EscRow[],
 ): TuneConfig["grid"] | string {
@@ -153,7 +156,8 @@ function gridOf(
       }
       fields.push({ field, values });
     }
-    return fields.length > 0 ? { kind, fields } : "List values to try for at least one setting.";
+    if (fields.length === 0) return "List values to try for at least one setting.";
+    return { kind, fields, oneAtATime };
   }
   const [kp, ki, tbh] = [form.kp, form.ki, form.tbh].map(listOf);
   const within = (values: number[] | null, max: number) =>
@@ -664,6 +668,19 @@ export function Tune({
               <ToggleButton value={true}>Halve to finalists</ToggleButton>
               <ToggleButton value={false}>Every candidate N times</ToggleButton>
             </ToggleButtonGroup>
+            {kind === "esc" && (
+              <ToggleButtonGroup
+                size="small"
+                exclusive
+                value={draft.oneAtATime}
+                onChange={(_, v: boolean | null) =>
+                  v !== null && onDraft({ ...draft, oneAtATime: v })
+                }
+              >
+                <ToggleButton value={false}>All combinations</ToggleButton>
+                <ToggleButton value={true}>One setting at a time</ToggleButton>
+              </ToggleButtonGroup>
+            )}
             <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", rowGap: 1 }}>
               {field("rpms", "Target RPMs")}
               {field("n", halving ? "Spin-ups per finalist" : "Spin-ups per candidate", 170)}

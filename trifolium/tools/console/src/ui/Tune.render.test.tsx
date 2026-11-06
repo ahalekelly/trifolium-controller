@@ -16,7 +16,7 @@ import {
   type SetRecord,
 } from "../tune/run";
 import { TuneRunner } from "../tune/runner";
-import { atRank, DEFAULT_DRAFT, Results, SpinupTraces, Tune } from "./Tune";
+import { atRank, DEFAULT_DRAFT, Results, SpinupTraces, Tune, type TuneDraft } from "./Tune";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -38,8 +38,12 @@ const escsWith = (startupPower: number): EscSettings[] => {
   ];
 };
 
-/** The form's text with these ESCs and these values typed for them. */
-async function formText(escs: EscSettings[], esc: Record<string, string>, halving = true) {
+/** The form's text with these ESCs, these values typed for them, and `draft`'s other choices. */
+async function formText(
+  escs: EscSettings[],
+  esc: Record<string, string>,
+  draft: Partial<TuneDraft> = {},
+) {
   const host = document.createElement("div");
   const root = createRoot(host);
   const unused = () => Promise.reject(new Error("not in this test"));
@@ -51,7 +55,7 @@ async function formText(escs: EscSettings[], esc: Record<string, string>, halvin
         device={DEVICE}
         gainMax={{ kp: 2, ki: 2 }}
         escs={escs}
-        draft={{ ...DEFAULT_DRAFT, kind: "esc", esc, halving }}
+        draft={{ ...DEFAULT_DRAFT, kind: "esc", esc, ...draft }}
         onDraft={() => {}}
         onApply={() => {}}
       />,
@@ -119,7 +123,7 @@ describe("the results table", () => {
   it("shows an ESC run's full matrix without overshoot, standings or a best", () => {
     const field = LAYOUTS[4].fields.find((f) => f.name === "startup_power")!;
     const values = [80, 120].map((startup_power) => ({ startup_power }));
-    const grid = { kind: "esc" as const, fields: [{ field, values }] };
+    const grid = { kind: "esc" as const, oneAtATime: false, fields: [{ field, values }] };
     const run = startRun(
       { ...DEFAULT_CONFIG, grid, n: 2, halving: false },
       { gains: { control: "pid", kp: 0.2, ki: 0.5 }, esc: { startup_power: 100 } },
@@ -307,7 +311,7 @@ describe("the spin-up chart", () => {
 
   it("ranks an ESC run's spin-ups by their time to 80% of target", () => {
     const field = LAYOUTS[4].fields.find((f) => f.name === "startup_power")!;
-    const grid = { kind: "esc" as const, fields: [{ field, values: [{ startup_power: 80 }] }] };
+    const grid = { kind: "esc" as const, oneAtATime: false, fields: [{ field, values: [{ startup_power: 80 }] }] };
     const sets = [100, 200, 300].map((reachMs, i) => {
       const s = set("a", [[0, i]]);
       s.spinups[0] = { ...s.spinups[0], readyMs: 400 - reachMs, reachMs };
@@ -407,10 +411,22 @@ describe("the ESC run form", () => {
 
   it("plans every candidate's N spin-ups without halving", async () => {
     const grid = { startup_power: "80, 120", motor_kv: "off, 3220" };
-    const text = await formText(escsWith(V4_DEFAULT[25]), grid, false);
+    const text = await formText(escsWith(V4_DEFAULT[25]), grid, { halving: false });
     expect(text).toContain("4 candidates, about 80 spin-ups and about 6 ESC writes");
     expect(text).toContain("Spin-ups per candidate");
     expect(text).toContain("Every candidate gets N spin-ups.");
+  });
+
+  it("plans one setting at a time on the ESCs' own: fewer candidates, spin-ups and writes", async () => {
+    // Startup power is 100 % on the ESCs, so 3 + 2 values make 5 candidates, not 6.
+    const grid = { startup_power: "80, 100, 120", motor_kv: "off, 3220" };
+    const text = await formText(escsWith(V4_DEFAULT[25]), grid, {
+      halving: false,
+      oneAtATime: true,
+    });
+    expect(text).toContain("All combinations");
+    // 100 % is the ESCs' own: its 20 come from the baseline's 9 and 11 of its own.
+    expect(text).toMatch(/5 candidates, about 91 spin-ups and about \d+ ESC writes/);
   });
 
   it("says what a setting takes, and shows where the ESCs differ", async () => {

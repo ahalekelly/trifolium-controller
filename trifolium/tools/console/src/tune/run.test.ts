@@ -117,7 +117,7 @@ describe("captureFile", () => {
 describe("an ESC run", () => {
   const field = (name: string) => LAYOUTS[4].fields.find((f) => f.name === name)!;
   const grid = (values: Record<string, number[]>): EscGrid => ({
-    kind: "esc",
+    kind: "esc", oneAtATime: false,
     fields: Object.entries(values).map(([name, raws]) => ({
       field: field(name),
       values: raws.map((raw) => ({ [name]: raw })),
@@ -129,7 +129,7 @@ describe("an ESC run", () => {
     const byRpm = pwm.instead!.writes;
     const esc = { pwm_frequency: 24, variable_pwm: 0 };
     const frequencies: EscGrid = {
-      kind: "esc",
+      kind: "esc", oneAtATime: false,
       fields: [{ field: pwm, values: [{ pwm_frequency: 32 }, byRpm] }],
     };
     expect(escNames(frequencies)).toEqual(["pwm_frequency", "variable_pwm"]);
@@ -139,7 +139,7 @@ describe("an ESC run", () => {
     ]);
     // By RPM ignores the PWM type, so crossing the two leaves one By RPM candidate.
     const crossed: EscGrid = {
-      kind: "esc",
+      kind: "esc", oneAtATime: false,
       fields: [
         { field: field("variable_pwm"), values: [{ variable_pwm: 0 }, { variable_pwm: 1 }] },
         ...frequencies.fields,
@@ -156,6 +156,30 @@ describe("an ESC run", () => {
       pwm_frequency: V4_DEFAULT[24],
       variable_pwm: V4_DEFAULT[21],
     });
+  });
+
+  it("tries one setting at a time on the baseline, its own values one candidate", () => {
+    const esc = { startup_power: 100, advance_level: 26 };
+    const oneAtATime: EscGrid = {
+      ...grid({ startup_power: [80, 100, 120], advance_level: [18, 26] }),
+      oneAtATime: true,
+    };
+    const ids = candidatesFor(oneAtATime, { gains: GAINS, esc }).map((c) => c.id);
+    // 3 + 2 values, of which 100 % and 15 ° are both the baseline: 4 candidates, not 6.
+    expect(ids).toEqual([
+      "Startup power 80 %, Timing advance 15 °",
+      "Startup power 100 %, Timing advance 15 °",
+      "Startup power 120 %, Timing advance 15 °",
+      "Startup power 100 %, Timing advance 7.5 °",
+    ]);
+    const config = { ...DEFAULT_CONFIG, grid: oneAtATime, halving: false };
+    const run = startRun(config, { gains: GAINS, esc }, null, null, 500);
+    expect(startingId(run)).toBe("Startup power 100 %, Timing advance 15 °");
+    const everyConfig = { ...config, grid: { ...oneAtATime, oneAtATime: false } };
+    const every = startRun(everyConfig, run.baseline, null, null, 500);
+    expect(every.candidates).toHaveLength(6);
+    expect(plannedRun(run).sets).toBeLessThan(plannedRun(every).sets);
+    expect(plannedRun(run).writes).toBeLessThan(plannedRun(every).writes);
   });
 
   it("tries every combination, labelled as shown, on the blaster's own gains", () => {
@@ -258,7 +282,7 @@ describe("an ESC run", () => {
 describe("timing a spin-up", () => {
   it("is to fire-ready in a gains run, and to 80% of target in an ESC run", () => {
     const field = LAYOUTS[4].fields.find((f) => f.name === "pwm_frequency")!;
-    const grid: EscGrid = { kind: "esc", fields: [{ field, values: [{ pwm_frequency: 48 }] }] };
+    const grid: EscGrid = { kind: "esc", oneAtATime: false, fields: [{ field, values: [{ pwm_frequency: 48 }] }] };
     const sets = [{ id: BASELINE, at: 0, spinups: [{ ...spinup(300), reachMs: 120 }] }];
     const gainsRun = { ...startRun(DEFAULT_CONFIG, BASE, null, null, 500), sets };
     const escBaseline = { gains: GAINS, esc: { pwm_frequency: 24 } };
@@ -286,7 +310,7 @@ describe("the overshoot limit", () => {
   it("lets an ESC run's fastest candidate win however far it overshoots", () => {
     const field = LAYOUTS[4].fields.find((f) => f.name === "pwm_frequency")!;
     const values = [48, 96].map((pwm_frequency) => ({ pwm_frequency }));
-    const grid: EscGrid = { kind: "esc", fields: [{ field, values }] };
+    const grid: EscGrid = { kind: "esc", oneAtATime: false, fields: [{ field, values }] };
     const baseline = { gains: GAINS, esc: { pwm_frequency: 24 } };
     const run = startRun({ ...DEFAULT_CONFIG, grid, n: 3 }, baseline, null, null, 500);
     const [fast, steady] = run.candidates.map((c) => c.id);
@@ -315,7 +339,7 @@ describe("the candidate with the baseline's settings", () => {
   const config = {
     ...DEFAULT_CONFIG,
     grid: {
-      kind: "esc" as const,
+      kind: "esc" as const, oneAtATime: false,
       fields: [{ field, values: [16, 24, 32, 48].map((pwm_frequency) => ({ pwm_frequency })) }],
     },
     n: 20,

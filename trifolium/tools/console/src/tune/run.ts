@@ -46,6 +46,8 @@ export interface GainsGrid {
 export interface EscGrid {
   kind: "esc";
   fields: { field: EscField; values: EscValues[] }[];
+  /** Each candidate the baseline with one field changed, rather than every combination. */
+  oneAtATime: boolean;
 }
 
 export interface TuneConfig {
@@ -255,8 +257,9 @@ export function baselineOf(device: unknown): Gains | null {
 type MotorGains = { enabled: boolean; kp: number; ki: number };
 
 /**
- * Every candidate a grid describes. TBH candidates keep the baseline's kp, which TBH never reads,
- * and ESC candidates spin up on the baseline's gains. An ESC candidate writes every field the grid
+ * Every candidate a grid describes: for an ESC grid, every combination of its values, or one at a
+ * time on the baseline. TBH candidates keep the baseline's kp, which TBH never reads, and ESC
+ * candidates spin up on the baseline's gains. An ESC candidate writes every field the grid
  * does, the baseline's value where it lists none, so none keeps what the candidate before it wrote;
  * an `instead` goes on last, over any value another field listed, as AM32 ignores that one.
  */
@@ -264,14 +267,19 @@ export function candidatesFor(grid: TuneConfig["grid"], baseline: Settings): Can
   const all: Settings[] = [];
   if (grid.kind === "esc") {
     let combos: { own: EscValues; instead: EscValues }[] = [{ own: {}, instead: {} }];
-    for (const { field, values } of grid.fields) {
-      combos = combos.flatMap(({ own, instead }) =>
-        values.map((v) =>
-          field.name in v
-            ? { own: { ...own, ...v }, instead }
-            : { own, instead: { ...instead, ...v } },
-        ),
-      );
+    const split = (v: EscValues, name: string) =>
+      name in v ? { own: v, instead: {} } : { own: {}, instead: v };
+    if (grid.oneAtATime) {
+      combos = grid.fields.flatMap(({ field, values }) => values.map((v) => split(v, field.name)));
+    } else {
+      for (const { field, values } of grid.fields) {
+        combos = combos.flatMap(({ own, instead }) =>
+          values.map((v) => {
+            const next = split(v, field.name);
+            return { own: { ...own, ...next.own }, instead: { ...instead, ...next.instead } };
+          }),
+        );
+      }
     }
     for (const { own, instead } of combos) {
       all.push({ gains: baseline.gains, esc: { ...baseline.esc, ...own, ...instead } });
