@@ -31,10 +31,11 @@ class RpmLogger
         throttleCache_ = new (std::nothrow) int16_t[length][4];
         valueCache_ = new (std::nothrow) float[length][4];
         voltageCache_ = new (std::nothrow) int32_t[length]; // per sample, not per motor
+        edtCache_ = new (std::nothrow) uint8_t[length][4][EDT_FIELDS];
         if (currentAdcPin != PIN_NOT_USED)
             currentCache_ = new (std::nothrow) int16_t[length]; // the 4-in-1's total, not per motor
         if (!targetRpmCache_ || !rpmCache_ || !throttleCache_ || !valueCache_ || !voltageCache_ ||
-            (currentAdcPin != PIN_NOT_USED && !currentCache_))
+            !edtCache_ || (currentAdcPin != PIN_NOT_USED && !currentCache_))
         {
             freeBuffers();
             return "the capture buffers would not fit in memory";
@@ -88,6 +89,12 @@ class RpmLogger
                 targetRpmCache_[cacheIndex_][i] = motorArr[i].targetRPM; // mostly for reference
                 throttleCache_[cacheIndex_][i] = (int16_t)(motorArr[i].PIDOutput);
                 valueCache_[cacheIndex_][i] = motorArr[i].PIDIntegral;
+                // The newest raw EDT value of each kind; every EDT value is one byte on the wire.
+                uint8_t* edt = edtCache_[cacheIndex_][i];
+                edt[0] = motorArr[i].telemetryVoltageRaw;
+                edt[1] = motorArr[i].telemetryCurrentRaw;
+                edt[2] = motorArr[i].telemetryTempRaw;
+                edt[3] = motorArr[i].telemetryDebug1Raw;
             }
         }
         if (++cacheIndex_ == length_)
@@ -101,7 +108,7 @@ class RpmLogger
         if (state_ != State::Full)
             return;
         SerialHold serial;
-        char rowBuf[240];
+        char rowBuf[384];
         int len = snprintf(rowBuf, sizeof(rowBuf), "%s",
                            currentCache_ ? "Voltage_mv,Current_mv," : "Voltage_mv,");
         for (int j = 0; j < 4; j++)
@@ -109,6 +116,12 @@ class RpmLogger
             if (motors_[j])
                 len += snprintf(rowBuf + len, sizeof(rowBuf) - len,
                                 "Motor %d,TargetRPM %d,Throttle %d,value %d,", j, j, j, j);
+        }
+        for (int j = 0; j < 4; j++)
+        {
+            if (motors_[j])
+                len += snprintf(rowBuf + len, sizeof(rowBuf) - len,
+                                "EdtV %d,EdtI %d,EdtT %d,EdtD1 %d,", j, j, j, j);
         }
         Serial.println(rowBuf);
 
@@ -127,6 +140,15 @@ class RpmLogger
                                     (unsigned long)rpmCache_[i][j],
                                     (unsigned long)targetRpmCache_[i][j], throttleCache_[i][j],
                                     valueStr);
+                }
+            }
+            for (int j = 0; j < 4; j++)
+            {
+                if (motors_[j])
+                {
+                    const uint8_t* edt = edtCache_[i][j];
+                    len += snprintf(rowBuf + len, sizeof(rowBuf) - len, "%u,%u,%u,%u,", edt[0],
+                                    edt[1], edt[2], edt[3]);
                 }
             }
             Serial.println(rowBuf);
@@ -174,12 +196,14 @@ class RpmLogger
         delete[] valueCache_;
         delete[] voltageCache_;
         delete[] currentCache_;
+        delete[] edtCache_;
         targetRpmCache_ = nullptr;
         rpmCache_ = nullptr;
         throttleCache_ = nullptr;
         valueCache_ = nullptr;
         voltageCache_ = nullptr;
         currentCache_ = nullptr;
+        edtCache_ = nullptr;
         length_ = 0;
         cacheIndex_ = 0;
     }
@@ -190,6 +214,9 @@ class RpmLogger
     float (*valueCache_)[4] = nullptr;
     int32_t* voltageCache_ = nullptr;
     int16_t* currentCache_ = nullptr; // null when no currentAdcPin is set
+    // Raw EDT bytes per motor: voltage (0.25 V), current (A), temperature (C), debug 1.
+    static constexpr int EDT_FIELDS = 4;
+    uint8_t (*edtCache_)[4][EDT_FIELDS] = nullptr;
     uint8_t currentAdcPin_ = PIN_NOT_USED;
     bool motors_[4] = {};
     uint32_t length_ = 0;
