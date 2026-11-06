@@ -230,13 +230,13 @@ Bounce2::Button select2 = Bounce2::Button();
 Bounce2::Button* selectSwitches[3] = {&select0, &select1, &select2};
 uint8_t selectPins[3] = {PIN_NOT_USED, PIN_NOT_USED, PIN_NOT_USED}; // same as above
 
-// A rev held from the console. REV_HOLD on core 1 writes the mask, then pushes the deadline out; the
-// rev lapses by itself if the renewals stop.
+// A rev held from the console. REV_HOLD on core 1 writes the mask and the deadline, each REV_RENEW
+// pushes the deadline out, and the rev lapses by itself if the renewals stop.
 volatile uint8_t serialRevMask = 0;
 volatile uint32_t serialRevUntil_ms = 0;
 extern bool motorsEnabled[4];
 
-static bool serialRevHeld()
+bool serialRevHeld()
 {
     return serialRevMask != 0 && (int32_t)(millis() - serialRevUntil_ms) < 0;
 }

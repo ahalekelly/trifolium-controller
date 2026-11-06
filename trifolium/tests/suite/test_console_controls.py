@@ -18,20 +18,18 @@ def throttles(b):
     return {pin: escs[pin]["lastThrottle"] for pin in (1, 3)}
 
 
-def hold_rev(b, mask, ms, every_ms=100):
-    """Renews REV_HOLD as the console does while its button is held."""
-    for _ in range(ms // every_ms):
-        assert b.command(f"REV_HOLD {mask}")["ok"] is True
-        b.run_ms(every_ms)
-
-
 def held_rev_errors(b, mask, ms, every_ms=100):
-    """hold_rev() that collects each ack's refusal, None where it was accepted."""
+    """Holds a rev as the console does while its button is held - REV_HOLD, then REV_RENEW every
+    every_ms - collecting each ack's refusal, None where it was accepted."""
     errors = []
-    for _ in range(ms // every_ms):
-        errors.append(b.command(f"REV_HOLD {mask}").get("err"))
+    for k in range(ms // every_ms):
+        errors.append(b.command(f"REV_HOLD {mask}" if k == 0 else "REV_RENEW").get("err"))
         b.run_ms(every_ms)
     return errors
+
+
+def hold_rev(b, mask, ms, every_ms=100):
+    assert held_rev_errors(b, mask, ms, every_ms) == [None] * (ms // every_ms)
 
 
 def test_motor_test_spins_that_motor_alone_then_stops(blaster):
@@ -93,6 +91,26 @@ def test_a_held_rev_spins_the_ticked_motors_and_lapses_when_the_renewals_stop(bl
     assert motors[1]["targetRPM"] > 0 and motors[3]["targetRPM"] == 0
     b.run_ms(400)
     assert b.peek("flywheelState") == IDLE
+
+
+LAPSED = "no rev held - the lease ran out or it was let go"
+
+
+def test_a_renewal_after_the_lease_ran_out_is_refused_and_does_not_rev_again(blaster):
+    """A console held up for longer than the lease learns the rev is over from the refusal, instead
+    of revving the wheels again from speed and taking that for the rev it asked for."""
+    b = armed_v12(blaster, display=False)
+    hold_rev(b, BOTH, 500)
+    b.run_ms(400)
+    assert b.peek("flywheelState") == IDLE
+    assert b.command("REV_RENEW")["err"] == LAPSED
+    b.run_ms(200)
+    assert b.peek("flywheelState") == IDLE
+    assert b.command(f"REV_HOLD {BOTH}")["ok"] is True
+    assert b.run_until_peek("flywheelState", ACCELERATING, limit_ms=100)
+    assert b.command("REV_RELEASE")["ok"] is True
+    b.run_ms(50)
+    assert b.command("REV_RENEW")["err"] == LAPSED
 
 
 def test_motors_left_out_of_a_held_rev_stay_still_through_its_dwell_and_idle(blaster):
