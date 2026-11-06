@@ -223,7 +223,8 @@ export class TuneRunner {
       this.captureWaiter = resolve;
       void sleep(captureMs + 5000).then(() => resolve(null));
     });
-    // Held for holdMs, or until the hold is lost, which leaves no capture worth waiting for.
+    // Held for holdMs, or until the hold is lost. A rampup timeout loses it on purpose - the blaster
+    // refuses the rest of a rev that timed out - and its capture still scores the spin-up.
     const mask = enabled.reduce((m, on, i) => (on ? m | (1 << i) : m), 0);
     let lost: string | null = null;
     await new Promise<void>((resolve) => {
@@ -236,12 +237,10 @@ export class TuneRunner {
         resolve();
       });
     });
-    if (lost) {
-      this.captureWaiter = null;
-      throw new Error(`The console let go of Rev: ${lost}.`);
-    }
     const got = await capture;
     this.captureWaiter = null;
+    if (got) this.save(got.csv, file);
+    if (lost && !got?.report.timedOut) throw new Error(`The console let go of Rev: ${lost}.`);
 
     if (!got) {
       throw new Error(
@@ -249,7 +248,6 @@ export class TuneRunner {
           "the Rev switch?",
       );
     }
-    this.save(got.csv, file);
     if (got.report.readyMs === null && !got.report.timedOut) {
       throw new Error("The rev ended before the wheels were at speed: SAFE, menu or cutoff.");
     }
