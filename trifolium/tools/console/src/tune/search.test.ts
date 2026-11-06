@@ -5,6 +5,7 @@ const set = (ms: number, overshootPct = 0, timedOut = false): SetScore => ({
   ms,
   overshootPct,
   timedOut,
+  desync: null,
 });
 
 /** Runs every set nextCandidate() asks for against `trial`, returning the ids in order. */
@@ -28,6 +29,11 @@ describe("nextCandidate", () => {
   it("runs each candidate's sets as one block when told to stay", () => {
     const { order } = runAll(["a", "b", "c"], 2, () => set(100), true);
     expect(order).toEqual(["a", "a", "b", "b", "c", "c"]);
+  });
+
+  it("asks nothing more of a candidate that lost sync, even one told to stay", () => {
+    const lost = { ...set(100), timedOut: true, desync: { motor: 1, atMs: 80, minRpm: 300 } };
+    expect(nextCandidate(["s", "a"], { s: [lost] }, 3, "s")).toBe("a");
   });
 
   it("asks nothing of a candidate that already has n", () => {
@@ -55,6 +61,18 @@ describe("ranking", () => {
     const { scores } = runAll(Object.keys(outcome), 3, (id) => outcome[id]);
     const order = ranking(Object.keys(outcome), scores, 3, null).map((r) => r.id);
     expect(order).toEqual(["quick", "steady", "slow", "stalls"]);
+  });
+
+  it("rules out a candidate that lost sync in any set, ranking it below the other ruled out", () => {
+    const lost = { ...set(500), timedOut: true, desync: { motor: 1, atMs: 80, minRpm: 300 } };
+    const scores = { lost: [set(100), set(100), lost], quick: [set(150, 5)], stalls: [set(500, 0, true)] };
+    const rows = ranking(["lost", "quick", "stalls"], scores, 3, 3);
+    expect(rows.map((r) => [r.id, r.standing.qualified])).toEqual([
+      ["stalls", true],
+      ["quick", false],
+      ["lost", false],
+    ]);
+    expect(rows[2].standing.desync).toEqual(lost.desync);
   });
 
   it("judges a candidate on its first n sets", () => {

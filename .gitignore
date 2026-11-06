@@ -32,5 +32,6 @@
 *.app
 *.log
 *.csv
+!trifolium/tools/console/src/tune/testdata/*.csv
 
 __pycache__/

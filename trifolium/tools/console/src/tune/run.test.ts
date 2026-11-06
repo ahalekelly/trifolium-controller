@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { LAYOUTS } from "../esc/layouts";
 import { V4_DEFAULT } from "../esc/testdata";
@@ -35,6 +36,7 @@ const spinup = (readyMs: number | null): Spinup => ({
   reachMs: readyMs,
   overshootPct: 1,
   packMv: 16000,
+  desync: null,
   trace: [],
 });
 
@@ -97,13 +99,19 @@ describe("a gains run", () => {
 
   it("scores a set on its summed spin-ups, a timed-out one at the rampup timeout", () => {
     const set = { id: "x", at: 0, spinups: [spinup(150), { ...spinup(200), overshootPct: 4 }] };
-    const ready = (s: Spinup) => s.readyMs;
-    expect(scoreOf(set, 500, ready)).toEqual({ timedOut: false, ms: 350, overshootPct: 4 });
-    const timedOut = scoreOf({ ...set, spinups: [spinup(150), spinup(null)] }, 500, ready);
+    const RUN = { config: { ...DEFAULT_CONFIG, rpms: [20000, 30000] }, rampupTimeoutMs: 500 };
+    expect(scoreOf(set, RUN)).toEqual({ timedOut: false, ms: 350, overshootPct: 4, desync: null });
+    const timedOut = scoreOf({ ...set, spinups: [spinup(150), spinup(null)] }, RUN);
     expect(timedOut).toMatchObject({ timedOut: true, ms: 650 });
     // Past the rampup timeout is a timeout too, at the timeout.
-    const late = scoreOf({ ...set, spinups: [spinup(150), spinup(620)] }, 500, ready);
+    const late = scoreOf({ ...set, spinups: [spinup(150), spinup(620)] }, RUN);
     expect(late).toMatchObject({ timedOut: true, ms: 650 });
+    // A spin-up that lost sync is a timeout too, however soon it got to speed.
+    const desync = { motor: 3, atMs: 123, minRpm: 289 };
+    const lost = scoreOf({ ...set, spinups: [spinup(150), { ...spinup(70), desync }] }, RUN);
+    expect(lost).toMatchObject({ timedOut: true, ms: 650, desync });
+    // And so is each RPM it stopped short of.
+    expect(scoreOf({ ...set, spinups: [{ ...spinup(70), desync }] }, RUN).ms).toBe(1000);
   });
 });
 
@@ -416,7 +424,33 @@ describe("measure", () => {
   it("refuses a capture that did not start from rest at the RPM asked for", () => {
     const report = { readyMs: 3, slowestMotor: 3, timedOut: false, maxThrottle: 1999 };
     const spinning = csv.replace("16400,0,30000", "16400,12000,30000");
-    expect(() => measure({ csv: spinning, report }, 30000, "a.csv", 3)).toThrow(/motor 1 at 12000 RPM/);
+    expect(() => measure({ csv: spinning, report }, 30000, "a.csv", 3)).toThrow(/motor 2 at 12000 RPM/);
     expect(() => measure({ csv, report }, 25000, "a.csv", 3)).toThrow(/aiming for 30000/);
+  });
+});
+
+describe("a motor losing sync", () => {
+  const report = { readyMs: 60, slowestMotor: 3, timedOut: false, maxThrottle: 1999 };
+  const fixture = (name: string) => readFileSync(new URL(`testdata/${name}`, import.meta.url), "utf8");
+  const desyncOf = (csv: string) => measure({ csv, report }, 20000, "a.csv", 0).desync;
+
+  it("is found in real captures, by when it first fell and how low it went", () => {
+    // Motor 3 got to 16k RPM, then fell again and again, once to 289 RPM, at full throttle.
+    expect(desyncOf(fixture("desync-motor3.csv"))).toEqual({ motor: 3, atMs: 123, minRpm: 289 });
+    expect(desyncOf(fixture("desync-motor1.csv"))).toMatchObject({ motor: 1, atMs: 65 });
+    expect(desyncOf(fixture("in-sync.csv"))).toBeNull();
+  });
+
+  it("is a fall below 70% of target lasting 10 ms, once the motor reached 90%, until release", () => {
+    const head = "Voltage_mv,Motor 0,TargetRPM 0,Throttle 0,value 0,";
+    const rev = (rpms: number[], released = rpms.length) =>
+      [head, ...rpms.map((r, i) => `16400,${r},${i < released ? 20000 : 0},1999,0.00,`)].join("\n");
+    const at = (n: number, rpm: number) => Array<number>(n).fill(rpm);
+    const fall = (ms: number) => [0, ...at(5, 18000), ...at(ms, 13900), ...at(5, 20000)];
+    expect(desyncOf(rev(fall(10)))).toEqual({ motor: 1, atMs: 6, minRpm: 13900 });
+    expect(desyncOf(rev(fall(9)))).toBeNull(); // a glitch
+    // Not before it got to speed, nor after the rev let go.
+    expect(desyncOf(rev([0, ...at(20, 13900), ...at(5, 18000)]))).toBeNull();
+    expect(desyncOf(rev(fall(10), 7))).toBeNull();
   });
 });

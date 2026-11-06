@@ -21,6 +21,9 @@ import {
   BASELINE,
   BASELINE_BLOCK,
   baselineOf,
+  DESYNC_BELOW,
+  DESYNC_MS,
+  DESYNC_REACHED,
   ESC_REACH,
   countsFor,
   gainsLabel,
@@ -175,12 +178,7 @@ export function Results({
             {box(id, nameOf(id))}
             <TableCell sx={cellSx}>
               {nameOf(id)}
-              {(id === same || !s.qualified) && (
-                <Typography component="span" sx={{ fontSize: "inherit", fontStyle: "italic" }}>
-                  {" "}
-                  ({id === same ? "starting settings" : `overshoots past ${limit}%`})
-                </Typography>
-              )}
+              <Flags text={flagsOf(id === same, s, limit)} />
             </TableCell>
             <StandingCells s={s} scores={scores[id] ?? []} overshoot={overshoot} />
           </TableRow>
@@ -190,6 +188,7 @@ export function Results({
             {box(BASELINE, "the baseline")}
             <TableCell sx={{ ...cellSx, fontStyle: "italic" }}>
               Baseline: {settingsLabel(run.config.grid, run.baseline)}
+              <Flags text={flagsOf(false, standing(scores[BASELINE], limit), limit)} />
             </TableCell>
             <StandingCells
               s={standing(scores[BASELINE], limit)}
@@ -213,16 +212,35 @@ const DRAWN: { value: Drawn; label: string }[] = [
   { value: "slowest", label: "Slowest" },
 ];
 
+const Flags = ({ text }: { text: string | null }) =>
+  text && (
+    <Typography component="span" sx={{ fontSize: "inherit", fontStyle: "italic" }}>
+      {" "}
+      ({text})
+    </Typography>
+  );
+
+/** What sets a candidate's row apart, or null: the starting settings, or what rules it out. */
+function flagsOf(starting: boolean, s: Standing, limit: number | null): string | null {
+  const flags = [
+    starting && "starting settings",
+    s.desync && `lost sync: motor ${s.desync.motor} fell to ${s.desync.minRpm} RPM`,
+    s.overshoots && `overshoots past ${limit}%`,
+  ].filter((f) => f);
+  return flags.length > 0 ? flags.join("; ") : null;
+}
+
 /**
- * The spin-up at `drawn`'s rank by `time`, a timeout slowest: the lower median of an even count, so
- * always one that ran.
+ * The spin-up at `drawn`'s rank by `time`, a timeout or a loss of sync slowest, as the score has
+ * them: the lower median of an even count, so always one that ran.
  */
 export function atRank(
   spinups: Spinup[],
   drawn: Exclude<Drawn, "all">,
   time: (s: Spinup) => number | null,
 ): Spinup {
-  const sorted = [...spinups].sort((a, b) => (time(a) ?? Infinity) - (time(b) ?? Infinity));
+  const key = (s: Spinup) => (s.desync ? Infinity : (time(s) ?? Infinity));
+  const sorted = [...spinups].sort((a, b) => key(a) - key(b));
   const last = sorted.length - 1;
   const index = { median: last >> 1, secondSlowest: Math.max(0, last - 1), slowest: last }[drawn];
   return sorted[index];
@@ -295,7 +313,10 @@ export const SpinupTraces = React.memo(function SpinupTraces({
         const series: Series[] = checked.map((id) => {
           const name = id === BASELINE ? "Baseline" : candidates.find((c) => c.id === id)!.name;
           const colour = colourOf(candidates, same, id);
-          const spinups = sets.filter((s) => countsFor(s, id, same)).map((s) => s.spinups[k]);
+          // A set stops at the spin-up where a motor lost sync.
+          const spinups = sets
+            .filter((s) => countsFor(s, id, same))
+            .flatMap((s) => s.spinups[k] ?? []);
           const lines = (traces: MotorTrace[]) => {
             const parts = traces.map(byThrottle);
             return { lines: parts.map((p) => p.solid), dashed: parts.map((p) => p.dashed) };
@@ -305,7 +326,7 @@ export const SpinupTraces = React.memo(function SpinupTraces({
           }
           const one = atRank(spinups, drawn, time);
           const ms = time(one);
-          const label = `${name} (${ms === null ? "timeout" : `${ms} ms`})`;
+          const label = `${name} (${one.desync ? "lost sync" : ms === null ? "timeout" : `${ms} ms`})`;
           return { name: label, colour, ...lines(one.trace) };
         });
         return (
@@ -331,7 +352,7 @@ function driftOf(run: Run): string | null {
   let lastCandidate = ids.length - 1;
   while (lastCandidate >= 0 && ids[lastCandidate] === BASELINE) lastCandidate--;
   const scored = (sets: SetRecord[]) =>
-    sets.map((s) => scoreOf(s, run.rampupTimeoutMs, timeOf(run.config.grid)));
+    sets.map((s) => scoreOf(s, run));
   const shown = (scores: SetScore[]) =>
     scores.map((s) => (s.timedOut ? "timeout" : `${s.ms}`)).join(", ") + " ms";
   const first = scored(run.sets.slice(0, firstCandidate < 0 ? ids.length : firstCandidate));
@@ -575,6 +596,10 @@ export function Tune({
               {kind === "gains"
                 ? ", and one whose second-worst overshoot passes the limit cannot win. "
                 : ". "}
+              A motor that reaches {DESYNC_REACHED * 100}% of target, then stays below{" "}
+              {DESYNC_BELOW * 100}% for {DESYNC_MS} ms before the rev ends, has lost sync: its
+              candidate gets no more spin-ups and cannot win, and on the blaster's own settings
+              the run pauses.{" "}
               {kind === "esc"
                 ? `An ESC run times a spin-up to the slower wheel reaching ${ESC_REACH * 100}% of ` +
                   "target, the climb the ESCs decide; one that does not within the rampup timeout " +

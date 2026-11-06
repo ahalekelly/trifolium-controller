@@ -88,7 +88,7 @@ describe("the results table", () => {
       id: "PID kp 0.2 ki 1",
       at,
       spinups: [
-        { rpm: 30000, file: "", readyMs: ms, reachMs: ms, overshootPct: 0.5, packMv: 16000, trace: [{ rpm: [0, 1, 2], full: [] }] },
+        { rpm: 30000, file: "", readyMs: ms, reachMs: ms, overshootPct: 0.5, packMv: 16000, desync: null, trace: [{ rpm: [0, 1, 2], full: [] }] },
       ],
     }));
     return run;
@@ -132,7 +132,7 @@ describe("the results table", () => {
       null,
       500,
     );
-    const spinup = { rpm: 30000, file: "", readyMs: 100, reachMs: 100, overshootPct: 9, packMv: 16000, trace: [] };
+    const spinup = { rpm: 30000, file: "", readyMs: 100, reachMs: 100, overshootPct: 9, packMv: 16000, desync: null, trace: [] };
     run.sets = ["Startup power 80 %", "Startup power 120 %"].map((id) => ({
       id,
       at: 0,
@@ -151,6 +151,14 @@ describe("the results table", () => {
       "Sets",
     ]);
     expect(host.textContent).not.toMatch(/best|9\.0%/);
+  });
+
+  it("flags a candidate that lost sync, its set a timeout", () => {
+    const run = runOf([100, 100]);
+    run.sets[1].spinups[0].desync = { motor: 3, atMs: 123, minRpm: 289 };
+    act(() => root.render(results(run)));
+    expect(cells()[1]).toBe("PID kp 0.2 ki 1 (lost sync: motor 3 fell to 289 RPM)");
+    expect(cells().slice(2)).toEqual(["1", "300 ms", "100 ms", "timeout", "0.5%", "2"]);
   });
 
   it("shows the slowest as a timeout once any set timed out, counted at the timeout in the mean", () => {
@@ -197,6 +205,7 @@ describe("the spin-up chart", () => {
         reachMs: 100,
         overshootPct: 0,
         packMv: 16000,
+        desync: null,
         trace: rpms.map((rpm) => ({ rpm, full: [[0, rpm.length]] })),
       },
     ],
@@ -280,6 +289,7 @@ describe("the spin-up chart", () => {
           reachMs: readyMs,
           overshootPct: 0,
           packMv: 0,
+          desync: null,
           trace: [{ rpm: [0, rpm], full: [[0, 2]] }],
         },
       ],
@@ -359,7 +369,7 @@ describe("the Apply button", () => {
       null,
       500,
     );
-    const spinup = { rpm: 30000, file: "", readyMs: 100, reachMs: 100, overshootPct: 0, packMv: 16000, trace: [] };
+    const spinup = { rpm: 30000, file: "", readyMs: 100, reachMs: 100, overshootPct: 0, packMv: 16000, desync: null, trace: [] };
     run.sets = [{ id: "PID kp 0.4 ki 1", at: 0, spinups: [spinup] }];
     Object.assign(run, { status: "done", applied });
     vi.stubGlobal("localStorage", { getItem: () => JSON.stringify(run) });

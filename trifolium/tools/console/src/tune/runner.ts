@@ -428,8 +428,18 @@ export class TuneRunner {
             return this.spinup(...args);
           });
           spinups.push(spinup);
+          if (spinup.desync) break;
         }
         this.change({ sets: [...run.sets, { id: next, at: Date.now(), spinups }] });
+        const { rpm, desync } = spinups[spinups.length - 1];
+        if (desync) {
+          const lost = `motor ${desync.motor} lost sync at ${rpm} RPM, ${desync.atMs} ms in, falling to ${desync.minRpm} RPM.`;
+          // The baseline still runs its sets, so the person at the blaster decides whether it goes on.
+          if (next === BASELINE) {
+            throw new Error(`On the blaster's own settings, ${lost} Resume to carry on, or Discard.`);
+          }
+          this.transport.log("err", `${(trial as Candidate).name}: ${lost} It gets no more spin-ups.`);
+        }
         const cellMv = Math.min(...spinups.map((s) => s.packMv)) / settings.cells;
         if (cellMv < run.config.pauseCellMv) {
           throw new Error(

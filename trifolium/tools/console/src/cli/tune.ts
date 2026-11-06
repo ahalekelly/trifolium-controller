@@ -75,9 +75,10 @@ function follow(runner: TuneRunner) {
       const name =
         set.id === "baseline" ? "baseline" : run.candidates.find((c) => c.id === set.id)!.name;
       const time = timeOf(run.config.grid);
-      const times = set.spinups.map((s, i) => {
+      const times = set.spinups.map((s) => {
         const ms = time(s);
-        return `${run.config.rpms[i]} RPM ${ms === null ? "timeout" : `${ms} ms`}`;
+        const lost = s.desync && `, motor ${s.desync.motor} lost sync ${s.desync.atMs} ms in, falling to ${s.desync.minRpm} RPM`;
+        return `${s.rpm} RPM ${ms === null ? "timeout" : `${ms} ms`}${lost || ""}`;
       });
       const done = run.sets.filter((s) => s.id !== "baseline").length;
       say(`set ${run.sets.length} (${done} of about ${plannedRun(run).sets} candidate sets): ${name}: ${times.join(", ")}`);
@@ -111,7 +112,9 @@ function results(run: Run) {
   rankingOf(run).forEach(({ id, standing }, i) => {
     const name = run.candidates.find((c) => c.id === id)!.name;
     const ms = Number.isFinite(standing.ms) ? `${Math.round(standing.ms)} ms` : "timeout";
-    say(`  ${i + 1}. ${name}: 2nd slowest ${ms}, ${standing.timeouts} timeouts, ${standing.sets} sets`);
+    const { desync } = standing;
+    const out = desync ? `, ruled out: motor ${desync.motor} lost sync, falling to ${desync.minRpm} RPM` : "";
+    say(`  ${i + 1}. ${name}: 2nd slowest ${ms}, ${standing.timeouts} timeouts, ${standing.sets} sets${out}`);
   });
 }
 

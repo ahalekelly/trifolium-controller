@@ -14,6 +14,7 @@ import {
   DEFAULT_CONFIG,
   DEFAULT_GAINS,
   plannedRun,
+  rankingOf,
   runName,
   type Run,
   type TuneConfig,
@@ -71,6 +72,13 @@ const capture = (rpm: number, readyMs: number): Capture => ({
   report: { readyMs, slowestMotor: 1, timedOut: false, maxThrottle: 1999 },
 });
 
+/** A rev whose motor reached its target, then fell to a quarter of it for 20 ms. */
+const desynced = (rpm: number): Capture => {
+  const { csv, report } = capture(rpm, 300);
+  const fallen = Array<string>(20).fill(`16300,${rpm / 4},${rpm},1999,0.00,`);
+  return { csv: [csv, ...fallen].join("\n"), report };
+};
+
 /**
  * A blaster with two flywheel ESCs, its transport, and the runner on it. `events` logs what decides
  * the order of things: TUNE, each passthrough session, the blaster answering after one, and each
@@ -87,6 +95,8 @@ function rig() {
     runner: null as unknown as TuneRunner,
     /** A startup power whose revs end in the rampup timeout. */
     timesOutAt: null as number | null,
+    /** A startup power whose revs lose sync once at speed. */
+    desyncsAt: null as number | null,
     /** Why the blaster refuses to rev at all. */
     refusesRev: null as string | null,
   };
@@ -132,9 +142,10 @@ function rig() {
         }, 500);
         return () => {};
       }
+      const held = power[0] === blaster.desyncsAt ? desynced(at) : capture(at, 500 - power[0]);
       return () => {
         setTimeout(() => {
-          if (blaster.up) blaster.runner.capture(capture(at, 500 - power[0]));
+          if (blaster.up) blaster.runner.capture(held);
         }, 100);
       };
     },
@@ -290,6 +301,37 @@ describe("an ESC run", () => {
     expect(timedOut.map((s) => s.spinups[0].readyMs)).toEqual([null, null]);
     expect(saved).toHaveLength(run.sets.length); // the timed-out captures kept too
     expect(run.candidates.find((c) => c.id === C80)).toBeDefined();
+  });
+
+  it("drops a candidate whose motor loses sync mid-set, and runs on to the next", async () => {
+    const { blaster, runner, events } = rig();
+    blaster.desyncsAt = 120;
+    void runner.start({ ...CONFIG, rpms: [20000, 30000] }, GAINS, DEVICE);
+    await idle(runner);
+
+    const run = runOf(runner);
+    expect(run.status).toBe("done");
+    expect(blocksOf(run)).toEqual([BASELINE, C80, C120, C150, BASELINE]);
+    // One set of one spin-up: the next RPM is never revved at.
+    const lost = run.sets.filter((s) => s.id === C120);
+    expect(lost.map((s) => s.spinups.map((x) => x.rpm))).toEqual([[20000]]);
+    expect(lost[0].spinups[0].desync).toEqual({ motor: 2, atMs: 2, minRpm: 5000 });
+    expect(events.filter((e) => e === "rev at 120/120")).toHaveLength(1);
+    const ranked = rankingOf(run);
+    expect(ranked.map((r) => r.id)[ranked.length - 1]).toBe(C120);
+    expect(ranked[ranked.length - 1].standing.qualified).toBe(false);
+  });
+
+  it("pauses when the ESCs' own settings lose sync, saying the setup is at fault", async () => {
+    const { blaster, runner } = rig();
+    blaster.desyncsAt = ORIGINAL_POWER;
+    void runner.start(CONFIG, GAINS, DEVICE);
+    await idle(runner);
+
+    const run = runOf(runner);
+    expect(run.status).toBe("paused");
+    expect(run.note).toMatch(/^On the blaster's own settings, motor 2 lost sync at 30000 RPM/);
+    expect(run.sets.map((s) => s.id)).toEqual([BASELINE]);
   });
 
   it("holds a pause asked for while the ESCs are read at Start, before any spin-up", async () => {

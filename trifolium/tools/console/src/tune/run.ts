@@ -14,7 +14,7 @@ import type { EscSettings } from "../esc/session";
 import { MS_PER_SAMPLE, parseRpmCsv, wholeRows } from "../rpm/parse";
 import { getByKey } from "../schema/keyPath";
 import type { Capture } from "../serial/transport";
-import { nextCandidate, ranking, type SetScore } from "./search";
+import { nextCandidate, ranking, type Desync, type SetScore } from "./search";
 
 export type Control = "pid" | "tbh";
 
@@ -127,6 +127,39 @@ export interface MotorTrace {
 /** How far up an ESC run times a spin-up: the slower wheel first reaching this share of target. */
 export const ESC_REACH = 0.8;
 
+/**
+ * An ESC that lost sync at speed: once a motor first reaches DESYNC_REACHED of target, falling
+ * below DESYNC_BELOW of it for DESYNC_MS running before the rev ends. A held rev otherwise never
+ * dips below 90% once there - not in settling, not in a telemetry glitch, which lasts a sample or
+ * two - while a desync collapses for tens of ms at a time, again and again, at full throttle.
+ */
+export const DESYNC_REACHED = 0.9;
+export const DESYNC_BELOW = 0.7;
+export const DESYNC_MS = 10;
+
+/** The first motor to lose sync in a capture, by when it began, or null. */
+function desyncOf(log: ReturnType<typeof parseRpmCsv>, rpm: number): Desync | null {
+  let first: Desync | null = null;
+  for (const motor of log.motors) {
+    const released = motor.targetRpm.findIndex((t) => t !== rpm);
+    const end = released < 0 ? motor.rpm.length : released;
+    const reached = motor.rpm.findIndex((v) => v >= rpm * DESYNC_REACHED);
+    if (reached < 0 || reached >= end) continue;
+    let below = 0;
+    for (let i = reached; i < end; i++) {
+      below = motor.rpm[i] < rpm * DESYNC_BELOW ? below + 1 : 0;
+      if (below * MS_PER_SAMPLE < DESYNC_MS) continue;
+      const atMs = (i - below + 1) * MS_PER_SAMPLE;
+      if (first === null || atMs < first.atMs) {
+        const minRpm = Math.min(...motor.rpm.slice(reached, end));
+        first = { motor: motor.index + 1, atMs, minRpm };
+      }
+      break;
+    }
+  }
+  return first;
+}
+
 /** One spin-up, at one RPM. readyMs is null when the rampup timeout ended it. */
 export interface Spinup {
   rpm: number;
@@ -138,6 +171,7 @@ export interface Spinup {
   overshootPct: number;
   /** At the rev's start, so the pack at rest. */
   packMv: number;
+  desync: Desync | null;
   trace: MotorTrace[];
 }
 
@@ -157,7 +191,7 @@ export type RunStatus = "running" | "paused" | "done";
  * Changes whenever Run's shape or how its sets count does, so a run another build saved is refused
  * rather than misread.
  */
-const RUN_VERSION = 9;
+const RUN_VERSION = 10;
 
 export interface Run {
   version: typeof RUN_VERSION;
@@ -364,6 +398,7 @@ export function plannedRun(run: Run): { sets: number; writes: number } {
     reachMs: 0,
     overshootPct: 0,
     packMv: 0,
+    desync: null,
     trace: [],
   };
   let current = startRun(run.config, run.baseline, run.escs, run.blaster, run.rampupTimeoutMs);
@@ -418,20 +453,25 @@ export const timeOf =
     grid.kind === "esc" ? s.reachMs : s.readyMs;
 
 /**
- * A set's score, its spin-ups timed by `time`. One that took no time, or longer than the rampup
- * timeout, counts as timed out, at the timeout.
+ * A set's score. A spin-up that took no time, longer than the rampup timeout, or lost sync counts as
+ * timed out, at the timeout, and so does each RPM a set that lost sync stopped short of.
  */
-export function scoreOf(
-  set: SetRecord,
-  rampupTimeoutMs: number,
-  time: (s: Spinup) => number | null,
-): SetScore {
-  const times = set.spinups.map(time);
-  const timedOut = (t: number | null) => t === null || t > rampupTimeoutMs;
+export function scoreOf(set: SetRecord, run: Pick<Run, "config" | "rampupTimeoutMs">): SetScore {
+  const { rampupTimeoutMs } = run;
+  const time = timeOf(run.config.grid);
+  const failed = (s: Spinup) => {
+    const t = time(s);
+    return t === null || t > rampupTimeoutMs || s.desync !== null;
+  };
+  const skipped = run.config.rpms.length - set.spinups.length;
   return {
-    timedOut: times.some(timedOut),
-    ms: times.reduce((sum: number, t) => sum + (timedOut(t) ? rampupTimeoutMs : t!), 0),
+    timedOut: set.spinups.some(failed),
+    ms: set.spinups.reduce(
+      (sum, s) => sum + (failed(s) ? rampupTimeoutMs : time(s)!),
+      skipped * rampupTimeoutMs,
+    ),
     overshootPct: Math.max(...set.spinups.map((s) => s.overshootPct)),
+    desync: set.spinups.find((s) => s.desync !== null)?.desync ?? null,
   };
 }
 
@@ -442,10 +482,9 @@ export const countsFor = (set: SetRecord, id: string, same: string | null) =>
 /** Each candidate's set scores and the baseline's, in the order they ran - see countsFor(). */
 export function scoresOf(run: Run): Record<string, SetScore[]> {
   const same = startingId(run);
-  const time = timeOf(run.config.grid);
   const scores: Record<string, SetScore[]> = {};
   for (const set of run.sets) {
-    const score = scoreOf(set, run.rampupTimeoutMs, time);
+    const score = scoreOf(set, run);
     (scores[set.id] ??= []).push(score);
     if (same && set.id === BASELINE) (scores[same] ??= []).push(score);
   }
@@ -503,7 +542,7 @@ export function measure(
   for (const motor of log.motors) {
     if (motor.rpm[0] > REST_RPM || motor.targetRpm[0] !== rpm) {
       throw new Error(
-        `The capture started with motor ${motor.index} at ${motor.rpm[0]} RPM aiming for ` +
+        `The capture started with motor ${motor.index + 1} at ${motor.rpm[0]} RPM aiming for ` +
           `${motor.targetRpm[0]}, not from rest aiming for ${rpm}: something else revved the ` +
           "blaster.",
       );
@@ -526,6 +565,7 @@ export function measure(
     reachMs: reached.includes(-1) ? null : Math.max(...reached) * MS_PER_SAMPLE,
     overshootPct,
     packMv: log.voltage[0],
+    desync: desyncOf(log, rpm),
     trace: log.motors.map((m) => ({
       rpm: kept(m.rpm),
       full: stretches(kept(m.throttle).map((t) => t >= capture.report.maxThrottle)),
