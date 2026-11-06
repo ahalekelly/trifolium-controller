@@ -35,8 +35,8 @@ void advance_us(uint64_t us);
 
 bool machineRunning();
 
-// Counts what the calling thread allocates as the firmware's - called by each core as it starts.
-void heapCountThisThread(int core, bool counting = true);
+// Counts what the caller allocates as core `core`'s - called by each core as it starts.
+void heapCountCaller(int core, bool counting = true);
 
 // Held by a fake while it allocates for itself on the calling core, so its bookkeeping is not
 // counted as the firmware's heap.

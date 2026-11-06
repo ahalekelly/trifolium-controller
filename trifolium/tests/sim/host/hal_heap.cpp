@@ -1,12 +1,10 @@
 // The heap the firmware's cores use, counted at the allocator: hal/heap_count.h points every
 // source's malloc, calloc, realloc and free here, and operator new is replaced below.
 // An allocation that would take the count past the RP2040's heap fails, as newlib's does.
-// A thread is told apart by its id rather than a thread_local, whose first touch can allocate.
 
 #include "hal/detail.h"
 #include "hal/hal.h"
 
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <new>
@@ -17,23 +15,8 @@
 #undef realloc
 #undef free
 
-#ifdef _WIN32
-// Not <windows.h>, whose INPUT collides with Arduino's.
-extern "C" __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId(void);
-#else
-#include <pthread.h>
-#endif
-
 namespace
 {
-uint64_t threadId()
-{
-#ifdef _WIN32
-    return GetCurrentThreadId();
-#else
-    return (uint64_t)pthread_self();
-#endif
-}
 
 // newlib on the RP2040: a 4-byte header, rounded up to 8, and never under 16.
 uint32_t chunk(size_t n)
@@ -42,15 +25,16 @@ uint32_t chunk(size_t n)
     return (uint32_t)(c < 16 ? 16 : c);
 }
 
-std::atomic<uint64_t> cores[2];
-int fakesHolding[2]; // each written only by its own core
+constexpr int kNobody = -2; // currentCore() is -1 on the test's side
+int countedAs[2] = {kNobody, kNobody}; // the caller each core's allocations are counted for
+int fakesHolding[2];
 
 int coreIndex()
 {
-    const uint64_t id = threadId();
+    const int caller = hal::detail::currentCore();
     for (int core = 0; core < 2; core++)
     {
-        if (id == cores[core].load(std::memory_order_relaxed))
+        if (caller == countedAs[core])
             return core;
     }
     return -1;
@@ -71,7 +55,6 @@ struct Slot
     uint32_t bytes;
 };
 Slot table[kSlots];
-std::atomic_flag lock = ATOMIC_FLAG_INIT;
 // What the pico build leaves for the heap: 256 KB of SRAM less .data and .bss, 23 KB at 2.1.
 constexpr uint64_t kRp2040Heap = 232 * 1024;
 
@@ -87,17 +70,6 @@ bool refuse(size_t n)
     refused++;
     return true;
 }
-
-struct Guard
-{
-    Guard()
-    {
-        while (lock.test_and_set(std::memory_order_acquire))
-        {
-        }
-    }
-    ~Guard() { lock.clear(std::memory_order_release); }
-};
 
 size_t home(void* p)
 {
@@ -147,7 +119,6 @@ void* hal_malloc(size_t n)
 {
     if (!onCore())
         return malloc(n);
-    Guard g;
     if (refuse(n))
         return nullptr;
     void* p = malloc(n);
@@ -160,7 +131,6 @@ void* hal_calloc(size_t count, size_t n)
 {
     if (!onCore())
         return calloc(count, n);
-    Guard g;
     if (refuse(count * n))
         return nullptr;
     void* p = calloc(count, n);
@@ -172,7 +142,6 @@ void* hal_calloc(size_t count, size_t n)
 void* hal_realloc(void* old, size_t n)
 {
     const bool counted = onCore();
-    Guard g;
     const uint32_t before = old ? untrack(old) : 0;
     if (counted && n && refuse(n))
     {
@@ -196,8 +165,7 @@ void hal_free(void* p)
 {
     if (p)
     {
-        Guard g;
-        untrack(p);
+            untrack(p);
     }
     free(p);
 }
@@ -221,28 +189,25 @@ namespace hal
 {
 Heap heap()
 {
-    Guard g;
     return {live, peak, allocations, refused, limit, overflowed};
 }
 
 void setHeapLimit(uint64_t bytes)
 {
-    Guard g;
     limit = bytes ? bytes : kRp2040Heap;
 }
 
 void resetHeapPeak()
 {
-    Guard g;
     peak = live;
 }
 } // namespace hal
 
 namespace hal::detail
 {
-void heapCountThisThread(int core, bool counting)
+void heapCountCaller(int core, bool counting)
 {
-    cores[core].store(counting ? threadId() : 0);
+    countedAs[core] = counting ? currentCore() : kNobody;
 }
 
 FakesOwnHeap::FakesOwnHeap()
