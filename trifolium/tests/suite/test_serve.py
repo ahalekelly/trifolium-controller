@@ -135,7 +135,7 @@ def test_a_tool_on_the_serial_port_loads_a_preset_and_finds_the_board_armed_afte
             ser.read(4096)
     ser.close()
 
-    time.sleep(3)  # the ESC arm loop comes before the device answers again
+    wait_armed(control_port)  # the ESC arm loop comes before the device answers again
     ser = open_serial(serial_port)
     ser.write(b"DUMP_BOOT\n")
     boot = reply(ser, "DUMP_BOOT")
