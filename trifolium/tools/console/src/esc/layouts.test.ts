@@ -35,6 +35,28 @@ describe("every layout table", () => {
 });
 
 describe("the v4 table", () => {
+  it("lets a search vary what AM32 reads taking a motor from stopped to speed, Off included", () => {
+    expect(LAYOUTS[4].fields.filter((f) => f.searchable).map((f) => f.name)).toEqual([
+      "max_ramp",
+      "startup_power",
+      "advance_level",
+      "auto_advance",
+      "pwm_frequency",
+      "variable_pwm",
+      "comp_pwm",
+      "use_sine_start",
+      "sine_mode_changeover_thottle_level",
+      "sine_mode_power",
+      "stuck_rotor_protection",
+      "stall_protection",
+      "motor_kv",
+      "driving_brake_strength",
+    ]);
+    // Running brake level adds to the startup and minimum duty, Off included.
+    const brake = field(4, "driving_brake_strength");
+    expect([parseShown(brake, "5"), parseShown(brake, "Off")]).toEqual([5, 10]);
+  });
+
   it("places fields where Inc/eeprom.h does", () => {
     const at = Object.fromEntries(LAYOUTS[4].fields.map((f) => [f.name, f.offset]));
     expect(at).toMatchObject({
