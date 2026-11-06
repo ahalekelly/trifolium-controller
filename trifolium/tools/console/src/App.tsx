@@ -82,7 +82,7 @@ import { Section, type Payloads } from "./ui/Section";
 import { countFields, deriveSections, pruneToStore, type Store } from "./ui/sections";
 import { Splash, type DeviceSplash } from "./ui/Splash";
 import { DEFAULT_DRAFT, Tune } from "./ui/Tune";
-import { TuneRunner } from "./tune/runner";
+import { TuneRunner, type EscIo } from "./tune/runner";
 import { gainsLabel, type Gains } from "./tune/run";
 import {
   CONFIG_ACCEPT,
@@ -172,6 +172,16 @@ const OFFLINE_DEVICE = {
   ...fixtureDevice,
   ...(OFFLINE_PRESET?.wiring ?? {}),
 };
+
+/** An ESC session went through, but the blaster's settings could not be read back after it. */
+class SettingsUnread extends Error {
+  constructor() {
+    super(
+      "the blaster came back from ESC passthrough, but its settings could not be read back - " +
+        "the log says why",
+    );
+  }
+}
 
 /** The device log keeps the newest this many lines. */
 const LOG_LINES = 1000;
@@ -326,15 +336,25 @@ export function App() {
       }),
     [],
   );
+  // The runner is built once too, so it reaches escSession() through this.
+  const escIo = React.useRef<EscIo>(null!);
   const tuneRunner = React.useMemo(
-    () => new TuneRunner(transport, (csv, name) => downloadCsv(wholeRows(csv).csv, name)),
+    () =>
+      new TuneRunner(
+        transport,
+        {
+          read: () => escIo.current.read(),
+          write: (values) => escIo.current.write(values),
+        },
+        {
+          capture: (csv, name) => downloadCsv(wholeRows(csv).csv, name),
+          run: (run, name) => downloadJson(name, run),
+        },
+      ),
     [transport],
   );
   const tuning = React.useSyncExternalStore(tuneRunner.subscribe, tuneRunner.running);
   const [tuneDraft, setTuneDraft] = React.useState(DEFAULT_DRAFT);
-  React.useEffect(() => {
-    if (live) tuneRunner.connected();
-  }, [live, tuneRunner]);
   // Closing or reloading the page stops a run too, as far as one last write can get out.
   React.useEffect(() => {
     const abandon = () => tuneRunner.abandon();
@@ -500,7 +520,11 @@ export function App() {
     if (!(await transport.connect(choose))) return;
     setEscs(null); // another blaster's, or this one's from before whatever happened since
     if (!(await transport.waitReady())) return;
-    if ((await readSchemaAndValues()) && bootProblem.current) setView("overview");
+    if (!(await readSchemaAndValues())) return;
+    // A connection the user made, not a reboot the console caused: whatever a run that lost its
+    // link or its page left on the blaster goes now.
+    tuneRunner.connected();
+    if (bootProblem.current) setView("overview");
   };
 
   /**
@@ -673,7 +697,8 @@ export function App() {
     return { custom: reply.custom, bytes: Uint8Array.from(atob(reply.b64), (c) => c.charCodeAt(0)) };
   }, [consoleControls, transport]);
   /**
-   * Reads or writes the flywheel ESCs' AM32 settings - see esc/session.ts.
+   * Reads or writes the flywheel ESCs' AM32 settings - see esc/session.ts - for the ESCs page and
+   * for tune runs, throwing what went wrong.
    *
    * Either way the blaster reboots into ESC passthrough and comes back on its own, which the
    * transport reports as a disconnect, so the schema and values are re-read after, with any staged
@@ -681,24 +706,42 @@ export function App() {
    * settings the blaster holds, not the form's edits: passthrough hands over what it has stored.
    *
    * A failure clears the table, since a write that stopped partway leaves some ESCs changed and the
-   * table no longer says which.
+   * table no longer says which. A session that went through but left the blaster's settings unread
+   * throws SettingsUnread, since nothing after it can trust the form.
    */
-  const escSession = async (
-    what: string,
-    run: (targets: EscTargets) => Promise<EscSettings[]>,
-  ) => {
+  const escSession = async (run: (targets: EscTargets) => Promise<EscSettings[]>) => {
     setBusy(true);
     const keep = stagedExcept(new Set());
+    let read: EscSettings[] | null = null;
+    let reread = false;
     try {
-      setEscs(await run(escTargets(baseline.device)));
+      read = await run(escTargets(baseline.device));
+    } finally {
+      setEscs(read);
+      reread = transport.connected && (await readSchemaAndValues(keep));
+      setBusy(false);
+    }
+    if (!reread) throw new SettingsUnread();
+    return read;
+  };
+  escIo.current = {
+    read: () => escSession((targets) => readEscSettings(transport, targets)),
+    write: (values) => escSession((targets) => writeEscSettings(transport, targets, values)),
+  };
+
+  /** An ESCs page button: a session, its outcome in the log. */
+  const escTask = async (what: string, run: Promise<unknown>) => {
+    try {
+      await run;
       note("ok", `${what}: done.`);
     } catch (e) {
-      setEscs(null);
       const why = (e as Error).message.replace(/\.$/, "");
-      note("err", `${what} failed: ${why}. Read the ESCs again to see what they hold.`);
-    } finally {
-      if (transport.connected) await readSchemaAndValues(keep);
-      setBusy(false);
+      note(
+        "err",
+        e instanceof SettingsUnread
+          ? `${what}: done, but ${why}.`
+          : `${what} failed: ${why}. Read the ESCs again to see what they hold.`,
+      );
     }
   };
 
@@ -2023,17 +2066,9 @@ export function App() {
                 <EscSettingsPanel
                   escs={escs}
                   motors={escTargets(baseline.device).motors}
-                  disabled={!live || busy}
-                  onRead={() =>
-                    void escSession("Reading the ESCs", (targets) =>
-                      readEscSettings(transport, targets),
-                    )
-                  }
-                  onWrite={(values) =>
-                    escSession("Writing the ESCs", (targets) =>
-                      writeEscSettings(transport, targets, values),
-                    )
-                  }
+                  disabled={!live || busy || tuning}
+                  onRead={() => void escTask("Reading the ESCs", escIo.current.read())}
+                  onWrite={(values) => escTask("Writing the ESCs", escIo.current.write(values))}
                 />
               </Box>
             </Panel>
@@ -2051,9 +2086,10 @@ export function App() {
               <Box sx={{ p: 1.5 }}>
                 <Tune
                   runner={tuneRunner}
-                  live={live}
+                  live={live && !busy}
                   device={device}
                   gainMax={gainMax}
+                  escs={escs}
                   draft={tuneDraft}
                   onDraft={setTuneDraft}
                   onApply={(gains) => void applyGains(gains)}

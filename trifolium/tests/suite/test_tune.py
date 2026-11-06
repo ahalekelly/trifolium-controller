@@ -102,7 +102,7 @@ def test_each_capture_reports_when_the_wheels_were_fire_ready_or_that_the_rampup
     assert tune(b, revRPM=30000, kp=0, ki=0)["ok"]
     stuck = capture(b)
     assert stuck == {"evt": "rpmCapture", "readyMs": None, "slowestMotor": stuck["slowestMotor"],
-                     "timedOut": True}
+                     "timedOut": True, "maxThrottle": 1999}
 
     assert tune(b, control="tbh", revRPM=30000, ki=0.05)["ok"]
     assert capture(b)["readyMs"] < 500

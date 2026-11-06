@@ -24,7 +24,7 @@ The pages are in the sidebar. On a phone the main four are tabs along the bottom
 | **Wiring** | Which pin each thing is on, with a diagram of your board where one has been drawn. Also where pin conflicts are reported, and where you change board. |
 | **ESCs** | Reads the flywheel ESCs' AM32 settings side by side and writes edits to all of them at once, through the blaster's ESC passthrough. The blaster restarts for each read or write. |
 | **RPM capture** | Records a spin-up and charts it. |
-| **Tune** | Searches flywheel gains for the fastest dependable spin-up, on the blaster itself. |
+| **Tune** | Searches flywheel gains or ESC settings for the fastest dependable spin-up, on the blaster itself. |
 | **Splash screen** | Upload a custom 128x64 boot image from any picture, or clear it back to the default. Takes effect next boot. On firmware 2.3.0 and later the page opens on the image the blaster holds, custom or built-in, and **Download** saves the one shown as a PNG that uploads back unchanged. |
 | **Firmware** | Flashes new firmware over USB. |
 | **Maintenance** | The resets: one profile, the blaster settings, the wiring, or everything. Each asks you to type a word first, so none happens by a stray click. |
@@ -100,10 +100,12 @@ Turn RPM Logging off for normal use: it allocates a buffer on every rev, and a r
 
 ## Tuning spin-up
 
-The **Tune** page finds the flywheel gains that spin up fastest without overshooting, by revving the blaster itself, hundreds of times. It needs RPM Logging on, with a capture at least the rampup timeout plus 500 ms long.
+The **Tune** page finds the flywheel gains, or ESC settings, that spin up fastest without overshooting, by revving the blaster itself, hundreds of times. It needs RPM Logging on, with a capture at least the rampup timeout plus 500 ms long.
 
-Give it PID kp and ki values (it tries every pair), TBH gains, or both, and the target RPMs. Each spin-up waits for the wheels to stop and rest, sets the candidate in RAM, revs every enabled motor and reads the capture. The slower half of the candidates drops out every round; the finalists get **Spin-ups per finalist** each. Any that overshoot past **Overshoot limit %** are ruled out, and the rest rank by fewest rampup timeouts, then their second-worst spin-up time. The blaster's own settings rerun every few candidates, so drift from heat or a sagging pack shows.
+Give it PID kp and ki values (it tries every pair), TBH gains, or both, and the target RPMs. Each spin-up waits for the wheels to stop and rest, sets the candidate in RAM, revs every enabled motor and reads the capture. Every candidate gets **Spin-ups per candidate**. Any that overshoot past **Overshoot limit %** are ruled out, and the rest rank by fewest rampup timeouts, then their second-worst spin-up time. The blaster's own settings run first and last, so drift from heat or a sagging pack shows.
 
 The run pauses when a cell reads below **Pause below V a cell**, so you can swap the pack, and when anything else stops it: SAFE, the menu, a dropped connection. It is kept in the browser, so a reload or a closed tab pauses it rather than losing it; **Resume** carries on. While it runs, **Hold to rev** and the motor buttons are off. Nothing is stored until you press **Apply** on a result, and whenever a run stops the blaster goes back to its own gains.
 
-Every capture a run takes downloads as it arrives, as `tune-<start>_set<NNN>_<what it ran>_<RPM>rpm.csv`, whatever **Save CSV files** says. **Export JSON** saves the whole run as `tune-<start>.json`, and each spin-up in it names its capture's file.
+Pick **ESC settings** instead to search the flywheel ESCs' AM32 settings, on the blaster's own gains: read the ESCs on the **ESCs** page first, then list values for each setting to vary. The run tries every combination, or with **One setting at a time** each value on the blaster's own settings, named by the setting it changes. Current limiting is not offered. AM32 keeps its settings in flash, which wears with every write, so each candidate is written once and runs its spin-ups as a block, and the form says how many writes a run takes. Each write restarts the blaster. The run reads the ESCs' own settings at Start and writes them back whenever it stops, unless you **Apply** a winner. A run belongs to the blaster it started on: with a different Trifolium connected it writes nothing and names both chip IDs, until its own blaster connects or you **Discard** it.
+
+Every capture a run takes downloads as it arrives, as `tune-<start>_set<NNN>_<what it ran>_<RPM>rpm.csv`, whatever **Save CSV files** says. The whole run downloads as `tune-<start>.json` when it finishes, or when you **Discard** it unfinished; each spin-up in it names its capture's file.

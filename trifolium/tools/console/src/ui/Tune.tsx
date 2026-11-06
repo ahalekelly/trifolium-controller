@@ -2,6 +2,8 @@ import React from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import Checkbox from "@mui/material/Checkbox";
+import MenuItem from "@mui/material/MenuItem";
 import Stack from "@mui/material/Stack";
 import Table from "@mui/material/Table";
 import TableBody from "@mui/material/TableBody";
@@ -12,57 +14,121 @@ import TextField from "@mui/material/TextField";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Typography from "@mui/material/Typography";
-import { downloadJson } from "../config/bundle";
+import { accepted, parseShown, shown, type EscField } from "../esc/layouts";
+import type { EscSettings } from "../esc/session";
 import {
   BASELINE,
+  BASELINE_BLOCK,
   baselineOf,
-  candidatesFor,
+  ESC_REACH,
+  countsFor,
   DEFAULT_CONFIG,
+  DEFAULT_GAINS,
   gainsLabel,
-  runName,
+  overshootLimit,
+  plannedRun,
+  rankingOf,
+  startingId,
   scoreOf,
   scoresOf,
+  settingsLabel,
+  startRun,
+  timeOf,
+  TRACE_STEP,
+  type Candidate,
+  type EscGrid,
+  type EscValues,
   type Gains,
+  type GainsGrid,
   type Run,
+  type MotorTrace,
+  type SetRecord,
+  type Spinup,
   type TuneConfig,
 } from "../tune/run";
 import { runSettings, type TuneRunner } from "../tune/runner";
-import { plannedSets, ranking, standing, type SetScore, type Standing } from "../tune/search";
+import { standing, type SetScore, type Standing } from "../tune/search";
+import { escRows, type EscRow } from "./EscSettings";
 import { Fieldset } from "./Section";
 import { RpmChart, type Series } from "./RpmChart";
 
-// The spin-up search: runs spin-ups on the blaster by itself and finds the flywheel gains with the
-// shortest dependable spin-up. Each candidate is tried at every target RPM; successive halving
-// spends most of the spin-ups on the candidates still in contention (tune/search.ts), and the
-// runner (tune/runner.ts) drives the blaster. A run lives in this browser until discarded, so a
-// reload or a dropped link pauses it rather than losing it.
+// The spin-up search: runs spin-ups on the blaster by itself and finds the flywheel gains, or the
+// AM32 ESC settings, with the shortest dependable spin-up. Each candidate is tried at every target
+// RPM, the same number of times each (tune/search.ts), and the runner (tune/runner.ts) drives the
+// blaster. A run lives in this browser until discarded, so a reload or a dropped link pauses it
+// rather than losing it.
 
-const COLOURS = ["#4f9dff", "#ff9f40", "#4ad991", "#e57bd8"];
+const COLOURS = [
+  "#4f9dff",
+  "#ff9f40",
+  "#4ad991",
+  "#e57bd8",
+  "#f2d14b",
+  "#5fd3e6",
+  "#ff6b6b",
+  "#a78bfa",
+];
 
 /** Rough wall-clock cost of one spin-up: the hold, the capture, the spin-down and the rest. */
 const SPINUP_S = 5;
+/** And of one ESC write: into passthrough, the write, and back to a blaster that answers. */
+const ESC_WRITE_S = 15;
 
 /** The form's text for a config, and back. */
 type Form = Record<"kp" | "ki" | "tbh" | "rpms" | "n" | "overshootLimitPct" | "cellV", string>;
 
 /** The search form as typed, kept by App so it outlasts a visit to another page. */
 export interface TuneDraft {
-  mode: TuneConfig["mode"];
+  kind: TuneConfig["grid"]["kind"];
+  mode: GainsGrid["mode"];
+  /** An ESC grid's: one setting changed at a time, or every combination. */
+  oneAtATime: boolean;
   form: Form;
+  /** Each ESC setting's values to try, as typed, by AM32 field name. */
+  esc: Record<string, string>;
 }
 
 export const DEFAULT_DRAFT: TuneDraft = {
-  mode: DEFAULT_CONFIG.mode,
+  kind: "gains",
+  mode: DEFAULT_GAINS.mode,
+  oneAtATime: false,
   form: {
-    kp: DEFAULT_CONFIG.kp.join(", "),
-    ki: DEFAULT_CONFIG.ki.join(", "),
-    tbh: DEFAULT_CONFIG.tbh.join(", "),
+    kp: DEFAULT_GAINS.kp.join(", "),
+    ki: DEFAULT_GAINS.ki.join(", "),
+    tbh: DEFAULT_GAINS.tbh.join(", "),
     rpms: DEFAULT_CONFIG.rpms.join(", "),
     n: String(DEFAULT_CONFIG.n),
-    overshootLimitPct: String(DEFAULT_CONFIG.overshootLimitPct),
+    overshootLimitPct: String(DEFAULT_GAINS.overshootLimitPct),
     cellV: String(DEFAULT_CONFIG.pauseCellMv / 1000),
   },
+  esc: {},
 };
+
+/** The settings an ESC run can vary: the searchable ones every ESC has. */
+const searchableRows = (escs: EscSettings[]): EscRow[] =>
+  escRows(escs).filter((r) => r.field.searchable && r.raws.every((raw) => raw !== null));
+
+/** What a field's values to try take: what parseShown() does, and the field's `instead`. */
+const takes = (field: EscField) =>
+  accepted(field) + (field.instead ? `, or ${field.instead.label}` : "");
+
+/**
+ * A value typed to try for `field`, as the writes it makes, or what is wrong with it. A value
+ * another field's `instead` makes is that field's to try.
+ */
+function searchValue(field: EscField, text: string, rows: EscRow[]): EscValues | string {
+  if (field.instead && text.trim().toLowerCase() === field.instead.label.toLowerCase()) {
+    return field.instead.writes;
+  }
+  const raw = parseShown(field, text);
+  if (raw === null) return `${field.label} takes ${takes(field)}.`;
+  const owner = rows.find((r) => r.field.instead?.writes[field.name] === raw)?.field;
+  if (owner) {
+    const as = `${owner.label} ${owner.instead!.label}`;
+    return `${field.label} ${shown(field, raw)} is tried as ${as}.`;
+  }
+  return { [field.name]: raw };
+}
 
 /** Comma- or space-separated numbers, or null if any is not one. */
 const listOf = (text: string): number[] | null => {
@@ -70,13 +136,29 @@ const listOf = (text: string): number[] | null => {
   return items.length && items.every(Number.isFinite) ? items : null;
 };
 
-/** The config the form describes, or what is wrong with it. */
-function configOf(
-  { mode, form }: TuneDraft,
+/** The grid the form describes, or what is wrong with it. */
+function gridOf(
+  { kind, mode, oneAtATime, form, esc }: TuneDraft,
   gainMax: { kp: number; ki: number },
-): TuneConfig | string {
-  const [kp, ki, tbh, rpms] = [form.kp, form.ki, form.tbh, form.rpms].map(listOf);
-  const [n, overshootLimitPct, cellV] = [form.n, form.overshootLimitPct, form.cellV].map(Number);
+  rows: EscRow[],
+): TuneConfig["grid"] | string {
+  if (kind === "esc") {
+    const fields: EscGrid["fields"] = [];
+    for (const { field } of rows) {
+      const typed = (esc[field.name] ?? "").split(",").filter((t) => t.trim());
+      if (typed.length === 0) continue;
+      const values: EscValues[] = [];
+      for (const text of typed) {
+        const value = searchValue(field, text, rows);
+        if (typeof value === "string") return value;
+        if (!values.some((v) => JSON.stringify(v) === JSON.stringify(value))) values.push(value);
+      }
+      fields.push({ field, values });
+    }
+    if (fields.length === 0) return "List values to try for at least one setting.";
+    return { kind, fields, oneAtATime };
+  }
+  const [kp, ki, tbh] = [form.kp, form.ki, form.tbh].map(listOf);
   const within = (values: number[] | null, max: number) =>
     values !== null && values.every((v) => v >= 0 && v <= max);
   if (mode !== "tbh" && !(within(kp, gainMax.kp) && within(ki, gainMax.ki))) {
@@ -85,22 +167,28 @@ function configOf(
   if (mode !== "pid" && !within(tbh, gainMax.ki)) {
     return `TBH gains are numbers from 0 to ${gainMax.ki}.`;
   }
+  const overshootLimitPct = Number(form.overshootLimitPct);
+  if (!(overshootLimitPct >= 0)) return "The overshoot limit is a percentage.";
+  return { kind, mode, kp: kp ?? [], ki: ki ?? [], tbh: tbh ?? [], overshootLimitPct };
+}
+
+/** The config the form describes, or what is wrong with it. */
+function configOf(
+  draft: TuneDraft,
+  gainMax: { kp: number; ki: number },
+  rows: EscRow[],
+): TuneConfig | string {
+  const grid = gridOf(draft, gainMax, rows);
+  if (typeof grid === "string") return grid;
+  const { form } = draft;
+  const rpms = listOf(form.rpms);
+  const [n, cellV] = [form.n, form.cellV].map(Number);
   if (!rpms || !rpms.every((r) => Number.isInteger(r) && r > 0)) {
     return "Target RPMs are whole numbers.";
   }
-  if (!Number.isInteger(n) || n < 2) return "Spin-ups per finalist is a whole number, at least 2.";
-  if (!(overshootLimitPct >= 0)) return "The overshoot limit is a percentage.";
+  if (!Number.isInteger(n) || n < 2) return "Spin-ups per candidate is a whole number, at least 2.";
   if (!(cellV > 0)) return "The cell voltage to pause at is in volts.";
-  return {
-    mode,
-    kp: kp ?? [],
-    ki: ki ?? [],
-    tbh: tbh ?? [],
-    rpms,
-    n,
-    overshootLimitPct,
-    pauseCellMv: Math.round(cellV * 1000),
-  };
+  return { grid, rpms, n, pauseCellMv: Math.round(cellV * 1000) };
 }
 
 const cellSx = { py: 0.25, px: 1 };
@@ -108,7 +196,16 @@ const cellSx = { py: 0.25, px: 1 };
 const msText = (ms: number) =>
   ms === Infinity ? "timeout" : Number.isNaN(ms) ? "—" : `${Math.round(ms)} ms`;
 
-function StandingCells({ s, scores }: { s: Standing; scores: SetScore[] }) {
+/** A row's figures. Overshoot shows for a gains run only: Trifolium's own control makes it. */
+function StandingCells({
+  s,
+  scores,
+  overshoot,
+}: {
+  s: Standing;
+  scores: SetScore[];
+  overshoot: boolean;
+}) {
   const mean = scores.reduce((sum, x) => sum + x.ms, 0) / scores.length;
   const slowest = scores.length
     ? Math.max(...scores.map((x) => (x.timedOut ? Infinity : x.ms)))
@@ -117,33 +214,73 @@ function StandingCells({ s, scores }: { s: Standing; scores: SetScore[] }) {
     <>
       <TableCell sx={cellSx}>{s.timeouts}</TableCell>
       <TableCell sx={cellSx}>{msText(mean)}</TableCell>
-      <TableCell sx={cellSx}>{msText(slowest)}</TableCell>
       <TableCell sx={cellSx}>{msText(s.ms)}</TableCell>
-      <TableCell sx={cellSx}>
-        {Number.isNaN(s.overshootPct) ? "—" : `${s.overshootPct.toFixed(1)}%`}
-      </TableCell>
+      <TableCell sx={cellSx}>{msText(slowest)}</TableCell>
+      {overshoot && (
+        <TableCell sx={cellSx}>
+          {Number.isNaN(s.overshootPct) ? "—" : `${s.overshootPct.toFixed(1)}%`}
+        </TableCell>
+      )}
       <TableCell sx={cellSx}>{s.sets}</TableCell>
     </>
   );
 }
 
-export function Results({ run }: { run: Run }) {
-  const limit = run.config.overshootLimitPct;
+/** The baseline's colour, and the starting candidate's, which is one row with it. */
+const BASELINE_COLOUR = "#9aa0a6";
+
+/**
+ * A row's chart and checkbox colour, from its candidate's place in the grid, so it keeps it however
+ * rows are checked.
+ */
+const colourOf = (candidates: Candidate[], same: string | null, id: string) =>
+  id === BASELINE || id === same
+    ? BASELINE_COLOUR
+    : COLOURS[candidates.findIndex((c) => c.id === id) % COLOURS.length];
+
+export function Results({
+  run,
+  checked,
+  onCheck,
+}: {
+  run: Run;
+  /** The rows whose spin-ups are charted: candidate ids and BASELINE, in the order checked. */
+  checked: string[];
+  onCheck: (checked: string[]) => void;
+}) {
+  const limit = overshootLimit(run.config.grid);
   const scores = scoresOf(run);
-  const rows = ranking(run.search, scores, limit);
-  const done = run.status === "done";
+  const rows = rankingOf(run);
+  const same = startingId(run);
+  const nameOf = (id: string) => run.candidates.find((c) => c.id === id)!.name;
+  const overshoot = run.config.grid.kind === "gains";
+  // What the time columns time: fire-ready, or reaching ESC_REACH of target in an ESC run.
+  const to = overshoot ? "" : ` to ${ESC_REACH * 100}%`;
+  const box = (id: string, label: string) => {
+    const on = checked.includes(id);
+    const colour = on ? colourOf(run.candidates, same, id) : undefined;
+    return (
+      <TableCell padding="checkbox">
+        <Checkbox
+          size="small"
+          checked={on}
+          onChange={() => onCheck(on ? checked.filter((c) => c !== id) : [...checked, id])}
+          sx={{ py: 0, color: colour, "&.Mui-checked": { color: colour } }}
+          slotProps={{ input: { "aria-label": `Chart ${label}` } }}
+        />
+      </TableCell>
+    );
+  };
   return (
     <Table size="small" sx={{ width: "auto" }}>
       <TableHead>
         <TableRow>
           {[
+            "Chart",
             "Candidate",
-            "",
             "Timeouts",
-            "Mean",
-            "Slowest",
-            "2nd slowest",
-            "2nd worst overshoot",
+            ...["Mean", "2nd slowest", "Slowest"].map((h) => h + to),
+            ...(overshoot ? ["2nd worst overshoot"] : []),
             "Sets",
           ].map((h) => (
             <TableCell key={h} sx={{ ...cellSx, fontWeight: 600 }}>
@@ -153,28 +290,32 @@ export function Results({ run }: { run: Run }) {
         </TableRow>
       </TableHead>
       <TableBody>
-        {rows.map(({ id, standing: s, droppedIn }, i) => (
+        {rows.map(({ id, standing: s }) => (
           <TableRow key={id}>
-            <TableCell sx={cellSx}>{id}</TableCell>
-            <TableCell sx={{ ...cellSx, color: "text.secondary" }}>
-              {droppedIn !== null
-                ? `dropped in round ${droppedIn + 1}`
-                : !s.qualified && s.sets > 0
-                  ? `overshoots past ${limit}%`
-                  : done && i === 0
-                    ? "best"
-                    : "finalist"}
+            {box(id, nameOf(id))}
+            <TableCell sx={cellSx}>
+              {nameOf(id)}
+              {(id === same || !s.qualified) && (
+                <Typography component="span" sx={{ fontSize: "inherit", fontStyle: "italic" }}>
+                  {" "}
+                  ({id === same ? "starting settings" : `overshoots past ${limit}%`})
+                </Typography>
+              )}
             </TableCell>
-            <StandingCells s={s} scores={scores[id] ?? []} />
+            <StandingCells s={s} scores={scores[id] ?? []} overshoot={overshoot} />
           </TableRow>
         ))}
-        {scores[BASELINE] && (
+        {scores[BASELINE] && same === null && (
           <TableRow>
+            {box(BASELINE, "the baseline")}
             <TableCell sx={{ ...cellSx, fontStyle: "italic" }}>
-              Baseline: {gainsLabel(run.baseline)}
+              Baseline: {settingsLabel(run.config.grid, run.baseline)}
             </TableCell>
-            <TableCell sx={cellSx} />
-            <StandingCells s={standing(scores[BASELINE], limit)} scores={scores[BASELINE]} />
+            <StandingCells
+              s={standing(scores[BASELINE], limit)}
+              scores={scores[BASELINE]}
+              overshoot={overshoot}
+            />
           </TableRow>
         )}
       </TableBody>
@@ -182,28 +323,192 @@ export function Results({ run }: { run: Run }) {
   );
 }
 
-/** Each finalist's latest spin-up at each target RPM, the slowest motor's line. */
-function FinalistTraces({ run }: { run: Run }) {
+/** Which of each checked row's spin-ups the chart draws: all, or the one at a rank. */
+type Drawn = "all" | "median" | "secondSlowest" | "slowest";
+
+const DRAWN: { value: Drawn; label: string }[] = [
+  { value: "all", label: "All spin-ups" },
+  { value: "median", label: "Median" },
+  { value: "secondSlowest", label: "2nd slowest" },
+  { value: "slowest", label: "Slowest" },
+];
+
+/**
+ * The spin-up at `drawn`'s rank by `time`, a timeout slowest: the lower median of an even count, so
+ * always one that ran.
+ */
+export function atRank(
+  spinups: Spinup[],
+  drawn: Exclude<Drawn, "all">,
+  time: (s: Spinup) => number | null,
+): Spinup {
+  const sorted = [...spinups].sort((a, b) => (time(a) ?? Infinity) - (time(b) ?? Infinity));
+  const last = sorted.length - 1;
+  const index = { median: last >> 1, secondSlowest: Math.max(0, last - 1), slowest: last }[drawn];
+  return sorted[index];
+}
+
+/**
+ * A motor's RPM as a solid line where it ran at full throttle and a dashed one where the controller
+ * backed off, the two meeting where it changes.
+ */
+function byThrottle({ rpm, full }: MotorTrace): { solid: number[]; dashed: number[] } {
+  const isFull = rpm.map((_, i) => full.some(([from, to]) => i >= from && i < to));
+  return {
+    solid: rpm.map((v, i) => (isFull[i] ? v : NaN)),
+    // A full sample next to one that is not ends the dashed line there too, so the two join.
+    dashed: rpm.map((v, i) =>
+      isFull[i] && isFull[i - 1] !== false && isFull[i + 1] !== false ? NaN : v,
+    ),
+  };
+}
+
+/**
+ * Each checked row's spin-ups, a chart per target RPM: each motor's RPM, in the row's colour, all
+ * of them overlaid or the one at a rank, ranked within each RPM by `grid`'s timeOf(). A line is
+ * solid at full throttle and dashed where the controller backed off. The starting candidate's row
+ * has the baseline's spin-ups too, as `same` says. Memoised on the sets, which change only as a set
+ * ends, so the chart redraws once a set and never while a rev is held.
+ */
+export const SpinupTraces = React.memo(function SpinupTraces({
+  sets,
+  rpms,
+  candidates,
+  checked,
+  same,
+  grid,
+}: {
+  sets: SetRecord[];
+  rpms: number[];
+  /** In the grid's order, which gives each its colour. */
+  candidates: Candidate[];
+  checked: string[];
+  same: string | null;
+  grid: TuneConfig["grid"];
+}) {
+  const time = timeOf(grid);
+  const [drawn, setDrawn] = React.useState<Drawn>("all");
+  if (checked.length === 0) {
+    return (
+      <Typography variant="caption" color="text.secondary">
+        Check rows to chart their spin-ups.
+      </Typography>
+    );
+  }
   return (
     <Stack spacing={1}>
-      {run.config.rpms.map((rpm, k) => {
-        const series: Series[] = run.search.alive
-          .filter((id) => run.traces[id])
-          .map((id, i) => ({
-            name: id,
-            colour: COLOURS[i % COLOURS.length],
-            values: run.traces[id][k],
-          }));
+      <TextField
+        select
+        size="small"
+        label="Spin-ups to chart"
+        value={drawn}
+        onChange={(e) => setDrawn(e.target.value as Drawn)}
+        sx={{ width: 200 }}
+      >
+        {DRAWN.map((o) => (
+          <MenuItem key={o.value} value={o.value}>
+            {o.label}
+          </MenuItem>
+        ))}
+      </TextField>
+      {rpms.map((rpm, k) => {
+        const series: Series[] = checked.map((id) => {
+          const name = id === BASELINE ? "Baseline" : candidates.find((c) => c.id === id)!.name;
+          const colour = colourOf(candidates, same, id);
+          const spinups = sets.filter((s) => countsFor(s, id, same)).map((s) => s.spinups[k]);
+          const lines = (traces: MotorTrace[]) => {
+            const parts = traces.map(byThrottle);
+            return { lines: parts.map((p) => p.solid), dashed: parts.map((p) => p.dashed) };
+          };
+          if (drawn === "all" || spinups.length === 0) {
+            return { name, colour, ...lines(spinups.flatMap((s) => s.trace)) };
+          }
+          const one = atRank(spinups, drawn, time);
+          const ms = time(one);
+          const label = `${name} (${ms === null ? "timeout" : `${ms} ms`})`;
+          return { name: label, colour, ...lines(one.trace) };
+        });
         return (
           <Box key={rpm}>
             <Typography variant="caption" color="text.secondary">
-              Finalists at {rpm} RPM, each one's latest spin-up
+              {DRAWN.find((o) => o.value === drawn)!.label} at {rpm} RPM, each motor's line
             </Typography>
-            <RpmChart series={series} height={200} />
+            <RpmChart series={series} height={240} xLabel="ms" sampleMs={TRACE_STEP} />
           </Box>
         );
       })}
     </Stack>
+  );
+});
+
+/**
+ * The baseline's spin-ups at the run's start and, once it has them, its end, and how far its mean
+ * moved between: the drift every candidate's sets ran under. Null before the first.
+ */
+function driftOf(run: Run): string | null {
+  const ids = run.sets.map((s) => s.id);
+  const firstCandidate = ids.findIndex((id) => id !== BASELINE);
+  let lastCandidate = ids.length - 1;
+  while (lastCandidate >= 0 && ids[lastCandidate] === BASELINE) lastCandidate--;
+  const scored = (sets: SetRecord[]) =>
+    sets.map((s) => scoreOf(s, run.rampupTimeoutMs, timeOf(run.config.grid)));
+  const shown = (scores: SetScore[]) =>
+    scores.map((s) => (s.timedOut ? "timeout" : `${s.ms}`)).join(", ") + " ms";
+  const first = scored(run.sets.slice(0, firstCandidate < 0 ? ids.length : firstCandidate));
+  if (first.length === 0) return null;
+  const last = lastCandidate < 0 ? [] : scored(run.sets.slice(lastCandidate + 1));
+  if (last.length === 0) return `Baseline at the start: ${shown(first)}.`;
+  const mean = (scores: SetScore[]) => scores.reduce((sum, s) => sum + s.ms, 0) / scores.length;
+  const change = ((mean(last) - mean(first)) / mean(first)) * 100;
+  return (
+    `Baseline at the start: ${shown(first)}; at the end: ${shown(last)}, its mean ` +
+    `${Math.abs(change).toFixed(1)}% ${change > 0 ? "slower" : "faster"}.`
+  );
+}
+
+/** The ESC settings an ESC run can vary, each with what the ESCs hold now and the values to try. */
+function EscGridForm({
+  rows,
+  esc,
+  onEsc,
+}: {
+  rows: EscRow[];
+  esc: Record<string, string>;
+  onEsc: (esc: Record<string, string>) => void;
+}) {
+  return (
+    <Table size="small" sx={{ width: "auto" }}>
+      <TableHead>
+        <TableRow>
+          {["Setting", "ESCs now", "Values to try"].map((h) => (
+            <TableCell key={h} sx={{ ...cellSx, fontWeight: 600 }}>
+              {h}
+            </TableCell>
+          ))}
+        </TableRow>
+      </TableHead>
+      <TableBody>
+        {rows.map(({ field, raws, disagree }) => (
+          <TableRow key={field.name}>
+            <TableCell sx={cellSx}>{field.label}</TableCell>
+            <TableCell sx={{ ...cellSx, color: disagree ? "warning.main" : undefined }}>
+              {disagree ? "differ" : shown(field, raws[0]!)}
+            </TableCell>
+            <TableCell sx={cellSx}>
+              <TextField
+                size="small"
+                variant="standard"
+                value={esc[field.name] ?? ""}
+                placeholder={takes(field)}
+                onChange={(e) => onEsc({ ...esc, [field.name]: e.target.value })}
+                sx={{ width: 260 }}
+                slotProps={{ htmlInput: { "aria-label": `${field.label} values` } }}
+              />
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
   );
 }
 
@@ -212,6 +517,7 @@ export function Tune({
   live,
   device,
   gainMax,
+  escs,
   draft,
   onDraft,
   onApply,
@@ -221,6 +527,8 @@ export function Tune({
   /** The device config, for the baseline gains and the capture settings. */
   device: unknown;
   gainMax: { kp: number; ki: number };
+  /** The flywheel ESCs' settings as last read, for the settings an ESC run can vary. */
+  escs: EscSettings[] | null;
   draft: TuneDraft;
   onDraft: (draft: TuneDraft) => void;
   /** Writes the winner's gains to the device's stored settings. */
@@ -228,17 +536,45 @@ export function Tune({
 }) {
   runner.load();
   const run = React.useSyncExternalStore(runner.subscribe, runner.getRun);
-  const { mode, form } = draft;
-  const config = configOf(draft, gainMax);
+  const activity = React.useSyncExternalStore(runner.subscribe, runner.getActivity);
+  /** The runner is driving the blaster, so its buttons would do nothing. */
+  const driving = React.useSyncExternalStore(runner.subscribe, runner.running);
+  /** Why the last Start did not start. */
+  const [failed, setFailed] = React.useState<string | null>(null);
+  const [checked, setChecked] = React.useState<string[]>([]);
+  const { kind, mode, form } = draft;
+  const rows = React.useMemo(() => (escs ? searchableRows(escs) : []), [escs]);
+  const config = configOf(draft, gainMax, rows);
   const settings = runSettings(device);
+  const baseline = baselineOf(device);
+  const current = run === null || run === "unreadable" ? null : run;
+  // Running a plan through takes a while for a big grid, so each is worked out once.
+  const draftKey = JSON.stringify([config, baseline]);
+  const draftPlan = React.useMemo(() => {
+    if (typeof config === "string" || baseline === null) return null;
+    const escNow = (name: string) => rows.find((r) => r.field.name === name)!.raws[0]!;
+    const { grid } = config;
+    const esc =
+      grid.kind === "esc"
+        ? Object.fromEntries(grid.fields.map(({ field }) => [field.name, escNow(field.name)]))
+        : null;
+    const draftRun = startRun(config, { gains: baseline, esc }, null, null, 0);
+    return { count: draftRun.candidates.length, ...plannedRun(draftRun) };
+  }, [draftKey, rows]);
+  const runPlan = React.useMemo(() => current && plannedRun(current), [current?.candidates]);
   const field = (key: keyof Form, label: string, width = 160) => (
     <TextField
       size="small"
       label={label}
       value={form[key]}
-      onChange={(e) => onDraft({ mode, form: { ...form, [key]: e.target.value } })}
+      onChange={(e) => onDraft({ ...draft, form: { ...form, [key]: e.target.value } })}
       sx={{ width }}
     />
+  );
+  const activityLine = activity && (
+    <Typography variant="body2" color="text.secondary">
+      {activity}
+    </Typography>
   );
 
   if (run === "unreadable") {
@@ -246,7 +582,7 @@ export function Tune({
       <Alert
         severity="error"
         action={
-          <Button size="small" color="inherit" onClick={() => runner.discard()}>
+          <Button size="small" color="inherit" onClick={() => void runner.discard()}>
             Discard run
           </Button>
         }
@@ -258,18 +594,27 @@ export function Tune({
   }
 
   if (!run) {
-    const baseline = baselineOf(device);
-    const ready = typeof config !== "string" && baseline !== null;
-    const count = ready ? candidatesFor(config, baseline).length : 0;
-    const spinups = ready ? plannedSets(count, config.n) * config.rpms.length : 0;
+    const count = draftPlan?.count ?? 0;
+    const spinups =
+      draftPlan && typeof config !== "string" ? draftPlan.sets * config.rpms.length : 0;
+    const writes = draftPlan?.writes ?? 0;
+    const minutes = Math.round((spinups * SPINUP_S + writes * ESC_WRITE_S) / 60);
     const problem =
-      typeof config === "string"
-        ? config
-        : baseline === null
-          ? "No motor is enabled."
-          : typeof settings === "string"
-            ? settings
-            : null;
+      kind === "esc" && escs === null
+        ? "Read the ESCs on the ESCs page first: an ESC run lists their settings."
+        : typeof config === "string"
+          ? config
+          : baseline === null
+            ? "No motor is enabled."
+            : typeof settings === "string"
+              ? settings
+              : null;
+    const start = () => {
+      setFailed(null);
+      runner
+        .start(config as TuneConfig, baseline!, device)
+        .catch((e: Error) => setFailed(e.message));
+    };
     return (
       <Stack spacing={1.25}>
         <Fieldset label="Search">
@@ -277,46 +622,110 @@ export function Tune({
             <ToggleButtonGroup
               size="small"
               exclusive
-              value={mode}
-              onChange={(_, v: TuneConfig["mode"] | null) => v && onDraft({ mode: v, form })}
+              value={kind}
+              onChange={(_, v: TuneDraft["kind"] | null) => v && onDraft({ ...draft, kind: v })}
             >
-              <ToggleButton value="pid">PID</ToggleButton>
-              <ToggleButton value="tbh">TBH</ToggleButton>
-              <ToggleButton value="both">Both</ToggleButton>
+              <ToggleButton value="gains">Flywheel gains</ToggleButton>
+              <ToggleButton value="esc">ESC settings</ToggleButton>
             </ToggleButtonGroup>
+            {kind === "gains" ? (
+              <>
+                <ToggleButtonGroup
+                  size="small"
+                  exclusive
+                  value={mode}
+                  onChange={(_, v: GainsGrid["mode"] | null) => v && onDraft({ ...draft, mode: v })}
+                >
+                  <ToggleButton value="pid">PID</ToggleButton>
+                  <ToggleButton value="tbh">TBH</ToggleButton>
+                  <ToggleButton value="both">Both</ToggleButton>
+                </ToggleButtonGroup>
+                <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", rowGap: 1 }}>
+                  {mode !== "tbh" && field("kp", "PID kp values")}
+                  {mode !== "tbh" && field("ki", "PID ki values")}
+                  {mode !== "pid" && field("tbh", "TBH gains")}
+                  {field("overshootLimitPct", "Overshoot limit %", 150)}
+                </Stack>
+              </>
+            ) : (
+              <>
+                {escs && (
+                  <EscGridForm
+                    rows={rows}
+                    esc={draft.esc}
+                    onEsc={(esc) => onDraft({ ...draft, esc })}
+                  />
+                )}
+                <Typography variant="caption" color="text.secondary">
+                  Values are comma-separated, as the ESCs page shows them. Search a few settings at a
+                  time: PWM frequency first, coarsely; then the startup group - startup power,
+                  sinusoidal startup with its range and power, Motor Kv (Off disables low-RPM power
+                  protection) and ramp rate; then timing advance; then the startup group again.
+                </Typography>
+              </>
+            )}
+            {kind === "esc" && (
+              <ToggleButtonGroup
+                size="small"
+                exclusive
+                value={draft.oneAtATime}
+                onChange={(_, v: boolean | null) =>
+                  v !== null && onDraft({ ...draft, oneAtATime: v })
+                }
+              >
+                <ToggleButton value={false}>All combinations</ToggleButton>
+                <ToggleButton value={true}>One setting at a time</ToggleButton>
+              </ToggleButtonGroup>
+            )}
             <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", rowGap: 1 }}>
-              {mode !== "tbh" && field("kp", "PID kp values")}
-              {mode !== "tbh" && field("ki", "PID ki values")}
-              {mode !== "pid" && field("tbh", "TBH gains")}
               {field("rpms", "Target RPMs")}
-            </Stack>
-            <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", rowGap: 1 }}>
-              {field("n", "Spin-ups per finalist", 150)}
-              {field("overshootLimitPct", "Overshoot limit %", 150)}
+              {field("n", "Spin-ups per candidate", 170)}
               {field("cellV", "Pause below V a cell", 150)}
             </Stack>
             <Typography variant="caption" color="text.secondary">
-              {count} candidates, about {spinups} spin-ups (
-              {Math.round((spinups * SPINUP_S) / 60)} min), with the blaster's own settings
-              {baseline ? ` (${gainsLabel(baseline)})` : ""} rerun between every few to show drift.
-              Each spin-up holds Rev from a standstill. Halving drops the slower half after a few
-              spin-ups each; the finalists rank on fewest rampup timeouts, then the second-slowest
-              of their N spin-ups per finalist (the 95th percentile at the default N = 20), each
-              summed over the target RPMs, and one whose second-worst overshoot passes the limit
-              cannot win. Mean counts a timed-out spin-up at the rampup timeout, so it is a lower
-              bound when Timeouts is not 0. Nothing is stored until you apply the winner.
+              {count} candidates, about {spinups} spin-ups
+              {kind === "esc" ? ` and about ${writes} ESC writes` : ""} ({minutes} min), with the
+              blaster's own settings
+              {baseline && kind === "gains" ? ` (${gainsLabel(baseline)})` : ""}{" "}
+              run {BASELINE_BLOCK} times first and last to show drift; a candidate with those
+              settings counts those spin-ups as its own. Each spin-up holds Rev from a standstill.
+              Every candidate gets N spin-ups, and ranks on fewest rampup timeouts, then the
+              second-slowest of its N spin-ups
+              (the 95th percentile at the default N = 20), each summed over the target RPMs
+              {kind === "gains"
+                ? ", and one whose second-worst overshoot passes the limit cannot win. "
+                : ". "}
+              {kind === "esc"
+                ? `An ESC run times a spin-up to the slower wheel reaching ${ESC_REACH * 100}% of ` +
+                  "target, the climb the ESCs decide; one that does not within the rampup timeout " +
+                  "counts as a timeout. "
+                : "A gains run times a spin-up to fire-ready. "}
+              Mean counts a timed-out spin-up at the rampup timeout, so it is a lower bound when
+              Timeouts is not 0.{" "}
+              {kind === "esc"
+                ? "Each candidate is written to every flywheel ESC once, then runs its spin-ups at " +
+                  "the blaster's own gains. A write restarts the blaster and " +
+                  "is one erase of each ESC's settings flash, which lasts about 10,000. The ESCs " +
+                  "get their own settings back when the run stops, unless you apply the winner."
+                : "Nothing is stored until you apply the winner."}
             </Typography>
             {problem && live && (
               <Alert severity="info" sx={{ py: 0 }}>
                 {problem}
               </Alert>
             )}
+            {failed && (
+              <Alert severity="error" sx={{ py: 0 }}>
+                {failed}
+              </Alert>
+            )}
+            {activityLine}
             <Box>
               <Button
                 variant="contained"
                 size="small"
-                disabled={!live || problem !== null}
-                onClick={() => runner.start(config as TuneConfig, baseline!, device)}
+                disabled={!live || problem !== null || driving}
+                onClick={start}
               >
                 Start
               </Button>
@@ -330,38 +739,36 @@ export function Tune({
   const candidateSets = run.sets.filter((s) => s.id !== BASELINE).length;
   const lastSet = run.sets[run.sets.length - 1];
   const packV = lastSet && Math.min(...lastSet.spinups.map((s) => s.packMv)) / 1000;
-  const baselineMs = run.sets
-    .filter((s) => s.id === BASELINE)
-    .map((s) => scoreOf(s, run.rampupTimeoutMs))
-    .map((s) => (s.timedOut ? "timeout" : `${s.ms}`));
-  const best =
-    run.status === "done"
-      ? ranking(run.search, scoresOf(run), run.config.overshootLimitPct)[0]
-      : null;
+  const drift = driftOf(run);
+  const best = run.status === "done" ? rankingOf(run)[0] : null;
   // Nothing to apply when even the best overshoots past the limit.
-  const bestGains =
-    best?.standing.qualified ? run.candidates.find((c) => c.id === best.id)!.gains : null;
+  const winner = best?.standing.qualified ? run.candidates.find((c) => c.id === best.id)! : null;
+  const escRun = run.config.grid.kind === "esc";
   return (
     <Stack spacing={1.25}>
       <Fieldset label="Search">
         <Stack spacing={1} sx={{ pt: 1 }}>
           <Typography variant="body2">
-            {run.status === "done"
-              ? "Done."
-              : run.status === "running"
-                ? `Running round ${run.search.round + 1} of ${run.search.rounds.length}.`
-                : "Paused."}{" "}
-            {candidateSets} of about {plannedSets(run.candidates.length, run.config.n)} candidate
-            sets{lastSet ? `, pack ${packV.toFixed(2)} V` : ""}.
+            {{ done: "Done.", running: "Running.", paused: "Paused." }[run.status]}{" "}
+            {candidateSets} of about {runPlan!.sets} candidate sets
+            {lastSet ? `, pack ${packV.toFixed(2)} V` : ""}.
+            {escRun && ` ${run.escWrites} of about ${runPlan!.writes} planned ESC writes.`}
           </Typography>
+          {activityLine}
           {run.note && (
             <Alert severity="info" sx={{ py: 0 }}>
               {run.note}
             </Alert>
           )}
-          {baselineMs.length > 0 && (
+          {run.restoreEscs && run.status !== "running" && activity === null && (
+            <Alert severity="warning" sx={{ py: 0 }}>
+              The ESCs may still hold a candidate's settings. Their own settings go back when this
+              run's blaster next connects, or on Discard.
+            </Alert>
+          )}
+          {drift && (
             <Typography variant="caption" color="text.secondary">
-              Baseline spin-ups, first to latest: {baselineMs.join(", ")} ms
+              {drift}
             </Typography>
           )}
           <Stack direction="row" spacing={1}>
@@ -374,31 +781,31 @@ export function Tune({
               <Button
                 size="small"
                 variant="contained"
-                disabled={!live}
+                disabled={!live || driving}
                 onClick={() => runner.resume(device)}
               >
                 Resume
               </Button>
             )}
-            {bestGains && (
+            {winner && (
               <Button
                 size="small"
                 variant="contained"
-                disabled={!live}
-                onClick={() => onApply(bestGains)}
+                disabled={!live || driving || run.applied}
+                onClick={() =>
+                  winner.esc ? void runner.applyEsc(winner) : runner.applyGains(winner, onApply)
+                }
               >
-                Apply {best!.id}
+                {run.applied ? "Applied" : "Apply"} {winner.name}
               </Button>
             )}
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={() => downloadJson(`${runName(run)}.json`, run)}
-            >
-              Export JSON
-            </Button>
             {run.status !== "running" && (
-              <Button size="small" variant="outlined" onClick={() => runner.discard()}>
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={driving || (run.restoreEscs && !live)}
+                onClick={() => void runner.discard()}
+              >
                 Discard run
               </Button>
             )}
@@ -407,8 +814,15 @@ export function Tune({
       </Fieldset>
       <Fieldset label="Results">
         <Stack spacing={1} sx={{ pt: 1 }}>
-          <Results run={run} />
-          {run.status === "done" && <FinalistTraces run={run} />}
+          <Results run={run} checked={checked} onCheck={setChecked} />
+          <SpinupTraces
+            sets={run.sets}
+            rpms={run.config.rpms}
+            candidates={run.candidates}
+            checked={checked}
+            same={startingId(run)}
+            grid={run.config.grid}
+          />
         </Stack>
       </Fieldset>
     </Stack>

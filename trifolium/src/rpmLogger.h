@@ -8,6 +8,8 @@
 #include "serialLock.h"
 #include "types.h" // PIN_NOT_USED
 
+extern const int32_t maxThrottle; // main.cpp
+
 // Core 0 records a capture a row a tick; once it is full, core 1 sends it (sendIfFull()), so the
 // control loop never waits for a capture to go out. state_ says whose the buffers are: core 0's
 // until full, core 1's once full, until it sends and frees them.
@@ -141,7 +143,11 @@ class RpmLogger
             Serial.print("null");
         else
             Serial.print(slowestMotor_);
-        Serial.println(timedOut_ ? ",\"timedOut\":true}" : ",\"timedOut\":false}");
+        Serial.print(timedOut_ ? ",\"timedOut\":true" : ",\"timedOut\":false");
+        // The Throttle columns' full throttle, so a host can tell where the controller backed off.
+        Serial.print(",\"maxThrottle\":");
+        Serial.print(maxThrottle);
+        Serial.println("}");
         logger.info("RPM log dump complete");
         freeBuffers();
         state_ = State::Idle; // last: core 0 may start the next capture from here
