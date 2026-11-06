@@ -82,6 +82,9 @@ function rig() {
     escs,
     events,
     runner: null as unknown as TuneRunner,
+    /** A startup power whose revs end in the rampup timeout, or why every rev's hold is lost. */
+    timesOutAt: null as number | null,
+    losesHold: null as string | null,
   };
   let rpm = 0;
   const transport = {
@@ -108,11 +111,23 @@ function rig() {
       if (command !== "TUNE") rpm = JSON.parse(command.slice(5)).revRPM;
       return { cmd: "TUNE", ok: true };
     },
-    holdRev: () => {
+    holdRev: (_mask: number, onLost: (why: string) => void) => {
       const power = escs.escs.map((e) => e.block[POWER]);
       events.push(`rev at ${power.join("/")}`);
+      const at = rpm;
+      // As the firmware does: a rev that times out refuses its renewals, and still dumps a capture.
+      if (power[0] === blaster.timesOutAt || blaster.losesHold) {
+        const timedOut = power[0] === blaster.timesOutAt;
+        setTimeout(() => {
+          onLost(timedOut ? "the blaster refused it (rev aborted - let go to rev again)" : blaster.losesHold!);
+          const report = timedOut
+            ? { readyMs: null, slowestMotor: 1, timedOut: true }
+            : { readyMs: 300, slowestMotor: 1, timedOut: false };
+          blaster.runner.capture({ ...capture(at, 0), report });
+        }, 500);
+        return () => {};
+      }
       return () => {
-        const at = rpm;
         setTimeout(() => {
           if (blaster.up) blaster.runner.capture(capture(at, 500 - power[0]));
         }, 100);
@@ -228,6 +243,31 @@ describe("an ESC run", () => {
     expect(run.escWrites).toBe(2);
     expect(run.restoreEscs).toBe(false);
     expect(escs.escs.map((e) => e.block)).toEqual([V4_DEFAULT, V4_DEFAULT]);
+  });
+
+  it("scores a spin-up the rampup timeout ended, whose hold the blaster refused, and runs on", async () => {
+    const { blaster, runner, saved } = rig();
+    blaster.timesOutAt = 80;
+    void runner.start(CONFIG, GAINS, DEVICE);
+    await idle(runner);
+
+    const run = runOf(runner);
+    expect(run.status).toBe("done");
+    const timedOut = run.sets.filter((s) => s.id === C80);
+    expect(timedOut.map((s) => s.spinups[0].readyMs)).toEqual([null, null]);
+    expect(saved).toHaveLength(run.sets.length); // the timed-out captures kept too
+    expect(run.candidates.find((c) => c.id === C80)).toBeDefined();
+  });
+
+  it("pauses when the hold is lost on a rev that did not time out", async () => {
+    const { blaster, runner } = rig();
+    blaster.losesHold = "renewals fell 900 ms apart";
+    void runner.start(CONFIG, GAINS, DEVICE);
+    await idle(runner);
+    expect(runOf(runner)).toMatchObject({
+      status: "paused",
+      note: "The console let go of Rev: renewals fell 900 ms apart.",
+    });
   });
 
   it("puts back the ESCs' own on Pause, and writes the candidate again before Resume measures", async () => {
