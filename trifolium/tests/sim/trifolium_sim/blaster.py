@@ -46,11 +46,11 @@ def preset(board_id, overrides=None):
 class Blaster:
     def __init__(self, exe=EXE):
         self._exe = exe
-        self._world = {}
+        self._world = {("pack",): ("pack", {"mv": 0, "riseMs": 0})}
         self._proc = HostProcess(exe)
         self._child_now = 0
         self._offset_us = 0
-        self._powered_at_us = 0
+        self._pack_since_us = 0  # the divider has charged since: power-on, or the pack's arrival
         self._restarted = False  # this boot follows a reboot the ESCs stayed powered through
         self._serial = bytearray()
         self._child_serial = 0
@@ -107,7 +107,7 @@ class Blaster:
 
     def _as_of_now(self, op, params):
         if op == "pack":
-            return dict(params, chargedMs=(self._offset_us - self._powered_at_us) // 1000)
+            return dict(params, chargedMs=(self._offset_us - self._pack_since_us) // 1000)
         if op == "esc.startup":
             return dict(params, restarted=self._restarted)
         return params
@@ -119,9 +119,12 @@ class Blaster:
 
     def set_pack(self, mv, rise_ms=0):
         """The pack voltage the battery divider sees - and the wheels' supply. With `rise_ms`, the
-        divider's reading climbs toward it from power-on with that time constant, while the wheels
-        have the whole pack at once. A reboot leaves it charged; power_cycle() starts it again.
-        A pack of 0 is USB alone, and an ESC with no pack neither answers nor drives its wheel."""
+        divider's reading climbs toward it with that time constant from power-on, or from the pack's
+        arrival on USB, while the wheels have the whole pack at once. A reboot leaves it charged;
+        power_cycle() starts it again. A pack of 0 is USB alone, and an ESC with no pack neither
+        answers nor drives its wheel."""
+        if mv and not self.pack_mv:
+            self._pack_since_us = self.now_us
         self._set_world(("pack",), "pack", mv=mv, riseMs=rise_ms)
 
     def esc_startup(self, ms=ESC_STARTUP_MS, restart_ms=ESC_RESTART_MS):
@@ -546,7 +549,7 @@ class Blaster:
         self._offset_us += self._child_now
         self._child_now = 0
         if not keep_ram:
-            self._powered_at_us = self._offset_us
+            self._pack_since_us = self._offset_us
         self._restarted = keep_ram and self.pack_mv > 0
         self._child_serial = 0
         self._child_booted = False
