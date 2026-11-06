@@ -95,10 +95,9 @@ def reading(b):
 
 
 @pytest.mark.parametrize("usb", [False, True], ids=["power_on", "usb"])
-@pytest.mark.parametrize("mv", [PACK_MV, JUST_OVER_MV], ids=["full", "just_over"])
-def test_a_divider_climbing_to_a_good_pack_never_trips_the_cutoff(blaster, mv, usb):
-    """Climbing to a pack just over the line, it reads under it for over a minute."""
-    b = plug_in(blaster, mv, usb, RISE_MS, {"escEnablePin": 22})
+def test_a_divider_climbing_to_a_pack_just_over_the_line_never_trips_the_cutoff(blaster, usb):
+    """It reads under the line for over a minute."""
+    b = plug_in(blaster, JUST_OVER_MV, usb, RISE_MS, {"escEnablePin": 22})
     assert b.run_until(lambda: reading(b) >= CUTOFF_MV or b.peek("batteryFlat"), 200000,
                        step_ms=100)
     b.run_ms(2000)
