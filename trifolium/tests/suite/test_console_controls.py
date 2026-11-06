@@ -4,6 +4,8 @@ it. The v1.2 preset enables motors 2 and 4, on ESC pins 1 and 3."""
 
 import pytest
 from helpers import armed_v12, open_menu
+from test_battery import FLAT_MV
+from test_firing_modes import one_mode
 
 from trifolium_sim import ACCELERATING, FULLSPEED, IDLE
 
@@ -62,8 +64,9 @@ def test_a_motor_action_waits_for_the_blaster_to_be_at_rest(blaster):
     b = armed_v12(blaster, display=False)
     b.press("rev")
     assert b.run_until_peek("flywheelState", FULLSPEED, limit_ms=1500)
-    reply = b.command("MOTOR_TEST 1")
-    assert reply["ok"] is False and reply["err"] == "blaster busy"
+    # Named by its motor, which the console matches the reply on.
+    assert b.command("MOTOR_TEST 1") == {"cmd": "MOTOR_TEST", "ok": False, "index": 1,
+                                         "err": "blaster busy"}
 
 
 @pytest.mark.parametrize("line", ["MOTOR_TEST 0", "MOTOR_TEST 4", "MOTOR_TEST", "MOTOR_NORMAL 2"])
@@ -83,6 +86,24 @@ def test_a_motor_action_is_refused_with_the_menu_open_or_the_safety_on(blaster, 
     b.press("safety")
     b.run_ms(100)
     assert b.command("MOTOR_TEST 1")["err"] == "safety engaged"
+
+
+def test_a_motor_action_is_refused_in_a_safe_fire_mode_and_on_a_flat_pack(blaster, make_blaster):
+    b = one_mode(blaster, "safe")
+    assert b.command("MOTOR_TEST 1")["err"] == "SAFE"
+    b = armed_v12(make_blaster(), display=False)
+    b.set_pack(FLAT_MV)
+    assert b.run_until_peek("batteryFlat", True, limit_ms=1500)
+    assert b.command("MOTOR_TEST 1")["err"] == "battery flat"
+
+
+def test_a_trigger_pulled_during_a_motor_test_does_not_fire_once_it_ends(blaster):
+    b = armed_v12(blaster, display=False)
+    assert b.command("MOTOR_TEST 1")["ok"] is True
+    b.run_ms(200)
+    b.tap("trigger")
+    b.run_ms(4000)
+    assert b.extends() == []
 
 
 def test_a_held_rev_spins_the_ticked_motors_and_lapses_when_the_renewals_stop(blaster):
