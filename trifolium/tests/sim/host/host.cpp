@@ -633,6 +633,7 @@ class Host
             else if (type == "current") t = BidirDshotTelemetryType::CURRENT;
             else if (type == "stress") t = BidirDshotTelemetryType::STRESS;
             else if (type == "status") t = BidirDshotTelemetryType::STATUS;
+            else if (type == "debug1") t = BidirDshotTelemetryType::DEBUG_FRAME_1;
             w.overrideNext(SimFlywheel::Override::Edt, req["value"] | 0, t);
         }
     }

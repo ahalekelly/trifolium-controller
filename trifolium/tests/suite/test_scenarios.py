@@ -150,6 +150,26 @@ def test_an_rpm_log_captures_the_rev_then_prints_it_and_when_the_wheels_were_rea
     assert len(b.history) == boots
 
 
+def test_an_rpm_log_records_each_motors_newest_raw_edt_values(blaster):
+    b = armed_v12(blaster, {"useRpmLogging": True, "rpmLogLength": 150}, display=False)
+    mark = len(b.transcript)
+    b.press("rev")
+    b.run_ms(20)
+    b.esc_reply(1, edt="temperature", value=47)
+    b.run_ms(2)
+    b.esc_reply(1, edt="debug1", value=178)
+    assert b.run_until(lambda: '"evt":"rpmCapture"' in b.transcript[mark:], 3000)
+
+    log = b.transcript[mark:]
+    header_at = log.find("Voltage_mv,")
+    header = log[header_at:log.find("\n", header_at)].rstrip(",\r").split(",")
+    assert header[-8:] == ["EdtV 1", "EdtI 1", "EdtT 1", "EdtD1 1",
+                           "EdtV 3", "EdtI 3", "EdtT 3", "EdtD1 3"]
+    last = log[log.find("\n", header_at) + 1:].splitlines()[149].rstrip(",").split(",")
+    row = dict(zip(header, last))
+    assert (row["EdtT 1"], row["EdtD1 1"], row["EdtT 3"]) == ("47", "178", "0")
+
+
 def test_an_rpm_log_leaves_out_the_current_column_when_no_pin_reads_it(blaster):
     b = armed_v12(blaster, {"useRpmLogging": True, "rpmLogLength": 150, "currentAdcPin": 255},
                   display=False)
