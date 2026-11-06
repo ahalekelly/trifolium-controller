@@ -266,14 +266,14 @@ describe("an ESC run", () => {
     expect(run.candidates.find((c) => c.id === C80)).toBeDefined();
   });
 
-  it("pauses when the hold is lost on a rev that did not time out", async () => {
+  it("pauses once three tries running lose the hold on revs that did not time out", async () => {
     const { blaster, runner } = rig();
     blaster.losesHold = "renewals fell 900 ms apart";
     void runner.start(CONFIG, GAINS, DEVICE);
     await idle(runner);
     expect(runOf(runner)).toMatchObject({
       status: "paused",
-      note: "The console let go of Rev: renewals fell 900 ms apart.",
+      note: "The console let go of Rev 3 times running: renewals fell 900 ms apart.",
     });
   });
 
