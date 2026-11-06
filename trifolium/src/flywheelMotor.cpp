@@ -36,12 +36,14 @@ void FlywheelMotor::resetControl(flywheelControlType_t mode, uint8_t EMAFilter)
 
 bool FlywheelMotor::readTelemetry(uint32_t& erpmOut)
 {
+    pollsSinceErpm++;
     uint32_t value;
     switch (esc->getTelemetryPacket(&value))
     {
     case BidirDshotTelemetryType::ERPM:
         erpmOut = value;
         telemetryErpmSeen = true;
+        pollsSinceErpm = 0;
         return true;
     case BidirDshotTelemetryType::VOLTAGE:
         telemetryVoltageRaw = value;
