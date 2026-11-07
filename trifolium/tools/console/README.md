@@ -14,7 +14,7 @@ npm run tune -- discard <run dir>                   # drop a run, saving its JSO
 
 It opens the one Trifolium plugged in over USB, so close any console tab that has it connected first. `--port socket://127.0.0.1:<port>` opens the simulator's serial instead.
 
-The run directory gets each capture's CSV as it comes in, the stored run (`stored-run.json`), and the run's JSON (`tune-<start>.json`) when it finishes or is discarded unfinished: the files the tab downloads. A directory holds one run.
+The run directory gets each capture's CSV as it comes in, the stored run (`stored-run.json`), and the run's JSON (`tune-<start>.json`) when it finishes or is discarded unfinished: the files the tab downloads. A directory holds one run. To watch a run, open its `stored-run.json` with **Open run file** on the console's Tune page.
 
 Progress goes to stdout, each line led by the time: a line per finished set, per change of activity, status or note, and per console log line, the commands it sends included. The exit code says how it ended:
 

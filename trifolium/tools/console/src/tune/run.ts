@@ -593,15 +593,22 @@ export type Saved = Run | null | "unreadable";
 /** Where the run is kept between visits: the browser's localStorage, or the tune CLI's file. */
 export type RunStore = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
+/** A run as the tab and the CLI save it, or "unreadable" when this console build did not. */
+export function readRun(text: string): Run | "unreadable" {
+  const run = JSON.parse(text) as Run | null;
+  return run?.version === RUN_VERSION ? run : "unreadable";
+}
+
 /**
  * The run left in this browser. One that was running when the page went away comes back paused:
  * nothing is driving the blaster now.
  */
+
 export function loadRun(store: RunStore): Saved {
   const text = store.getItem(STORAGE_KEY);
   if (!text) return null;
-  const run = JSON.parse(text) as Run | null;
-  if (run?.version !== RUN_VERSION) return "unreadable";
+  const run = readRun(text);
+  if (run === "unreadable") return run;
   return run.status === "running"
     ? { ...run, status: "paused", note: "The console was closed mid-run. Resume to carry on." }
     : run;

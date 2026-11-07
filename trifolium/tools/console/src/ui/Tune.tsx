@@ -30,6 +30,8 @@ import {
   overshootLimit,
   plannedRun,
   rankingOf,
+  readRun,
+  runName,
   startingId,
   scoreOf,
   scoresOf,
@@ -442,13 +444,13 @@ export function Tune({
   const driving = React.useSyncExternalStore(runner.subscribe, runner.running);
   /** Why the last Start did not start. */
   const [failed, setFailed] = React.useState<string | null>(null);
-  const [checked, setChecked] = React.useState<string[]>([]);
+  /** A run file being shown in place of the tab's own run. */
+  const [file, setFile] = React.useState<FileSystemFileHandle | null>(null);
   const { kind, mode, form } = draft;
   const rows = React.useMemo(() => (escs ? searchableRows(escs) : []), [escs]);
   const config = configOf(draft, gainMax, rows);
   const settings = runSettings(device);
   const baseline = baselineOf(device);
-  const current = run === null || run === "unreadable" ? null : run;
   // Running a plan through takes a while for a big grid, so each is worked out once.
   const draftKey = JSON.stringify([config, baseline]);
   const draftPlan = React.useMemo(() => {
@@ -462,7 +464,6 @@ export function Tune({
     const draftRun = startRun(config, { gains: baseline, esc }, null, null, 0);
     return { count: draftRun.candidates.length, ...plannedRun(draftRun) };
   }, [draftKey, rows]);
-  const runPlan = React.useMemo(() => current && plannedRun(current), [current?.candidates]);
   const field = (key: keyof Form, label: string, width = 160) => (
     <TextField
       size="small"
@@ -477,6 +478,8 @@ export function Tune({
       {activity}
     </Typography>
   );
+  const openRun = <OpenRunFile onOpen={setFile} />;
+  if (file) return <RunFile file={file} onClose={() => setFile(null)} />;
 
   if (run === "unreadable") {
     return (
@@ -634,6 +637,7 @@ export function Tune({
               >
                 Start
               </Button>
+              {openRun}
             </Box>
           </Stack>
         </Fieldset>
@@ -641,13 +645,91 @@ export function Tune({
     );
   }
 
+  const best = run.status === "done" ? rankingOf(run)[0] : null;
+  // Nothing to apply when even the best overshoots past the limit.
+  const winner = best?.standing.qualified ? run.candidates.find((c) => c.id === best.id)! : null;
+  return (
+    <RunView
+      run={run}
+      status={
+        <>
+          {activityLine}
+          {run.restoreEscs && run.status !== "running" && activity === null && (
+            <Alert severity="warning" sx={{ py: 0 }}>
+              The ESCs may still hold a candidate's settings. Their own settings go back when this
+              run's blaster next connects, or on Discard.
+            </Alert>
+          )}
+        </>
+      }
+      actions={
+        <>
+          {run.status === "running" && (
+            <Button size="small" variant="outlined" onClick={() => runner.pause()}>
+              Pause
+            </Button>
+          )}
+          {run.status === "paused" && (
+            <Button
+              size="small"
+              variant="contained"
+              disabled={!live || driving}
+              onClick={() => runner.resume(device)}
+            >
+              Resume
+            </Button>
+          )}
+          {winner && (
+            <Button
+              size="small"
+              variant="contained"
+              disabled={!live || driving || run.applied}
+              onClick={() =>
+                winner.esc ? void runner.applyEsc(winner) : runner.applyGains(winner, onApply)
+              }
+            >
+              {run.applied ? "Applied" : "Apply"} {winner.name}
+            </Button>
+          )}
+          {run.status !== "running" && (
+            <Button
+              size="small"
+              variant="outlined"
+              disabled={driving || (run.restoreEscs && !live)}
+              onClick={() => void runner.discard()}
+            >
+              Discard run
+            </Button>
+          )}
+          {/* Not while running: a file shown in its place would hide its Pause. */}
+          {run.status !== "running" && openRun}
+        </>
+      }
+    />
+  );
+}
+
+/**
+ * A run's progress, results and spin-up charts: the tab's own run, with its controls as `actions`,
+ * or one read from a file.
+ */
+function RunView({
+  run,
+  status,
+  actions,
+}: {
+  run: Run;
+  /** Under the progress line: what is going on now. */
+  status: React.ReactNode;
+  actions: React.ReactNode;
+}) {
+  const [checked, setChecked] = React.useState<string[]>([]);
+  // Once a run, which a file followed is parsed afresh on every change.
+  const plan = React.useMemo(() => plannedRun(run), [runName(run)]);
   const candidateSets = run.sets.filter((s) => s.id !== BASELINE).length;
   const lastSet = run.sets[run.sets.length - 1];
   const packV = lastSet && Math.min(...lastSet.spinups.map((s) => s.packMv)) / 1000;
   const drift = driftOf(run);
-  const best = run.status === "done" ? rankingOf(run)[0] : null;
-  // Nothing to apply when even the best overshoots past the limit.
-  const winner = best?.standing.qualified ? run.candidates.find((c) => c.id === best.id)! : null;
   const escRun = run.config.grid.kind === "esc";
   return (
     <Stack spacing={1.25}>
@@ -655,20 +737,14 @@ export function Tune({
         <Stack spacing={1} sx={{ pt: 1 }}>
           <Typography variant="body2">
             {{ done: "Done.", running: "Running.", paused: "Paused." }[run.status]}{" "}
-            {candidateSets} of about {runPlan!.sets} candidate sets
+            {candidateSets} of about {plan.sets} candidate sets
             {lastSet ? `, pack ${packV.toFixed(2)} V` : ""}.
-            {escRun && ` ${run.escWrites} of about ${runPlan!.writes} planned ESC writes.`}
+            {escRun && ` ${run.escWrites} of about ${plan.writes} planned ESC writes.`}
           </Typography>
-          {activityLine}
+          {status}
           {run.note && (
             <Alert severity="info" sx={{ py: 0 }}>
               {run.note}
-            </Alert>
-          )}
-          {run.restoreEscs && run.status !== "running" && activity === null && (
-            <Alert severity="warning" sx={{ py: 0 }}>
-              The ESCs may still hold a candidate's settings. Their own settings go back when this
-              run's blaster next connects, or on Discard.
             </Alert>
           )}
           {drift && (
@@ -677,43 +753,7 @@ export function Tune({
             </Typography>
           )}
           <Stack direction="row" spacing={1}>
-            {run.status === "running" && (
-              <Button size="small" variant="outlined" onClick={() => runner.pause()}>
-                Pause
-              </Button>
-            )}
-            {run.status === "paused" && (
-              <Button
-                size="small"
-                variant="contained"
-                disabled={!live || driving}
-                onClick={() => runner.resume(device)}
-              >
-                Resume
-              </Button>
-            )}
-            {winner && (
-              <Button
-                size="small"
-                variant="contained"
-                disabled={!live || driving || run.applied}
-                onClick={() =>
-                  winner.esc ? void runner.applyEsc(winner) : runner.applyGains(winner, onApply)
-                }
-              >
-                {run.applied ? "Applied" : "Apply"} {winner.name}
-              </Button>
-            )}
-            {run.status !== "running" && (
-              <Button
-                size="small"
-                variant="outlined"
-                disabled={driving || (run.restoreEscs && !live)}
-                onClick={() => void runner.discard()}
-              >
-                Discard run
-              </Button>
-            )}
+            {actions}
           </Stack>
         </Stack>
       </Fieldset>
@@ -731,5 +771,122 @@ export function Tune({
         </Stack>
       </Fieldset>
     </Stack>
+  );
+}
+
+declare global {
+  interface Window {
+    /** The File System Access API's, in Chromium browsers only. */
+    showOpenFilePicker?(options: {
+      types: { description: string; accept: Record<string, string[]> }[];
+    }): Promise<FileSystemFileHandle[]>;
+  }
+}
+
+/** How often a run file not yet done is checked for changes. */
+export const FOLLOW_MS = 2000;
+
+/**
+ * Opens a run's JSON: the CLI's stored-run.json, or a tune-<start>.json either saves. A file handle
+ * rather than a file input, as only a handle reads the file again once it changes.
+ */
+function OpenRunFile({ onOpen }: { onOpen: (file: FileSystemFileHandle) => void }) {
+  const [failed, setFailed] = React.useState<string | null>(null);
+  const open = async () => {
+    setFailed(null);
+    if (!window.showOpenFilePicker) {
+      setFailed("Opening a run file needs a Chromium browser, such as Chrome or Edge.");
+      return;
+    }
+    try {
+      const types = [{ description: "Tune run", accept: { "application/json": [".json"] } }];
+      const [file] = await window.showOpenFilePicker({ types });
+      onOpen(file);
+    } catch (e) {
+      if ((e as Error).name !== "AbortError") setFailed((e as Error).message);
+    }
+  };
+  return (
+    <>
+      <Button size="small" variant="outlined" onClick={() => void open()} sx={{ ml: 1 }}>
+        Open run file
+      </Button>
+      {failed && (
+        <Alert severity="error" sx={{ py: 0, mt: 1 }}>
+          {failed}
+        </Alert>
+      )}
+    </>
+  );
+}
+
+/**
+ * A run read from a file, as the tab shows its own but with nothing to drive: following one the CLI
+ * is running, by reading the file again whenever it changes until the run is done.
+ */
+export function RunFile({ file, onClose }: { file: FileSystemFileHandle; onClose: () => void }) {
+  const [read, setRead] = React.useState<{ run: Run; savedAt: number } | null>(null);
+  /** Why the last read failed: the file gone, or caught as the CLI replaced it, which passes. */
+  const [failed, setFailed] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let savedAt = -1;
+    const check = async () => {
+      try {
+        const got = await file.getFile();
+        if (stopped) return;
+        if (got.lastModified !== savedAt) {
+          const run = readRun(await got.text());
+          if (stopped) return;
+          if (run === "unreadable") {
+            setRead(null);
+            setFailed(`${file.name} is not a run this build of the console can read.`);
+            return;
+          }
+          savedAt = got.lastModified;
+          setRead({ run, savedAt });
+          setFailed(null);
+          if (run.status === "done") return;
+        }
+      } catch (e) {
+        if (stopped) return;
+        setFailed(`${file.name} could not be read: ${(e as Error).message}`);
+      }
+      timer = setTimeout(() => void check(), FOLLOW_MS);
+    };
+    void check();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [file]);
+  const close = (
+    <Button size="small" variant="outlined" onClick={onClose}>
+      Close
+    </Button>
+  );
+  const problem = failed && (
+    <Alert severity="error" action={read ? undefined : close} sx={{ py: 0 }}>
+      {failed}
+    </Alert>
+  );
+  if (read === null) return problem;
+  const saved = new Date(read.savedAt).toLocaleTimeString();
+  return (
+    <RunView
+      run={read.run}
+      status={
+        <>
+          <Typography variant="body2" color="text.secondary">
+            {read.run.status === "done"
+              ? `From ${file.name}, saved at ${saved}.`
+              : `Following ${file.name}, last saved at ${saved}.`}
+          </Typography>
+          {problem}
+        </>
+      }
+      actions={close}
+    />
   );
 }

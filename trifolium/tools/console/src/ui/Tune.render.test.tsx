@@ -18,7 +18,7 @@ import {
 } from "../tune/run";
 import { TuneRunner } from "../tune/runner";
 import { DEFAULT_DRAFT, type TuneDraft } from "../tune/draft";
-import { atRank, Results, SpinupTraces, Tune } from "./Tune";
+import { atRank, FOLLOW_MS, Results, SpinupTraces, Tune } from "./Tune";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -452,5 +452,101 @@ describe("the ESC run form", () => {
     expect(await formText(escs, { variable_pwm: "Fixed, By RPM" })).toContain(
       "PWM type By RPM is tried as PWM frequency By RPM.",
     );
+  });
+});
+
+describe("a run file", () => {
+  /** What the file holds now, and how many times it was read. */
+  let saved: { run: unknown; at: number };
+  let reads: number;
+  const getFile = async () => {
+    const { run, at } = saved;
+    return { lastModified: at, text: async () => (reads++, JSON.stringify(run)) };
+  };
+  const file = { name: "stored-run.json", getFile };
+  const grid = { ...DEFAULT_GAINS, kp: [0.4], ki: [1] };
+  const spinup = { rpm: 30000, file: "", readyMs: 100, reachMs: 100, overshootPct: 0, packMv: 16000, desync: null, trace: [] };
+  const runWith = (sets: number, status: Run["status"]) => {
+    const run = startRun({ ...DEFAULT_CONFIG, grid }, { gains: { control: "pid", kp: 0.2, ki: 0.5 }, esc: null }, null, null, 500);
+    run.sets = Array.from({ length: sets }, (_, at) => ({ id: "PID kp 0.4 ki 1", at, spinups: [spinup] }));
+    return { ...run, status };
+  };
+  let host: HTMLDivElement;
+  let root: Root;
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("localStorage", { getItem: () => null });
+    vi.stubGlobal("showOpenFilePicker", async () => [file]);
+    saved = { run: runWith(1, "running"), at: 1000 };
+    reads = 0;
+    file.getFile = getFile;
+    host = document.createElement("div");
+    root = createRoot(host);
+    const unused = () => Promise.reject(new Error("not in this test"));
+    const transport = { connected: false, chipId: null } as unknown as SerialTransport;
+    await act(async () =>
+      root.render(
+        <Tune
+          runner={new TuneRunner(transport, { read: unused, write: unused }, { capture: unused, run: unused }, localStorage)}
+          live={false}
+          device={DEVICE}
+          gainMax={{ kp: 2, ki: 2 }}
+          escs={null}
+          draft={DEFAULT_DRAFT}
+          onDraft={() => {}}
+          onApply={() => {}}
+        />,
+      ),
+    );
+    const open = [...host.querySelectorAll("button")].find((b) => b.textContent === "Open run file")!;
+    await act(async () => open.click());
+  });
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+  const later = () => act(async () => void (await vi.advanceTimersByTimeAsync(FOLLOW_MS)));
+
+  it("follows a run under way, without the controls of the tab's own", async () => {
+    expect(host.textContent).toMatch(/Running\. 1 of about \d+ candidate sets/);
+    expect(host.textContent).toContain("Following stored-run.json");
+    expect(host.querySelector("tbody tr td:nth-child(2)")!.textContent).toBe("PID kp 0.4 ki 1");
+    const buttons = () => [...host.querySelectorAll("button")].map((b) => b.textContent);
+    expect(buttons()).toEqual(["Close"]);
+
+    await later();
+    expect(reads).toBe(1); // unchanged, so not read again
+    saved = { run: runWith(2, "done"), at: 2000 };
+    await later();
+    expect(host.textContent).toMatch(/Done\. 2 of about/);
+    expect(host.textContent).toContain("From stored-run.json");
+    // A done run is not checked again.
+    saved = { run: runWith(3, "done"), at: 3000 };
+    await later();
+    expect(reads).toBe(2);
+
+    await act(async () => [...host.querySelectorAll("button")].find((b) => b.textContent === "Close")!.click());
+    expect(buttons()).toContain("Open run file");
+  });
+
+  it("keeps following through a read that fails, as one caught mid-save can", async () => {
+    file.getFile = async () => {
+      throw new Error("The file changed while it was read.");
+    };
+    await later();
+    expect(host.textContent).toContain("stored-run.json could not be read: The file changed");
+    expect(host.textContent).toContain("Running.");
+    file.getFile = getFile;
+    saved = { run: runWith(2, "running"), at: 2000 };
+    await later();
+    expect(host.textContent).not.toContain("could not be read");
+    expect(host.textContent).toMatch(/Running\. 2 of about/);
+  });
+
+  it("says when the file is not a run this build reads", async () => {
+    saved = { run: { ...runWith(1, "done"), version: 1 }, at: 2000 };
+    await later();
+    expect(host.textContent).toContain("stored-run.json is not a run this build of the console can read");
   });
 });
