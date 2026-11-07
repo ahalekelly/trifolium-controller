@@ -5,7 +5,7 @@
 // Node port (nodeSerial.ts). A run directory holds the stored run, each capture's CSV and, once the
 // run finishes or is discarded, its JSON - the files the tab downloads.
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { escTargets, readEscSettings, writeEscSettings } from "../esc/session";
@@ -48,11 +48,17 @@ const say = (text: string, at = Date.now()) => {
   process.stdout.write(`${time.join(":")}.${String(d.getMilliseconds()).padStart(3, "0")} ${text}\n`);
 };
 
-/** The stored run, one file in the run directory, as the browser keeps it in localStorage. */
+/**
+ * The stored run, one file in the run directory, as the browser keeps it in localStorage. Each save
+ * replaces it whole, by a rename, so the Tune tab following it never reads one half written.
+ */
 function fileStore(file: string): RunStore {
   return {
     getItem: () => (existsSync(file) ? readFileSync(file, "utf8") : null),
-    setItem: (_, value) => writeFileSync(file, value),
+    setItem: (_, value) => {
+      writeFileSync(`${file}.part`, value);
+      renameSync(`${file}.part`, file);
+    },
     removeItem: () => rmSync(file, { force: true }),
   };
 }
